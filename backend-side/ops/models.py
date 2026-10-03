@@ -8,6 +8,7 @@ clean separation between chain integration/operations and the signing ledger.
 
 All monetary values are stored as Decimal to avoid float drift.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -21,7 +22,7 @@ def _new_id() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Chain metadata (network onboarding — config-driven, no code change)
+# Chain metadata (runtime registry; only reviewed adapter families are accepted)
 # ---------------------------------------------------------------------------
 class Chain(models.Model):
     """A supported blockchain network (L1 or EVM-compatible)."""
@@ -30,17 +31,15 @@ class Chain(models.Model):
     display_name = models.CharField(max_length=64)
     kind = models.CharField(
         max_length=16,
-        choices=[("evm", "EVM"), ("ton", "TON"), ("tron", "Tron"),
-                 ("solana", "Solana"), ("other", "Other")],
+        choices=[("evm", "EVM"), ("ton", "TON"), ("tron", "Tron"), ("solana", "Solana")],
         default="evm",
     )
     evm_chain_id = models.IntegerField(null=True, blank=True)  # EVM numeric id
-    native_asset_key = models.CharField(max_length=32)         # e.g. BNB for BSC
+    native_asset_key = models.CharField(max_length=32)  # e.g. BNB for BSC
     is_testnet = models.BooleanField(default=True)
     # Confirmation / finality policy
     min_confirmations = models.IntegerField(default=12)
-    sweep_threshold = models.DecimalField(
-        max_digits=40, decimal_places=18, default=Decimal("0.01"))
+    sweep_threshold = models.DecimalField(max_digits=40, decimal_places=18, default=Decimal("0.01"))
     memo_required = models.BooleanField(default=False)  # TON
     explorer_tx_url = models.URLField(blank=True, default="")
     explorer_address_url = models.URLField(blank=True, default="")
@@ -60,7 +59,7 @@ class Chain(models.Model):
 # Asset / token registry (token onboarding — config-driven)
 # ---------------------------------------------------------------------------
 class Asset(models.Model):
-    """A token or native asset on a chain. New tokens added via admin config."""
+    """Operational metadata only; custody.Asset owns custody capabilities."""
 
     asset_key = models.CharField(max_length=32, unique=True)  # ETH, BNB, USDT_BSC
     chain_id = models.CharField(max_length=16)
@@ -70,7 +69,8 @@ class Asset(models.Model):
     decimals = models.IntegerField(default=18)
     is_native = models.BooleanField(default=False)
     deposit_threshold = models.DecimalField(
-        max_digits=40, decimal_places=18, default=Decimal("0.0"))
+        max_digits=40, decimal_places=18, default=Decimal("0.0")
+    )
     withdraw_enabled = models.BooleanField(default=True)
     enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -90,8 +90,7 @@ class Asset(models.Model):
 class NodeEndpoint(models.Model):
     """An RPC endpoint for a chain. Supports primary/fallback + health metrics."""
 
-    id = models.CharField(primary_key=True, max_length=24, default=_new_id,
-                          editable=False)
+    id = models.CharField(primary_key=True, max_length=24, default=_new_id, editable=False)
     chain_id = models.CharField(max_length=16)
     name = models.CharField(max_length=64)
     url = models.URLField()
@@ -126,28 +125,30 @@ class NodeEndpoint(models.Model):
 class AddressBalance(models.Model):
     """Point-in-time balance of an address for a given asset."""
 
-    id = models.CharField(primary_key=True, max_length=24, default=_new_id,
-                          editable=False)
+    id = models.CharField(primary_key=True, max_length=24, default=_new_id, editable=False)
     chain_id = models.CharField(max_length=16)
     asset_key = models.CharField(max_length=32)
     address = models.CharField(max_length=64)
     owner_type = models.CharField(
         max_length=16,
-        choices=[("user_deposit", "User Deposit"), ("hot_wallet", "Hot Wallet"),
-                 ("cold_wallet", "Cold Wallet")],
+        choices=[
+            ("user_deposit", "User Deposit"),
+            ("hot_wallet", "Hot Wallet"),
+            ("cold_wallet", "Cold Wallet"),
+        ],
         default="user_deposit",
     )
     owner_ref = models.CharField(max_length=64, blank=True, default="")  # user_id
-    confirmed_balance = models.DecimalField(max_digits=40, decimal_places=18,
-                                            default=Decimal("0"))
-    pending_balance = models.DecimalField(max_digits=40, decimal_places=18,
-                                          null=True, blank=True)
+    confirmed_balance = models.DecimalField(max_digits=40, decimal_places=18, default=Decimal("0"))
+    pending_balance = models.DecimalField(max_digits=40, decimal_places=18, null=True, blank=True)
     snapshot_at = models.DateTimeField(auto_now_add=True)
     source = models.CharField(max_length=16, default="indexer")  # node/indexer
 
     class Meta:
-        indexes = [models.Index(fields=["address", "asset_key", "-snapshot_at"]),
-                   models.Index(fields=["chain_id", "owner_type"])]
+        indexes = [
+            models.Index(fields=["address", "asset_key", "-snapshot_at"]),
+            models.Index(fields=["chain_id", "owner_type"]),
+        ]
         ordering = ["-snapshot_at"]
 
     def __str__(self) -> str:
@@ -160,25 +161,32 @@ class AddressBalance(models.Model):
 class TransactionLog(models.Model):
     tx_type = models.CharField(
         max_length=16,
-        choices=[("deposit", "Deposit"), ("sweep", "Sweep"),
-                 ("withdrawal", "Withdrawal"), ("gas_topup", "Gas Top-up"),
-                 ("transfer", "Transfer")],
+        choices=[
+            ("deposit", "Deposit"),
+            ("sweep", "Sweep"),
+            ("withdrawal", "Withdrawal"),
+            ("gas_topup", "Gas Top-up"),
+            ("transfer", "Transfer"),
+        ],
     )
     chain_id = models.CharField(max_length=16)
     asset_key = models.CharField(max_length=32)
     tx_hash = models.CharField(max_length=96, blank=True, default="")
     from_address = models.CharField(max_length=64, blank=True, default="")
     to_address = models.CharField(max_length=64, blank=True, default="")
-    amount = models.DecimalField(max_digits=40, decimal_places=18,
-                                 default=Decimal("0"))
+    amount = models.DecimalField(max_digits=40, decimal_places=18, default=Decimal("0"))
     memo = models.CharField(max_length=128, blank=True, default="")
     block = models.BigIntegerField(null=True, blank=True)
     confirmations = models.IntegerField(default=0)
     status = models.CharField(
         max_length=16,
-        choices=[("pending", "Pending"), ("broadcasted", "Broadcasted"),
-                 ("confirmed", "Confirmed"), ("failed", "Failed"),
-                 ("reverted", "Reverted")],
+        choices=[
+            ("pending", "Pending"),
+            ("broadcasted", "Broadcasted"),
+            ("confirmed", "Confirmed"),
+            ("failed", "Failed"),
+            ("reverted", "Reverted"),
+        ],
         default="pending",
     )
     ref_type = models.CharField(max_length=24, blank=True, default="")  # SweepJob/WithdrawalRequest
@@ -187,9 +195,11 @@ class TransactionLog(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [models.Index(fields=["tx_type", "-created_at"]),
-                   models.Index(fields=["chain_id", "status"]),
-                   models.Index(fields=["tx_hash"])]
+        indexes = [
+            models.Index(fields=["tx_type", "-created_at"]),
+            models.Index(fields=["chain_id", "status"]),
+            models.Index(fields=["tx_hash"]),
+        ]
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
@@ -200,8 +210,7 @@ class TransactionLog(models.Model):
 # Operator sessions & activity (operator activity tracking)
 # ---------------------------------------------------------------------------
 class OperatorSession(models.Model):
-    id = models.CharField(primary_key=True, max_length=24, default=_new_id,
-                          editable=False)
+    id = models.CharField(primary_key=True, max_length=24, default=_new_id, editable=False)
     user_id = models.CharField(max_length=64)
     role = models.CharField(max_length=16)
     ip = models.CharField(max_length=64, blank=True, default="")
@@ -217,8 +226,7 @@ class OperatorSession(models.Model):
 class OperatorActivity(models.Model):
     """Lightweight operator activity stream (distinct from the audit trail)."""
 
-    id = models.CharField(primary_key=True, max_length=24, default=_new_id,
-                          editable=False)
+    id = models.CharField(primary_key=True, max_length=24, default=_new_id, editable=False)
     actor_id = models.CharField(max_length=64)
     role = models.CharField(max_length=16)
     action = models.CharField(max_length=64)
@@ -236,15 +244,19 @@ class OperatorActivity(models.Model):
 class Alert(models.Model):
     severity = models.CharField(
         max_length=16,
-        choices=[("info", "Info"), ("warning", "Warning"),
-                 ("critical", "Critical")],
+        choices=[("info", "Info"), ("warning", "Warning"), ("critical", "Critical")],
         default="warning",
     )
     category = models.CharField(
         max_length=32,
-        choices=[("node_health", "Node Health"), ("balance", "Balance"),
-                 ("security", "Security"), ("withdrawal", "Withdrawal"),
-                 ("reorg", "Reorg"), ("system", "System")],
+        choices=[
+            ("node_health", "Node Health"),
+            ("balance", "Balance"),
+            ("security", "Security"),
+            ("withdrawal", "Withdrawal"),
+            ("reorg", "Reorg"),
+            ("system", "System"),
+        ],
         default="system",
     )
     chain_id = models.CharField(max_length=16, blank=True, default="")
@@ -255,8 +267,10 @@ class Alert(models.Model):
     resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        indexes = [models.Index(fields=["resolved", "-created_at"]),
-                   models.Index(fields=["category", "severity"])]
+        indexes = [
+            models.Index(fields=["resolved", "-created_at"]),
+            models.Index(fields=["category", "severity"]),
+        ]
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
@@ -284,18 +298,22 @@ class Blocklist(models.Model):
         ("CHAIN_ASSET", "Chain+Asset"),
     ]
 
-    id = models.CharField(primary_key=True, max_length=24, default=_new_id,
-                          editable=False)
+    id = models.CharField(primary_key=True, max_length=24, default=_new_id, editable=False)
     scope = models.CharField(max_length=20, choices=SCOPE_CHOICES)
-    value = models.CharField(max_length=64, default="-")   # address or "-"
+    value = models.CharField(max_length=64, default="-")  # address or "-"
     chain_id = models.CharField(max_length=16, blank=True, default="")
     asset_key = models.CharField(max_length=32, blank=True, default="")
-    reason = models.CharField(max_length=32, default="compliance",
-                              choices=[("compliance", "Compliance"),
-                                       ("sanctions", "Sanctions"),
-                                       ("scam", "Scam/Phishing"),
-                                       ("manual", "Manual"),
-                                       ("dust", "Dust/Spam")])
+    reason = models.CharField(
+        max_length=32,
+        default="compliance",
+        choices=[
+            ("compliance", "Compliance"),
+            ("sanctions", "Sanctions"),
+            ("scam", "Scam/Phishing"),
+            ("manual", "Manual"),
+            ("dust", "Dust/Spam"),
+        ],
+    )
     note = models.TextField(blank=True, default="")
     enabled = models.BooleanField(default=True)
     created_by = models.CharField(max_length=64, blank=True, default="")
@@ -303,8 +321,10 @@ class Blocklist(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["scope", "value", "enabled"]),
-                   models.Index(fields=["scope", "chain_id", "asset_key", "enabled"])]
+        indexes = [
+            models.Index(fields=["scope", "value", "enabled"]),
+            models.Index(fields=["scope", "chain_id", "asset_key", "enabled"]),
+        ]
 
     def __str__(self) -> str:
         if self.scope == "CHAIN_ASSET":

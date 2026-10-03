@@ -16,13 +16,14 @@ logger = logging.getLogger("custody.indexer.eth")
 
 
 class EthIndexer(IndexerClient):
-    network = "ETH"
+    def __init__(self):
+        super().__init__("ETH")
 
     def get_balance(self, address: str, memo=None) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance()
         try:
-            return evm_get_balance("ETH", address)
+            return evm_get_balance(self.chain_id, address)
         except Exception as e:
             logger.error("ETH live balance failed for %s: %s", address, e)
             raise IndexerUnavailable("ETH balance unavailable") from e

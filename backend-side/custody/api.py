@@ -32,7 +32,6 @@ from .audit import AuditAction, write_audit_log
 from .auth import authenticate, decode_token
 from .chain_status import check_all_chains
 from .config import (
-    Network,
     chain_ids,
     effective_deposit_threshold,
     get_asset,
@@ -271,10 +270,10 @@ def wallet_address(
             status=existing.status,
         )
     memo = None
-    if net == Network.TON.value and is_memo_required(Network.TON):
+    if is_memo_required(net):
         memo = f"u{subject}.{idx}"  # TON memo attribution
     user_index = stable_user_index(subject)
-    derived = derive_deposit_address(Network(net), user_index, idx, asset_key=asset_key)
+    derived = derive_deposit_address(net, user_index, idx, asset_key=asset_key)
     derivation = derived.derivation_path
     address = derived.deposit_address
     w = UserWallet.objects.create(
@@ -324,10 +323,10 @@ def _ensure_deposit_address(
     # Compliance screening: block disabled asset/chain before provisioning.
     check_deposit_asset(net, asset_key)
     memo = None
-    if net == Network.TON.value and is_memo_required(Network.TON):
+    if is_memo_required(net):
         memo = f"u{user_id}.{idx}"
     user_index = stable_user_index(user_id)
-    derived = derive_deposit_address(Network(net), user_index, idx, asset_key=asset_key)
+    derived = derive_deposit_address(net, user_index, idx, asset_key=asset_key)
     w = UserWallet.objects.create(
         user_id=user_id,
         chain_id=net,
@@ -399,11 +398,6 @@ def create_wallet(
     return CreateWalletResponse(user_id=subject, addresses=out)
 
 
-def _purpose(net: Network) -> int:
-    # (kept for reference/tests; derivation_path is produced by hd_wallet)
-    return {"ETH": 60, "BSC": 60, "TRX": 195, "SOL": 501, "TON": 607}.get(net.value, 44)
-
-
 # ---------------- Balance check + auto sweep ----------------
 @api.post("/wallet/balance/check", response=BalanceCheckResponse)
 def balance_check(
@@ -429,7 +423,7 @@ def balance_check(
         raise HttpError(404, "no deposit address for network/asset")
     indexer = get_indexer(chain_id)
     bal = indexer.get_balance(
-        w.deposit_address, memo=w.memo if is_memo_required(Network(chain_id)) else None
+        w.deposit_address, memo=w.memo if is_memo_required(chain_id) else None
     )
     for event in bal.deposit_events:
         ingest_event(w, event)
@@ -580,7 +574,7 @@ def gas_station(
         if not cfg.enabled:
             continue
         hot = HotWallet.objects.filter(chain_id=cid).first()
-        hot_addr = hot.address if hot else cfg.hot_wallet_address
+        hot_addr = hot.address if hot else ""
         # Gas-station address == custody signing EOA (hot wallet funds topups).
         gas_addr = hot_addr or ""
         # Balances come from the indexer (stubbed locally; real on testnets).
@@ -900,7 +894,7 @@ def chains_status(
     """Live node-status rollup for all supported chains.
 
     Probes each chain's configured RPC endpoint(s) (DB-registered nodes first,
-    then env fallback) and reports ONLINE/OFFLINE with block height + latency.
+    in deterministic failover order) and reports ONLINE/OFFLINE with height and latency.
     Authenticated users can view; ``?chain=ETH`` narrows to a single chain.
     """
     actor, role = _current_user(authorization, x_user_id, x_role)

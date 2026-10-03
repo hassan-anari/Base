@@ -17,8 +17,8 @@ class CustodyConfig(AppConfig):
         from .models import Asset, HotWallet
 
         def _seed(sender, **kwargs):
-            for ak, a in config.get_assets().items():
-                Asset.objects.update_or_create(
+            for ak, a in config.DEFAULT_ASSETS.items():
+                Asset.objects.get_or_create(
                     asset_key=ak,
                     defaults={
                         "chain_id": a.chain_id,
@@ -33,8 +33,8 @@ class CustodyConfig(AppConfig):
                         "sweep_supported": a.sweep_supported,
                     },
                 )
-            for cid, c in config.get_chains().items():
-                HotWallet.objects.update_or_create(
+            for cid, c in config.DEFAULT_CHAINS.items():
+                HotWallet.objects.get_or_create(
                     chain_id=cid,
                     defaults={"address": c.hot_wallet_address or ""},
                 )

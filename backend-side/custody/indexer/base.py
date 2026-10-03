@@ -48,13 +48,14 @@ class BalanceResult:
 class IndexerClient:
     """Abstract indexer client. Subclasses implement network specifics."""
 
-    network = "UNKNOWN"
+    def __init__(self, chain_id: str):
+        self.chain_id = str(chain_id)
 
     # Stub mode: simulate a funded deposit address so the sweep flow is
     # observable end-to-end without network access. Controlled by
     # CUSTODY_INDEXER_MODE=stub (smoke tests / offline demo). Default is
     # "live": real testnet RPC calls via the editable node registry.
-    stub_funded_balance: float = 1.0
+    stub_funded_balance = Decimal("1")
 
     def get_balance(self, address: str, memo: Optional[str] = None) -> BalanceResult:
         # Base STUB: returns a fixed "funded" balance (above typical thresholds)
@@ -78,17 +79,17 @@ class IndexerClient:
         return mode == "stub"
 
     def _stub_balance(self, memo: Optional[str] = None) -> BalanceResult:
-        from custody.config import get_confirmation_threshold
+        from custody.chain_registry import get_chain_spec
 
-        confirmations = get_confirmation_threshold(str(self.network))
+        confirmations = get_chain_spec(self.chain_id).confirmations
         return BalanceResult(
-            confirmed_balance=Decimal(str(self.stub_funded_balance)),
+            confirmed_balance=self.stub_funded_balance,
             pending_balance=Decimal("0"),
             last_scanned_block=1_000_000,
             deposit_events=[
                 DepositEvent(
                     tx_hash="0xstubdeposit",
-                    amount=Decimal(str(self.stub_funded_balance)),
+                    amount=self.stub_funded_balance,
                     block=999_999,
                     confirmations=confirmations,
                     memo=memo,

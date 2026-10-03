@@ -35,7 +35,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
-from .config import Network, effective_deposit_threshold, get_asset, get_chain, is_memo_required
+from .config import effective_deposit_threshold, get_asset, get_chain, is_memo_required
 from .deposits import ingest_event
 from .indexer.factory import get_indexer
 from .models import UserWallet
@@ -56,7 +56,6 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
       3. Update confirmation status
       4. If balance > threshold, trigger gas + sweep
     """
-    net = Network(user_wallet.chain_id)
     cfg = get_chain(user_wallet.chain_id)
     asset = get_asset(user_wallet.asset_key)
     threshold = effective_deposit_threshold(asset, cfg)
@@ -73,10 +72,10 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
     }
 
     try:
-        indexer = get_indexer(net)
+        indexer = get_indexer(user_wallet.chain_id)
         bal = indexer.get_balance(
             user_wallet.deposit_address,
-            memo=user_wallet.memo if is_memo_required(net) else None,
+            memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
         )
     except Exception as e:
         logger.warning(

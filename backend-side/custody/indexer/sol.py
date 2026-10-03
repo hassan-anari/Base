@@ -9,6 +9,7 @@ STUB mode (CUSTODY_INDEXER_MODE=stub): offline simulated balance.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import List
 
 import requests
@@ -35,12 +36,13 @@ def _rpc(url: str, method: str, params: list):
 
 
 class SolIndexer(IndexerClient):
-    network = "SOL"
+    def __init__(self, chain_id: str = "SOL"):
+        super().__init__(chain_id)
 
     def get_balance(self, address: str, memo=None) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance()
-        urls = rpc_urls("SOL")
+        urls = rpc_urls(self.chain_id)
         if not urls:
             raise IndexerUnavailable("no RPC node configured for SOL")
         last_err: Exception | None = None
@@ -50,7 +52,10 @@ class SolIndexer(IndexerClient):
                 lamports = int(
                     _rpc(u, "getBalance", [address, {"commitment": "confirmed"}])["value"]
                 )
-                confirmed = lamports / 1_000_000_000
+                from ..chain_registry import get_chain_spec
+
+                divisor = Decimal(10 ** get_chain_spec(self.chain_id).native_decimals)
+                confirmed = Decimal(lamports) / divisor
 
                 events: List[DepositEvent] = []
                 try:
@@ -90,7 +95,7 @@ class SolIndexer(IndexerClient):
                             events.append(
                                 DepositEvent(
                                     tx_hash=s["signature"],
-                                    amount=delta / 1_000_000_000,
+                                    amount=Decimal(delta) / divisor,
                                     block=int(tx.get("slot", 0)),
                                     confirmations=max(0, slot - int(tx.get("slot", slot))),
                                 )
@@ -100,7 +105,7 @@ class SolIndexer(IndexerClient):
 
                 return BalanceResult(
                     confirmed_balance=confirmed,
-                    pending_balance=0.0,
+                    pending_balance=Decimal("0"),
                     last_scanned_block=slot,
                     deposit_events=events,
                 )

@@ -1,8 +1,8 @@
 """
 Live EVM testnet balance/tx reader (ETH Sepolia, BSC testnet, any EVM chain).
 
-Uses plain JSON-RPC against the chain's configured RPC node(s) — resolved via
-the EDITABLE ops.NodeEndpoint registry (rpc_nodes.rpc_urls), with env fallback.
+Uses plain JSON-RPC against enabled ``ops.NodeEndpoint`` rows returned by the
+canonical runtime resolver. There is deliberately no static/environment fallback.
 
 Balance semantics:
   * eth_getBalance returns the CURRENT state balance of the EOA.
@@ -20,13 +20,16 @@ Reorg handling:
   * If a previously credited Deposit's block is orphaned, handle_reorg()
     returns it for ledger UNWIND (see base.py docstring).
 """
+
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import List, Optional
 
 import requests
 
+from ..chain_registry import get_chain_spec
 from .base import BalanceResult, DepositEvent
 from .rpc_nodes import rpc_urls
 
@@ -42,9 +45,11 @@ class EvmLiveError(RuntimeError):
 
 
 def _rpc(url: str, method: str, params: list):
-    r = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
-                                 "method": method, "params": params},
-                      timeout=RPC_TIMEOUT)
+    r = requests.post(
+        url,
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        timeout=RPC_TIMEOUT,
+    )
     r.raise_for_status()
     data = r.json()
     if "error" in data:
@@ -72,7 +77,9 @@ def evm_get_balance(chain_id: str, address: str) -> BalanceResult:
     head = int(head_hex, 16)
     bal_hex = _call_any(urls, "eth_getBalance", [address, "latest"])
     balance_wei = int(bal_hex, 16)
-    confirmed = balance_wei / 1e18
+    decimals = get_chain_spec(chain_id).native_decimals
+    divisor = Decimal(10**decimals)
+    confirmed = Decimal(balance_wei) / divisor
 
     events: List[DepositEvent] = []
     try:
@@ -82,16 +89,23 @@ def evm_get_balance(chain_id: str, address: str) -> BalanceResult:
             if not blk:
                 continue
             for tx in blk.get("transactions") or []:
-                if (tx.get("to") or "").lower() == address.lower() \
-                        and int(tx.get("value", "0x0"), 16) > 0:
-                    events.append(DepositEvent(
-                        tx_hash=tx["hash"],
-                        amount=int(tx["value"], 16) / 1e18,
-                        block=n,
-                        confirmations=max(0, head - n),
-                    ))
+                if (tx.get("to") or "").lower() == address.lower() and int(
+                    tx.get("value", "0x0"), 16
+                ) > 0:
+                    events.append(
+                        DepositEvent(
+                            tx_hash=tx["hash"],
+                            amount=Decimal(int(tx["value"], 16)) / divisor,
+                            block=n,
+                            confirmations=max(0, head - n),
+                        )
+                    )
     except Exception as e:  # noqa: BLE001 - balance still valid without events
         logger.warning("evm tx scan failed for %s: %s", address, e)
 
-    return BalanceResult(confirmed_balance=confirmed, pending_balance=0.0,
-                         last_scanned_block=head, deposit_events=events)
+    return BalanceResult(
+        confirmed_balance=confirmed,
+        pending_balance=Decimal("0"),
+        last_scanned_block=head,
+        deposit_events=events,
+    )

@@ -36,7 +36,6 @@ from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
 from .config import (
-    Network,
     effective_deposit_threshold,
     ensure_hot_wallet,
     get_chain,
@@ -81,7 +80,6 @@ def trigger_sweep(
       - A new sweep round is only started once the previous round is
         CONFIRMED or FAILED.
     """
-    net = Network(user_wallet.chain_id)
     cfg = get_chain(user_wallet.chain_id)
     asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "sweep")
     threshold = effective_deposit_threshold(asset, cfg)
@@ -106,10 +104,10 @@ def trigger_sweep(
         # Pull confirmed balance + deposit events from indexer.
         bal = balance_result
         if bal is None:
-            indexer = get_indexer(net)
+            indexer = get_indexer(user_wallet.chain_id)
             bal = indexer.get_balance(
                 user_wallet.deposit_address,
-                memo=user_wallet.memo if is_memo_required(net) else None,
+                memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
             )
         for event in bal.deposit_events:
             ingest_event(user_wallet, event)
@@ -153,13 +151,12 @@ def trigger_sweep(
 
 def _run_sweep(job: SweepJob, actor_id: str) -> None:
     """Advance the sweep state machine. In prod, enqueue as Celery task."""
-    net = Network(job.user_wallet.chain_id)
     cfg = get_chain(job.user_wallet.chain_id)
     hot = ensure_hot_wallet(job.user_wallet.chain_id)
-    amount = float(job.balance_snapshot)
+    amount = job.balance_snapshot
 
     # Step A: optional gas top-up of the deposit EOA.
-    if cfg.kind in ("EVM", "TRON"):
+    if cfg.kind.value in ("evm", "tron"):
         # STUB gas check; assume needed for skeleton.
         job.status = "GAS_TOPUP_REQUIRED"
         job.save(update_fields=["status"])
@@ -169,14 +166,13 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
 
     # Step B: build + sign + broadcast the sweep (EOA -> hot wallet).
     tx = UnsignedTx(
-        network=net,
         chain_id=job.user_wallet.chain_id,
         asset_key=job.user_wallet.asset_key,
         from_address=job.user_wallet.deposit_address,
         to_address=hot,
         amount=amount,
         derivation_path=job.user_wallet.derivation_path,
-        memo=job.user_wallet.memo if is_memo_required(net) else None,
+        memo=job.user_wallet.memo if is_memo_required(job.user_wallet.chain_id) else None,
     )
     signer = get_signer()
     try:

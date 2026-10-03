@@ -61,10 +61,14 @@ def _tcp_reachable(url: str, timeout: float = 3.0) -> bool:
 
 def _probe_chain(chain_id: str, timeout: float = 6.0) -> dict:
     """Probe one chain: primary RPC + TCP fallback diagnostics."""
-    from .indexer.rpc_nodes import rpc_urls, probe_node as _probe
+    from .chain_registry import ChainUnavailable
+    from .indexer.rpc_nodes import probe_node as _probe, rpc_urls
 
     cfg = get_chains()[chain_id]
-    urls = rpc_urls(chain_id)
+    try:
+        urls = rpc_urls(chain_id)
+    except ChainUnavailable:
+        urls = []
     primary = urls[0] if urls else ""
 
     result = {

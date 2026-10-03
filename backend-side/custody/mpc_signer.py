@@ -30,12 +30,14 @@ Guard points (stubbed but documented):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Callable, Optional
 
 from .audit import AuditAction, write_audit_log
-from .config import Network, ensure_hot_wallet, get_chain
+from .chain_adapters import get_adapter
+from .config import ensure_hot_wallet, get_chain
 from .rate_limit import RateLimitExceeded, rate_limiter
 
 logger = logging.getLogger("custody.signer")
@@ -61,15 +63,14 @@ class UnsignedTx:
     No private key material is ever placed here.
     """
 
-    network: Network
+    chain_id: str
+    asset_key: str
     from_address: str  # custody-side EOA (user deposit EOA or hot wallet)
     to_address: str  # destination EOA (hot wallet or user receiver)
-    amount: float
+    amount: Decimal
     derivation_path: str  # path the vault should sign with
-    chain_id: str = ""  # config registry key (e.g. "ETH")
-    asset_key: str = ""  # asset/token key (e.g. "USDT-BSC")
     memo: Optional[str] = None  # TON memo attribution (kept in plaintext, not secret)
-    raw: dict[str, Any] = None  # network-specific extras (nonce, gas, etc.)
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -106,25 +107,17 @@ class MpcSigner:
         if tx.amount <= 0:
             raise SignerError("amount must be > 0")
         cfg = get_chain(tx.chain_id)
-        self._check_destination_format(tx.network, tx.to_address)
+        try:
+            get_adapter(tx.chain_id).validate_address(tx.to_address)
+        except ValueError as exc:
+            raise SignerError(str(exc)) from exc
         # Dust guard: do not sweep/withdraw below a sane floor.
-        min_amount = (cfg.deposit_threshold or 0) * 0.1
+        min_amount = (cfg.deposit_threshold or Decimal("0")) * Decimal("0.1")
         if tx.amount < min_amount:
             raise SignerError(f"amount below dust floor {min_amount}")
         # Policy routing: sweeper MUST go to the chain hot wallet.
         if policy is SignPolicy.SWEEPER and tx.to_address != ensure_hot_wallet(tx.chain_id):
             raise SignerError("sweeper destination must be the hot wallet")
-
-    @staticmethod
-    def _check_destination_format(network: Network, address: str) -> None:
-        if network in (Network.ETH, Network.BSC) and not address.startswith("0x"):
-            raise SignerError("invalid EVM destination")
-        if network is Network.TRX and not (address.startswith("T") or address.startswith("0x")):
-            raise SignerError("invalid TRX destination")
-        if network is Network.SOL and len(address) < 32:
-            raise SignerError("invalid SOL destination")
-        if network is Network.TON and not address:
-            raise SignerError("invalid TON destination")
 
     # ---- Guard point 3: rate limiting ----
     def enforce_rate_limit(self, actor_id: str, policy: SignPolicy) -> None:
@@ -162,11 +155,12 @@ class MpcSigner:
             entity_type="UnsignedTx",
             entity_id=idempotency_key,
             metadata={
-                "network": tx.network.value,
+                "chain_id": tx.chain_id,
+                "asset_key": tx.asset_key,
                 "policy": policy.value,
                 "from": tx.from_address,
                 "to": tx.to_address,
-                "amount": tx.amount,
+                "amount": str(tx.amount),
                 "memo": tx.memo,
             },
         )
@@ -184,9 +178,14 @@ class MpcSigner:
             action=AuditAction.BROADCAST,
             entity_type="Tx",
             entity_id=tx_hash,
-            metadata={"network": tx.network.value, "policy": policy.value},
+            metadata={
+                "chain_id": tx.chain_id,
+                "asset_key": tx.asset_key,
+                "amount": str(tx.amount),
+                "policy": policy.value,
+            },
         )
-        logger.info("broadcasted %s policy=%s tx=%s", tx.network.value, policy.value, tx_hash)
+        logger.info("broadcasted %s policy=%s tx=%s", tx.chain_id, policy.value, tx_hash)
         return SignResult(tx_hash=tx_hash, signed_payload_ref=signed_ref)
 
     # ---- Optional simulation hook ----
@@ -202,12 +201,12 @@ class MpcSigner:
         descriptor (network + raw tx + derivation path). Never returns a key.
         """
         adapter = self._adapter or _get_adapter()
-        return adapter.sign(tx.network.value, tx.raw or {}, tx.derivation_path, idempotency_key)
+        return adapter.sign(tx.chain_id, tx.raw, tx.derivation_path, idempotency_key)
 
     def _broadcast(self, tx: UnsignedTx, signed_ref: str) -> str:
         """Broadcast signed tx via the adapter; returns tx_hash."""
         adapter = self._adapter or _get_adapter()
-        return adapter.broadcast(tx.network.value, signed_ref)
+        return adapter.broadcast(tx.chain_id, signed_ref)
 
 
 def _get_adapter():

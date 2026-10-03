@@ -83,7 +83,8 @@ def main():
         r = call("WD REQUEST", "POST", "/api/withdrawals/request",
                   json={"subject_user_id": SUBJECT, "network": "BSC",
                         "to_address": "0x0000000000000000000000000000000000000002",
-                        "amount": 0.5}, headers=H)
+                        "amount": 0.5,
+                        "idempotency_key": "smoke-withdrawal-cust-1001-bsc-001"}, headers=H)
         wid = r.json().get("id")
 
         # operator may NOT approve (RBAC: admin-only)

@@ -1,0 +1,16 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["backend-side/*_dist", "front-side/dist", "backend-side/migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "mpc_exchange.settings"
+pythonpath = ["backend-side"]
+testpaths = ["backend-side/custody/tests", "backend-side/ops"]
+python_files = ["test*.py"]

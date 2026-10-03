@@ -10,7 +10,10 @@ class CustodyConfig(AppConfig):
     def ready(self):
         # Seed config-registry data (assets + hot wallets) once migrations
         # have created the tables. Idempotent (upsert by unique key).
-        from . import config
+        from . import (
+            checks,  # noqa: F401 - register deployment safety checks
+            config,
+        )
         from .models import Asset, HotWallet
 
         def _seed(sender, **kwargs):
@@ -25,6 +28,9 @@ class CustodyConfig(AppConfig):
                         "decimals": a.decimals,
                         "deposit_threshold": config.effective_deposit_threshold(a),
                         "enabled": a.enabled,
+                        "deposit_supported": a.deposit_supported,
+                        "withdrawal_supported": a.withdrawal_supported,
+                        "sweep_supported": a.sweep_supported,
                     },
                 )
             for cid, c in config.get_chains().items():
@@ -33,4 +39,6 @@ class CustodyConfig(AppConfig):
                     defaults={"address": c.hot_wallet_address or ""},
                 )
 
-        post_migrate.connect(_seed, sender=self)
+        post_migrate.connect(
+            _seed, sender=self, weak=False, dispatch_uid="custody.seed_runtime_config"
+        )

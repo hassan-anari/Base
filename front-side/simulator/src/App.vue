@@ -139,6 +139,7 @@ const stateVars = reactive({
   amount: '0.5',
   sweep_id: '',
   wd_id: '',
+  idempotency_key: crypto.randomUUID(),
 })
 
 const currentScenario = computed(() => scenarioById(selectedScenario.value))
@@ -287,6 +288,7 @@ function resetState() {
     amount: '0.5',
     sweep_id: '',
     wd_id: '',
+    idempotency_key: crypto.randomUUID(),
   })
   scenarioLog.value = []
   results.value = []

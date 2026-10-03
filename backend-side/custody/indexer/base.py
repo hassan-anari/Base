@@ -17,10 +17,15 @@ Reorg handling (approach, implemented in comments / stubs):
           auto-reverse on-chain; log + alert).
   - Finality = (chain_head - deposit.block) >= network.confirmations.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+
+class IndexerUnavailable(RuntimeError):
+    """No authoritative balance could be obtained from indexer infrastructure."""
 
 
 @dataclass
@@ -68,6 +73,7 @@ class IndexerClient:
           unset                      -> live
         """
         import os
+
         mode = os.environ.get("CUSTODY_INDEXER_MODE", "live").strip().lower()
         return mode == "stub"
 
@@ -87,13 +93,15 @@ class IndexerClient:
             ],
         )
 
-    def get_txs(self, address: str, after_block: Optional[int] = None,
-                memo: Optional[str] = None) -> List[DepositEvent]:
+    def get_txs(
+        self, address: str, after_block: Optional[int] = None, memo: Optional[str] = None
+    ) -> List[DepositEvent]:
         raise NotImplementedError
 
     # ---- Reorg support (stub) ----
-    def handle_reorg(self, address: str, known_block: int,
-                     canonical_block: int) -> List[DepositEvent]:
+    def handle_reorg(
+        self, address: str, known_block: int, canonical_block: int
+    ) -> List[DepositEvent]:
         """Detect deposits that were reverted between known_block and the
         current canonical chain. Returns events to UNWIND."""
         # Production: query indexer for canonical deposits at/after known_block

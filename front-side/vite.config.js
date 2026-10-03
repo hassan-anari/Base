@@ -14,7 +14,7 @@ export default defineConfig({
   base,
   server: { port: 5173, proxy: { '/api': 'http://localhost:8000' } },
   build: {
-    outDir: '../backend/frontend_dist',
+    outDir: '../backend-side/frontend_dist',
     emptyOutDir: true,
     // Keep asset filenames stable for whitenoise immutable caching.
     assetsDir: 'assets',

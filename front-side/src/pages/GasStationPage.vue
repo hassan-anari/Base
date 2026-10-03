@@ -97,7 +97,9 @@
           </div>
           <div>
             <div class="text-slate-400">Native Balance</div>
-            <div class="text-slate-200">{{ e.native_balance }}</div>
+            <div class="text-slate-200">
+              {{ e.balance_status === 'AVAILABLE' ? e.native_balance : 'Unavailable' }}
+            </div>
           </div>
           <div>
             <div class="text-slate-400">Per-Topup Grant</div>
@@ -132,6 +134,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { GasStation } from '../api.js'
 import { toast } from '../toast.js'
+import { createWithdrawalIntentTracker } from '../withdrawalIntent.js'
 
 const entries = ref([])
 const loading = ref(false)
@@ -139,6 +142,7 @@ const showTopup = ref(false)
 const topupLoading = ref(false)
 const topupResult = ref(null)
 const topupError = ref(null)
+const topupIntent = createWithdrawalIntentTracker()
 const topupForm = ref({
   chain_id: '',
   to_address: '',
@@ -163,6 +167,7 @@ async function refresh() {
 }
 
 function openTopup(entry) {
+  topupIntent.reset()
   topupResult.value = null
   topupError.value = null
   topupForm.value = {
@@ -190,9 +195,12 @@ async function submitTopup() {
       amount: Number(topupForm.value.amount),
       memo: topupForm.value.memo || null,
     }
+    const fingerprint = Object.values(payload).join('|')
+    payload.idempotency_key = topupIntent.keyFor(fingerprint)
     const { data } = await GasStation.topup(payload)
     topupResult.value = data
     toast.success('Top-up broadcast')
+    topupIntent.reset()
     showTopup.value = false
     // Refresh balances to reflect the new state.
     refresh()

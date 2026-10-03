@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [vue()],
   base: '/simulator/',
   build: {
-    outDir: resolve(__dirname, '../backend/simulator_dist'),
+    outDir: resolve(__dirname, '../backend-side/simulator_dist'),
     emptyOutDir: true,
     assetsDir: 'assets',
     manifest: false,

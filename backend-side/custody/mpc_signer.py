@@ -3,8 +3,9 @@ MPC Signer abstraction + policy enforcement.
 
 SECURITY BOUNDARY
 -----------------
-- Django NEVER handles raw MPC key material. It only sends *unsigned
-  transaction descriptors* + a *policy* to a signing service adapter.
+- A future vendor adapter must keep MPC key material outside Django and accept
+  only unsigned descriptors. The explicit local demo adapter is an exception:
+  it derives complete private keys in-process and is not production MPC.
 - Every signing request must be (a) authorized, (b) validated, (c) rate-limited,
   and (d) audited. See the guard points below.
 - We never log secrets. Signing responses (tx_hash) are safe to log; raw
@@ -25,15 +26,16 @@ Guard points (stubbed but documented):
   6. sign()                 -> call vendor adapter (never returns raw key)
   7. broadcast()            -> send signed tx to network; store tx_hash
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .audit import AuditAction, write_audit_log
-from .config import Network, get_chain, ensure_hot_wallet
+from .config import Network, ensure_hot_wallet, get_chain
 from .rate_limit import RateLimitExceeded, rate_limiter
 
 logger = logging.getLogger("custody.signer")
@@ -58,13 +60,14 @@ class UnsignedTx:
     Django builds this; the MPC adapter serializes it for the vault.
     No private key material is ever placed here.
     """
+
     network: Network
-    from_address: str          # custody-side EOA (user deposit EOA or hot wallet)
-    to_address: str            # destination EOA (hot wallet or user receiver)
+    from_address: str  # custody-side EOA (user deposit EOA or hot wallet)
+    to_address: str  # destination EOA (hot wallet or user receiver)
     amount: float
-    derivation_path: str       # path the vault should sign with
-    chain_id: str = ""         # config registry key (e.g. "ETH")
-    asset_key: str = ""        # asset/token key (e.g. "USDT-BSC")
+    derivation_path: str  # path the vault should sign with
+    chain_id: str = ""  # config registry key (e.g. "ETH")
+    asset_key: str = ""  # asset/token key (e.g. "USDT-BSC")
     memo: Optional[str] = None  # TON memo attribution (kept in plaintext, not secret)
     raw: dict[str, Any] = None  # network-specific extras (nonce, gas, etc.)
 
@@ -140,6 +143,7 @@ class MpcSigner:
         policy: SignPolicy,
         *,
         idempotency_key: str,
+        before_sign: Callable[[], None] | None = None,
     ) -> SignResult:
         """Authorized, validated, rate-limited, audited sign+broadcast.
 
@@ -168,6 +172,8 @@ class MpcSigner:
         )
         # 5. simulate (optional stub)
         self._simulate(tx)
+        if before_sign:
+            before_sign()
         # 6. sign (adapter call; never returns raw key)
         signed_ref = self._sign(tx, idempotency_key)
         # 7. broadcast
@@ -196,8 +202,7 @@ class MpcSigner:
         descriptor (network + raw tx + derivation path). Never returns a key.
         """
         adapter = self._adapter or _get_adapter()
-        return adapter.sign(tx.network.value, tx.raw or {}, tx.derivation_path,
-                            idempotency_key)
+        return adapter.sign(tx.network.value, tx.raw or {}, tx.derivation_path, idempotency_key)
 
     def _broadcast(self, tx: UnsignedTx, signed_ref: str) -> str:
         """Broadcast signed tx via the adapter; returns tx_hash."""
@@ -207,6 +212,7 @@ class MpcSigner:
 
 def _get_adapter():
     from .signer_adapter import get_adapter
+
     return get_adapter()
 
 

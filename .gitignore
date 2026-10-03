@@ -11,6 +11,9 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+node_modules/
+backend-side/frontend_dist/
+backend-side/simulator_dist/
 downloads/
 eggs/
 .eggs/

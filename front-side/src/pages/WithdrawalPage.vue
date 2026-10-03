@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { Withdrawals, NETWORKS } from '../api.js'
 import { session } from '../store.js'
 import { toasts } from '../toast.js'
+import { createWithdrawalIntentTracker } from '../withdrawalIntent.js'
 
 // Operator console: the operator creates withdrawals ON BEHALF OF a subject
 // customer, but APPROVAL is admin-only (RBAC enforced on the backend).
@@ -12,6 +13,7 @@ const network = ref('BSC')
 const toAddress = ref('')
 const amount = ref('')
 const requesting = ref(false)
+const intentTracker = createWithdrawalIntentTracker()
 
 const queue = ref([])   // pending/approved items awaiting admin action (admin only)
 const mine = ref([])    // all withdrawals (operator visibility)
@@ -60,10 +62,14 @@ async function submitRequest() {
   }
   requesting.value = true
   try {
+    const values = [subject.value.trim(), network.value, toAddress.value.trim(), amount.value, ''].join('|')
+    const idempotencyKey = intentTracker.keyFor(values)
     const { data } = await Withdrawals.request(
-      subject.value.trim(), network.value, toAddress.value.trim(), parseFloat(amount.value)
+      subject.value.trim(), network.value, toAddress.value.trim(), parseFloat(amount.value),
+      null, idempotencyKey,
     )
     toasts.push({ id: Date.now(), message: `Withdrawal #${data.id} created (PENDING_APPROVAL)`, type: 'success' })
+    intentTracker.reset()
     toAddress.value = ''; amount.value = ''
     refreshMine(); refreshQueue()
   } catch (e) {
@@ -96,6 +102,8 @@ async function deny(id, notes = '') {
 const statusClass = (s) => ({
   'PENDING_APPROVAL': 'chip-brand',
   'APPROVED': 'chip-accent',
+  'PROCESSING': 'chip-accent',
+  'RECONCILIATION_REQUIRED': 'chip-danger',
   'BROADCASTED': 'chip-accent',
   'CONFIRMED': 'chip-accent',
   'DENIED': 'chip-danger',

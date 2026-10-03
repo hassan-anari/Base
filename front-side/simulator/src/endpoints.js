@@ -6,7 +6,7 @@
 // body/params values support {{var}} interpolation from scenario state.
 // Available scenario vars: subject_user_id, network, asset_key, address,
 // memo, sweep_id, wd_id, alert_id, node_id, block_id,
-// chain_id, to_address, amount, address_index.
+// chain_id, to_address, amount, address_index, idempotency_key.
 
 export const NETWORKS = ['ETH', 'BSC', 'TRX', 'SOL', 'TON']
 
@@ -64,7 +64,7 @@ export const ENDPOINTS = [
     method: 'GET',
     path: '/api/sweeps/{sweep_id}',
     role: 'any',
-    desc: 'Poll a SweepJob status (CREATED / GAS_TOPUP / SWEEP_BROADCASTED / CONFIRMED / FAILED).',
+    desc: 'Poll sweep status, including manual RECONCILIATION_REQUIRED outcomes.',
   },
   {
     id: 'address_resolve',
@@ -106,6 +106,7 @@ export const ENDPOINTS = [
       to_address: '{{to_address}}',
       amount: '{{amount}}',
       asset_key: '{{asset_key}}',
+      idempotency_key: '{{idempotency_key}}',
     },
   },
   {

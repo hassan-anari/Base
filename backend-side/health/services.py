@@ -152,30 +152,35 @@ def probe_pending_jobs() -> Dict[str, Any]:
     """Detect stuck custody flows that need operator attention."""
     try:
         from datetime import timedelta
-        from custody.models import SweepJob, WithdrawalRequest
+        from custody.models import GasTopupIntent, SweepJob, WithdrawalRequest
         # In-flight sweeps older than 30 min => likely stuck.
         stuck_cutoff = dj_timezone.now() - timedelta(minutes=30)
         stuck_sweeps = SweepJob.objects.filter(
             status__in=("CREATED", "GAS_TOPUP_REQUIRED", "GAS_TOPUP_BROADCASTED",
-                        "SWEEP_BROADCASTED")).filter(
+                        "SWEEP_BROADCASTED", "RECONCILIATION_REQUIRED")).filter(
             created_at__lt=stuck_cutoff).count()
         # Withdrawals pending approval (not a fault, but operator load).
         pending_wd = WithdrawalRequest.objects.filter(
             status="PENDING_APPROVAL").count()
         # Withdrawals approved but never broadcast (older than 30 min).
         stuck_wd = WithdrawalRequest.objects.filter(
-            status="APPROVED", updated_at__lt=stuck_cutoff).count()
+            status__in=("APPROVED", "PROCESSING", "RECONCILIATION_REQUIRED"),
+            updated_at__lt=stuck_cutoff).count()
+        uncertain_gas = GasTopupIntent.objects.filter(
+            status="RECONCILIATION_REQUIRED").count()
 
         status = "OK"
         detail = "no stuck jobs"
-        if stuck_sweeps or stuck_wd:
+        if stuck_sweeps or stuck_wd or uncertain_gas:
             status = "DEGRADED"
             detail = (f"{stuck_sweeps} stuck sweep(s), "
-                      f"{stuck_wd} stuck withdrawal(s)")
+                      f"{stuck_wd} stuck withdrawal(s), "
+                      f"{uncertain_gas} gas top-up(s) requiring reconciliation")
         return {"status": status, "detail": detail,
                 "metric": {"stuck_sweeps": stuck_sweeps,
                            "pending_withdrawals": pending_wd,
-                           "stuck_withdrawals": stuck_wd}}
+                           "stuck_withdrawals": stuck_wd,
+                           "uncertain_gas_topups": uncertain_gas}}
     except Exception as e:  # noqa: BLE001
         return {"status": "NA", "detail": f"job probe error: {e}", "metric": {}}
 

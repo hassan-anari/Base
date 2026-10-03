@@ -1,24 +1,19 @@
 """
 Per-chain + per-asset configuration for the currently implemented adapters.
 
-Why config-driven?
--------------------
-A real exchange needs to:
-  * support custom EVM chains (Polygon, Arbitrum, Base, Avalanche, your own
-    L2, etc.) WITHOUT code changes,
-  * support multiple assets per chain (native coin + tokens like USDT, USDC),
-  * keep deposit thresholds / confirmation rules per (chain, asset),
-  * plug each chain/asset into its indexer + MPC signing adapter.
+The registries describe the fixed adapters currently present in this codebase.
+Adding arbitrary chains still requires code changes to ``Network`` and the
+indexer/signer factories. Token entries are metadata only until their explicit
+custody capability flags are enabled alongside reviewed adapters.
 
 We achieve this with two registries:
 
   CHAIN_REGISTRY : chain_id (e.g. "ETH", "BSC", "BASE", "MYL2") -> ChainConfig
   ASSET_REGISTRY : asset_key (e.g. "ETH", "USDT-BSC")          -> AssetConfig
 
-Both are seeded from DEFAULT_* dicts and can be extended at runtime by an
-admin (DB-backed `ChainConfig` / `AssetConfig` rows loaded on startup).
-
-No secrets live here. MPC key material never touches Django.
+The database is seeded for Ops visibility but is not loaded back into these
+runtime registries. The explicit local demo signer handles complete private
+keys inside Django; a future real vendor adapter must not.
 """
 
 from __future__ import annotations
@@ -70,6 +65,9 @@ class AssetConfig:
     deposit_threshold: float | None = None  # overrides chain default if set
     sweep_dust: float = 0.0  # below this we leave it (dust) on EOA
     enabled: bool = True
+    deposit_supported: bool = True
+    withdrawal_supported: bool = True
+    sweep_supported: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +169,9 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         is_native=False,
         contract_address=_env("USDT_ETH_CONTRACT", "0x07081d8c4c165da3cba3c5c6e3c5c5c5c5c5c5c5c5"),
         deposit_threshold=1.0,
+        deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
     "USDT-BSC": AssetConfig(
         asset_key="USDT-BSC",
@@ -180,6 +181,9 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         is_native=False,
         contract_address=_env("USDT_BSC_CONTRACT", "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd"),
         deposit_threshold=1.0,
+        deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
     "USDT-TRX": AssetConfig(
         asset_key="USDT-TRX",
@@ -189,6 +193,9 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         is_native=False,
         contract_address=_env("USDT_TRX_CONTRACT", "TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs"),
         deposit_threshold=1.0,
+        deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
     "USDT-SOL": AssetConfig(
         asset_key="USDT-SOL",
@@ -198,6 +205,9 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         is_native=False,
         contract_address=_env("USDT_SOL_CONTRACT", "Es9VVM7aGzC8t7k1Z3e2jJ9qB5rF6nT8mY4pL3xN7wQ"),
         deposit_threshold=1.0,
+        deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
     "USDT-TON": AssetConfig(
         asset_key="USDT-TON",
@@ -209,6 +219,9 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
             "USDT_TON_CONTRACT", "EQD2Vuh8jFqW6o1XfF0ywz6t7m9o8n7s6r5t4y3u2i1o0p"
         ),
         deposit_threshold=1.0,
+        deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
 }
 
@@ -229,7 +242,7 @@ def get_network_config(network) -> ChainConfig:
 def get_chains() -> dict[str, ChainConfig]:
     """Return the active chain registry (defaults + DB overrides)."""
     chains = {k: v for k, v in DEFAULT_CHAINS.items()}
-    # (Optional) merge DB-backed ChainConfig rows here for runtime admin edits.
+    # Planned: reviewed DB-backed overrides. Runtime Ops rows are not loaded here.
     return chains
 
 
@@ -286,12 +299,24 @@ def native_asset_key(chain_id: str) -> str:
     return str(chain_id)
 
 
-def validate_chain_asset(chain_id: str, asset_key: str) -> AssetConfig:
+def validate_chain_asset(
+    chain_id: str, asset_key: str, capability: str | None = None
+) -> AssetConfig:
     """Resolve an asset and reject cross-chain operations."""
-    get_chain(chain_id)
-    asset = get_asset(asset_key)
+    try:
+        get_chain(chain_id)
+    except KeyError as exc:
+        raise ValueError(f"unknown chain {chain_id}") from exc
+    try:
+        asset = get_asset(asset_key)
+    except KeyError as exc:
+        raise ValueError(f"unknown asset {asset_key}") from exc
     if asset.chain_id != chain_id:
         raise ValueError(f"asset {asset_key} belongs to {asset.chain_id}, not {chain_id}")
+    if capability:
+        flag = f"{capability}_supported"
+        if not getattr(asset, flag, False):
+            raise ValueError(f"{capability} is not supported for asset {asset_key}")
     return asset
 
 
@@ -315,23 +340,16 @@ def get_confirmation_threshold(chain_id: str) -> int:
 def ensure_hot_wallet(chain_id: str) -> str:
     """Return the custody hot wallet address for `chain_id`.
 
-    Seeds a HotWallet row from config if one does not exist yet. This is the
-    MPC-controlled address that sweeps/withdrawals target (NEVER a user EOA).
+    The post-migrate seed creates configured rows; money-moving code never
+    creates or repairs them implicitly. Empty/missing/placeholder rows fail.
     """
     from .models import HotWallet  # local import; safe at call time
 
-    cfg = get_chain(chain_id)
-    address = cfg.hot_wallet_address
-    if not address:
-        existing = HotWallet.objects.filter(chain_id=chain_id).first()
-        address = existing.address if existing else ""
+    get_chain(chain_id)
+    existing = HotWallet.objects.filter(chain_id=chain_id).first()
+    address = existing.address.strip() if existing else ""
     if not address:
         raise RuntimeError(f"no custody hot wallet configured for {chain_id}")
-    obj, created = HotWallet.objects.get_or_create(
-        chain_id=chain_id,
-        defaults={"address": address},
-    )
-    if not created and not obj.address and cfg.hot_wallet_address:
-        obj.address = cfg.hot_wallet_address
-        obj.save(update_fields=["address"])
-    return obj.address
+    if address.endswith("_HOT_STUB"):
+        raise RuntimeError(f"placeholder custody hot wallet rejected for {chain_id}")
+    return address

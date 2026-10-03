@@ -28,7 +28,7 @@ const presets = [
   { m: 'GET',    p: '/api/sweeps/{sweep_id}', d: 'Sweep job status' },
 
   { m: 'POST',   p: '/api/withdrawals/request', d: 'Create PENDING_APPROVAL',
-    body: { subject_user_id: 'user1', network: 'ETH', to_address: '0x1111111111111111111111111111111111111111', amount: 0.01, asset_key: 'ETH' } },
+    body: { subject_user_id: 'user1', network: 'ETH', to_address: '0x1111111111111111111111111111111111111111', amount: 0.01, asset_key: 'ETH', idempotency_key: crypto.randomUUID() } },
   { m: 'GET',    p: '/api/withdrawals', d: 'My withdrawals (?subject=)',
     body: null, query: '?subject=user1' },
   { m: 'GET',    p: '/api/withdrawals/{wd_id}', d: 'Withdrawal detail' },

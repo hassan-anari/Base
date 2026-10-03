@@ -34,6 +34,9 @@ class Asset(models.Model):
     contract_address = models.CharField(max_length=128, null=True, blank=True)
     deposit_threshold = models.DecimalField(max_digits=40, decimal_places=18, null=True, blank=True)
     enabled = models.BooleanField(default=True)
+    deposit_supported = models.BooleanField(default=True)
+    withdrawal_supported = models.BooleanField(default=True)
+    sweep_supported = models.BooleanField(default=True)
 
     def __str__(self) -> str:
         return f"Asset({self.asset_key},{self.symbol})"
@@ -124,6 +127,7 @@ class WithdrawalRequest(models.Model):
         ("PENDING_APPROVAL", "PENDING_APPROVAL"),
         ("APPROVED", "APPROVED"),
         ("PROCESSING", "PROCESSING"),
+        ("RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"),
         ("DENIED", "DENIED"),
         ("BROADCASTED", "BROADCASTED"),
         ("CONFIRMED", "CONFIRMED"),
@@ -135,7 +139,7 @@ class WithdrawalRequest(models.Model):
     asset_key = models.CharField(max_length=32, db_index=True)
     to_address = models.CharField(max_length=128)
     amount = models.DecimalField(max_digits=40, decimal_places=18)
-    status = models.CharField(max_length=16, choices=STATUS, default="PENDING_APPROVAL")
+    status = models.CharField(max_length=32, choices=STATUS, default="PENDING_APPROVAL")
     admin_notes = models.TextField(null=True, blank=True)
     tx_hash = models.CharField(max_length=128, null=True, blank=True, db_index=True)
     # Idempotency key so retries of the same user request don't create dupes.
@@ -178,6 +182,7 @@ class SweepJob(models.Model):
         ("GAS_TOPUP_REQUIRED", "GAS_TOPUP_REQUIRED"),
         ("GAS_TOPUP_BROADCASTED", "GAS_TOPUP_BROADCASTED"),
         ("SWEEP_BROADCASTED", "SWEEP_BROADCASTED"),
+        ("RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"),
         ("CONFIRMED", "CONFIRMED"),
         ("FAILED", "FAILED"),
     ]
@@ -200,6 +205,28 @@ class SweepJob(models.Model):
                 name="uq_sweep_wallet_asset_round",
             ),
         ]
+
+
+class GasTopupIntent(models.Model):
+    """Persisted idempotency and reconciliation state for gas transfers."""
+
+    STATUS = [
+        ("CREATED", "CREATED"),
+        ("PROCESSING", "PROCESSING"),
+        ("BROADCASTED", "BROADCASTED"),
+        ("RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"),
+        ("FAILED", "FAILED"),
+    ]
+    idempotency_key = models.CharField(max_length=64, unique=True)
+    actor_id = models.CharField(max_length=64)
+    chain_id = models.CharField(max_length=16)
+    to_address = models.CharField(max_length=128)
+    amount = models.DecimalField(max_digits=40, decimal_places=18)
+    memo = models.CharField(max_length=128, null=True, blank=True)
+    status = models.CharField(max_length=32, choices=STATUS, default="CREATED")
+    tx_hash = models.CharField(max_length=128, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class AdminActionLog(models.Model):

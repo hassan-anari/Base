@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:sim": "vite build --config vite.sim.config.js",
     "build:all": "vite build && vite build --config vite.sim.config.js",
+    "test:contract": "node --test tests/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -30,8 +30,9 @@ class AddressRequest(Schema):
 
     @model_validator(mode="after")
     def _check_chain(self):
-        if self.network not in chain_ids():
-            raise ValueError(f"unknown network {self.network}")
+        validate_chain_asset(
+            self.network, self.asset_key or native_asset_key(self.network), "deposit"
+        )
         return self
 
 
@@ -75,11 +76,14 @@ class CreateWalletRequest(Schema):
     def _check(self):
         if self.networks:
             for n in self.networks:
-                if n not in chain_ids():
-                    raise ValueError(f"unknown network {n}")
+                validate_chain_asset(n, native_asset_key(n), "deposit")
         if self.asset_keys:
             for a in self.asset_keys:
-                get_asset(a)
+                try:
+                    asset = get_asset(a)
+                except KeyError as exc:
+                    raise ValueError(f"unknown asset {a}") from exc
+                validate_chain_asset(asset.chain_id, a, "deposit")
         return self
 
 
@@ -96,6 +100,13 @@ class BalanceCheckRequest(Schema):
     )
     network: str
     asset_key: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _check_asset(self):
+        validate_chain_asset(
+            self.network, self.asset_key or native_asset_key(self.network), "deposit"
+        )
+        return self
 
 
 class BalanceCheckResponse(Schema):
@@ -141,7 +152,7 @@ class WithdrawalRequestInput(Schema):
     @model_validator(mode="after")
     def _check_asset(self):
         ak = self.asset_key or native_asset_key(self.network)
-        validate_chain_asset(self.network, ak)
+        validate_chain_asset(self.network, ak, "withdrawal")
         return self
 
 
@@ -173,7 +184,8 @@ class GasStationEntry(Schema):
     kind: str
     gas_station_address: str  # MPC-controlled EOA that pays gas/topups
     hot_wallet_address: str  # sweep/withdrawal target (also an EOA)
-    native_balance: float  # current gas-station native balance
+    native_balance: Optional[float]  # null when infrastructure is unavailable
+    balance_status: str  # AVAILABLE | UNAVAILABLE
     gas_topup_amount: float  # per-topup grant configured
     sweep_count: int  # number of sweeps funded from this station
     last_topup_at: Optional[str] = None
@@ -196,6 +208,7 @@ class GasStationTopupRequest(Schema):
         min_length=1, max_length=128, description="destination EOA (hot wallet or deposit EOA)"
     )
     amount: float = Field(gt=0, description="top-up amount in native asset")
+    idempotency_key: str = Field(min_length=8, max_length=64)
     memo: Optional[str] = Field(None, description="TON memo attribution (if required)")
 
     @model_validator(mode="after")

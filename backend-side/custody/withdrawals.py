@@ -31,7 +31,6 @@ from .audit import AuditAction, write_audit_log
 from .config import Network, ensure_hot_wallet, native_asset_key, validate_chain_asset
 from .models import WithdrawalRequest
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
-from .rate_limit import rate_limiter
 
 logger = logging.getLogger("custody.withdrawals")
 
@@ -46,7 +45,7 @@ def create_request(
 ) -> WithdrawalRequest:
     """User submits a withdrawal. Stays PENDING_APPROVAL until admin acts."""
     asset_key = asset_key or native_asset_key(network)  # default to native asset
-    validate_chain_asset(network, asset_key)
+    validate_chain_asset(network, asset_key, "withdrawal")
     if idempotency_key is None:
         raise ValueError("idempotency_key is required")
     requested = {
@@ -69,6 +68,14 @@ def approve(admin_id: str, req_id: int, notes: str | None = None) -> WithdrawalR
     """Admin approval. Required before any broadcast."""
     with transaction.atomic():
         req = WithdrawalRequest.objects.select_for_update().get(id=req_id)
+        if req.status in {
+            "APPROVED",
+            "PROCESSING",
+            "BROADCASTED",
+            "CONFIRMED",
+            "RECONCILIATION_REQUIRED",
+        }:
+            return req
         if req.status != "PENDING_APPROVAL":
             raise ValueError(f"cannot approve in state {req.status}")
         req.status = "APPROVED"
@@ -108,14 +115,23 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
 
     MUST only run for APPROVED requests. Idempotent on status transition.
     """
-    with transaction.atomic():
-        req = WithdrawalRequest.objects.select_for_update().get(id=req_id)
-        if req.status != "APPROVED":
-            raise ValueError("withdrawal must be APPROVED before broadcast")
-        req.status = "PROCESSING"
-        req.save(update_fields=["status", "updated_at"])
-        rate_limiter.consume(f"sign:{admin_id}:WITHDRAWAL", limit=10, window_seconds=60)
-        validate_chain_asset(req.chain_id, req.asset_key)
+    req = WithdrawalRequest.objects.get(id=req_id)
+    if req.status != "APPROVED":
+        raise ValueError("withdrawal must be APPROVED before broadcast")
+    validate_chain_asset(req.chain_id, req.asset_key, "withdrawal")
+
+    claimed_by_this_call = False
+
+    def claim_after_guards():
+        nonlocal claimed_by_this_call
+        with transaction.atomic():
+            claimed = WithdrawalRequest.objects.select_for_update().get(id=req_id)
+            if claimed.status != "APPROVED":
+                raise ValueError("withdrawal must be APPROVED before broadcast")
+            claimed.status = "PROCESSING"
+            claimed.save(update_fields=["status", "updated_at"])
+            claimed_by_this_call = True
+
     try:
         net = Network(req.chain_id)
         hot = ensure_hot_wallet(req.chain_id)
@@ -135,11 +151,13 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
             tx=tx,
             policy=SignPolicy.WITHDRAWAL,
             idempotency_key=req.idempotency_key,
+            before_sign=claim_after_guards,
         )
     except Exception:
-        WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
-            status="FAILED", updated_at=timezone.now()
-        )
+        if claimed_by_this_call:
+            WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
+                status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
+            )
         raise
     with transaction.atomic():
         req = WithdrawalRequest.objects.select_for_update().get(pk=req.pk)

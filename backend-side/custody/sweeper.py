@@ -43,7 +43,7 @@ from .config import (
     is_memo_required,
     validate_chain_asset,
 )
-from .gas_station import ensure_gas
+from .gas_station import AmbiguousBroadcastError, ensure_gas
 from .indexer.factory import get_indexer
 from .models import Deposit, SweepJob, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
@@ -80,7 +80,7 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
     """
     net = Network(user_wallet.chain_id)
     cfg = get_chain(user_wallet.chain_id)
-    asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key)
+    asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "sweep")
     threshold = effective_deposit_threshold(asset, cfg)
 
     # Idempotency: if a sweep is already in flight, do not start another.
@@ -145,6 +145,9 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
         # Gas top-up step (if needed) -> then sweep. Run in background in prod.
         try:
             _run_sweep(job, actor_id)
+        except AmbiguousBroadcastError:
+            SweepJob.objects.filter(pk=job.pk).update(status="RECONCILIATION_REQUIRED")
+            raise
         except Exception:
             SweepJob.objects.filter(pk=job.pk).update(status="FAILED", completed_at=timezone.now())
             raise
@@ -165,11 +168,7 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
         # STUB gas check; assume needed for skeleton.
         job.status = "GAS_TOPUP_REQUIRED"
         job.save(update_fields=["status"])
-        if not ensure_gas(job.user_wallet):
-            job.status = "FAILED"
-            job.completed_at = timezone.now()
-            job.save(update_fields=["status", "completed_at"])
-            raise RuntimeError("gas top-up failed; sweep aborted")
+        ensure_gas(job.user_wallet, idempotency_key=f"gas_topup:sweep:{job.id}")
         job.status = "GAS_TOPUP_BROADCASTED"
         job.save(update_fields=["status"])
 
@@ -185,12 +184,15 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
         memo=job.user_wallet.memo if is_memo_required(net) else None,
     )
     signer = get_signer()
-    res = signer.sign_and_broadcast(
-        actor_id=actor_id,
-        tx=tx,
-        policy=SignPolicy.SWEEPER,
-        idempotency_key=job.idempotency_key,
-    )
+    try:
+        res = signer.sign_and_broadcast(
+            actor_id=actor_id,
+            tx=tx,
+            policy=SignPolicy.SWEEPER,
+            idempotency_key=job.idempotency_key,
+        )
+    except Exception as exc:
+        raise AmbiguousBroadcastError("sweep outcome is unknown; reconcile before retry") from exc
     job.status = "SWEEP_BROADCASTED"
     job.tx_hash = res.tx_hash
     job.save(update_fields=["status", "tx_hash"])

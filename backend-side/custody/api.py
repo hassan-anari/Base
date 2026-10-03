@@ -44,6 +44,7 @@ from .config import (
 )
 from .gas_station import admin_topup
 from .hd_wallet import derive_deposit_address, stable_user_index
+from .indexer.base import IndexerUnavailable
 from .indexer.factory import get_indexer
 from .models import Deposit, HotWallet, SweepJob, UserWallet, WithdrawalRequest
 from .rate_limit import RateLimitExceeded, rate_limiter
@@ -130,6 +131,9 @@ class AssetConfigDTO(Schema):
     is_native: bool
     contract_address: Optional[str] = None
     deposit_threshold: float
+    deposit_supported: bool
+    withdrawal_supported: bool
+    sweep_supported: bool
 
 
 class AppConfigResponse(Schema):
@@ -171,6 +175,9 @@ def app_config(request):
             is_native=a.is_native,
             contract_address=a.contract_address or None,
             deposit_threshold=effective_deposit_threshold(a),
+            deposit_supported=a.deposit_supported,
+            withdrawal_supported=a.withdrawal_supported,
+            sweep_supported=a.sweep_supported,
         )
         assets.append(dto)
         by_chain.setdefault(a.chain_id, []).append(dto)
@@ -242,7 +249,7 @@ def wallet_address(
     subject = payload.subject_user_id
     net = payload.network
     asset_key = payload.asset_key or native_asset_key(net)  # default to native asset
-    validate_chain_asset(net, asset_key)
+    validate_chain_asset(net, asset_key, "deposit")
     idx = payload.address_index if payload.address_index is not None else 0
     # Compliance screening: block disabled asset/chain before provisioning.
     check_deposit_asset(net, asset_key)
@@ -373,7 +380,7 @@ def create_wallet(
 
     out: list[WalletAddressDTO] = []
     for net, ak in targets:
-        validate_chain_asset(net, ak)
+        validate_chain_asset(net, ak, "deposit")
         w = _ensure_deposit_address(subject, net, ak, actor_id=operator_id)
         out.append(
             WalletAddressDTO(
@@ -410,7 +417,7 @@ def balance_check(
     chain_id = payload.network
     asset_key = payload.asset_key or native_asset_key(chain_id)
     asset = get_asset(asset_key)
-    validate_chain_asset(chain_id, asset_key)
+    validate_chain_asset(chain_id, asset_key, "deposit")
     w = UserWallet.objects.filter(
         user_id=subject, chain_id=chain_id, asset_key=asset_key, status="ACTIVE"
     ).first()
@@ -571,13 +578,14 @@ def gas_station(
         # Gas-station address == custody signing EOA (hot wallet funds topups).
         gas_addr = hot_addr or ""
         # Balances come from the indexer (stubbed locally; real on testnets).
-        bal = 0.0
-        try:
-            if not gas_addr:
-                raise RuntimeError("hot wallet unavailable")
-            bal = float(get_indexer(cid).get_balance(gas_addr).confirmed_balance)
-        except Exception:
-            bal = 0.0
+        bal = None
+        balance_status = "UNAVAILABLE"
+        if gas_addr:
+            try:
+                bal = float(get_indexer(cid).get_balance(gas_addr).confirmed_balance)
+                balance_status = "AVAILABLE"
+            except IndexerUnavailable:
+                pass
         sweep_count = SweepJob.objects.filter(user_wallet__chain_id=cid).count() if hot else 0
         entries.append(
             GasStationEntry(
@@ -587,6 +595,7 @@ def gas_station(
                 gas_station_address=gas_addr,
                 hot_wallet_address=hot_addr or "",
                 native_balance=bal,
+                balance_status=balance_status,
                 gas_topup_amount=cfg.gas_topup_amount,
                 sweep_count=sweep_count,
             )
@@ -612,13 +621,26 @@ def gas_station_topup(
       - destination must be a known hot wallet or active deposit EOA for the
         chain (prevents sending funds to an arbitrary address).
       - Fully audited (SIGN_REQUEST + BROADCAST) inside the signer.
-      - Idempotent per (chain, to, amount) via idempotency_key.
+      - Caller-supplied idempotency identifies one logical top-up intent;
+        same-key conflicting payloads are rejected.
     """
     actor_id, role = _current_user(authorization, x_user_id, x_role)
     require_operator(role)
     api_rate_limit(f"gas_topup:{actor_id}", limit=10, window=60)()
     # admin_topup validates amount>0, destination, and broadcasts via MPC signer.
-    res = admin_topup(actor_id, payload.chain_id, payload.to_address, payload.amount, payload.memo)
+    try:
+        res = admin_topup(
+            actor_id,
+            payload.chain_id,
+            payload.to_address,
+            payload.amount,
+            payload.idempotency_key,
+            payload.memo,
+        )
+    except ValueError as exc:
+        if "already used" in str(exc):
+            raise HttpError(409, str(exc)) from exc
+        raise
     write_audit_log(
         actor_id,
         AuditAction.GAS_TOPUP,
@@ -764,8 +786,12 @@ def admin_approve(
     admin_id, role = _current_user(authorization, x_user_id, x_role)
     require_admin(role)
     req = wd_approve(admin_id, wd_id, payload.admin_notes)
-    # After approval, broadcast (sign) automatically (still gated by APPROVED).
-    req = process_withdrawal(admin_id, wd_id)
+    # An endpoint retry returns terminal/in-flight state without rebroadcast.
+    if req.status == "APPROVED":
+        try:
+            req = process_withdrawal(admin_id, wd_id)
+        except RateLimitExceeded as exc:
+            raise HttpError(429, "signing rate limited; approved request may be retried") from exc
     return _wd_to_schema(req)
 
 

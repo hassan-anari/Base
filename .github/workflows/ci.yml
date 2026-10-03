@@ -8,6 +8,17 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wallet_mpc
+          POSTGRES_USER: wallet_mpc
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wallet_mpc -d wallet_mpc"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: backend-side
@@ -17,6 +28,11 @@ jobs:
       CUSTODY_DEMO_MODE: "true"
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-only-local-signer-passphrase
       CUSTODY_INDEXER_MODE: stub
+      DATABASE_URL: postgresql://wallet_mpc:ci-only-password@127.0.0.1:5432/wallet_mpc
+      POSTGRES_DB: wallet_mpc
+      POSTGRES_USER: wallet_mpc
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_HOST: 127.0.0.1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,19 +45,15 @@ jobs:
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
       - run: >-
-          ruff format --check custody/api.py custody/apps.py custody/checks.py
-          custody/config.py custody/gas_station.py custody/models.py custody/indexer/base.py
-          custody/indexer/bsc.py custody/indexer/eth.py custody/indexer/sol.py
-          custody/indexer/ton.py custody/indexer/trx.py custody/schemas.py
-          custody/signer_adapter.py custody/sweeper.py custody/withdrawals.py
-          custody/tests mpc_exchange/settings.py
+          ruff format --check custody/admin.py custody/api.py custody/apps.py
+          custody/config.py custody/gas_station.py custody/models.py custody/mpc_signer.py
+          custody/schemas.py custody/sweeper.py custody/withdrawals.py custody/tests
+          custody/migrations/0004_reconciliation_and_gas_intents.py
       - run: >-
-          ruff check custody/api.py custody/apps.py custody/checks.py
-          custody/config.py custody/gas_station.py custody/models.py custody/indexer/base.py
-          custody/indexer/bsc.py custody/indexer/eth.py custody/indexer/sol.py
-          custody/indexer/ton.py custody/indexer/trx.py custody/schemas.py
-          custody/signer_adapter.py custody/sweeper.py custody/withdrawals.py
-          custody/tests mpc_exchange/settings.py
+          ruff check custody/admin.py custody/api.py custody/apps.py
+          custody/config.py custody/gas_station.py custody/models.py custody/mpc_signer.py
+          custody/schemas.py custody/sweeper.py custody/withdrawals.py custody/tests
+          custody/migrations/0004_reconciliation_and_gas_intents.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -56,5 +68,6 @@ jobs:
           cache: npm
           cache-dependency-path: front-side/package-lock.json
       - run: npm ci
+      - run: npm run test:contract
       - run: npm run build
       - run: npm run build:sim

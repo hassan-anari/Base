@@ -11,8 +11,9 @@ and deployment packaging must build them into `backend-side/frontend_dist` and
 
 Withdrawal row locks prevent concurrent application workers from passing the
 same state guard at once. This is not end-to-end exactly-once delivery: a process
-or network failure between an external broadcast and the database commit still
-requires vendor-side idempotency and reconciliation in a future integration.
+or network failure after external work begins enters `RECONCILIATION_REQUIRED`.
+An operator must determine external state before retrying; vendor idempotency and
+automated reconciliation remain future integration work.
 
 ## Known high-priority follow-up work
 

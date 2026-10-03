@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { session } from './store.js'
+import { buildWithdrawalRequestBody } from './withdrawalIntent.js'
 
 // Real JWT auth: send the bearer token on every request.
 const api = axios.create({ baseURL: '/api' })
@@ -50,9 +51,11 @@ export const Stats = {
 
 export const Withdrawals = {
   // Operator creates a withdrawal ON BEHALF OF a subject customer.
-  request: (subjectUserId, network, toAddress, amount, assetKey = null) =>
+  request: (subjectUserId, network, toAddress, amount, assetKey, idempotencyKey) =>
     api.post('/withdrawals/request',
-      { subject_user_id: subjectUserId, network, to_address: toAddress, amount, asset_key: assetKey }),
+      buildWithdrawalRequestBody(
+        subjectUserId, network, toAddress, amount, assetKey, idempotencyKey,
+      )),
   // List withdrawals (optionally scoped to a subject customer).
   list: (subject = null) =>
     api.get('/withdrawals', { params: subject ? { subject } : {} }),
@@ -98,7 +101,7 @@ export const Blocklist = {
   update: (id, payload) => api.patch(`/ops/blocklist/${id}`, payload),
 }
 
-// Public registry of chains + assets (incl. USDT across every chain).
+// Public metadata registry; capability flags determine operational support.
 export const Config = {
   load: () => api.get('/config'),
 }

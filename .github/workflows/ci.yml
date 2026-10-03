@@ -46,14 +46,20 @@ jobs:
       - run: pytest
       - run: >-
           ruff format --check custody/admin.py custody/api.py custody/apps.py
-          custody/config.py custody/gas_station.py custody/models.py custody/mpc_signer.py
-          custody/schemas.py custody/sweeper.py custody/withdrawals.py custody/tests
+          custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
+          custody/ledger.py custody/models.py custody/mpc_signer.py custody/schemas.py
+          custody/sweeper.py custody/withdrawals.py custody/tests
           custody/migrations/0004_reconciliation_and_gas_intents.py
+          custody/migrations/0005_ledgertransaction_ledgeraccount_ledgerposting.py
+          custody/migrations/0006_ledgeraccount_ledger_account_valid_shape.py
       - run: >-
           ruff check custody/admin.py custody/api.py custody/apps.py
-          custody/config.py custody/gas_station.py custody/models.py custody/mpc_signer.py
-          custody/schemas.py custody/sweeper.py custody/withdrawals.py custody/tests
+          custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
+          custody/ledger.py custody/models.py custody/mpc_signer.py custody/schemas.py
+          custody/sweeper.py custody/withdrawals.py custody/tests
           custody/migrations/0004_reconciliation_and_gas_intents.py
+          custody/migrations/0005_ledgertransaction_ledgeraccount_ledgerposting.py
+          custody/migrations/0006_ledgeraccount_ledger_account_valid_shape.py
 
   frontend:
     runs-on: ubuntu-latest

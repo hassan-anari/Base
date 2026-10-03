@@ -1,4 +1,4 @@
-"""Django admin registration for the custody ledger/state models.
+"""Django admin registration for custody state and ledger models.
 
 These are the authoritative tables behind the on-chain custody engine:
 deposit EOAs, deposits, withdrawal requests, hot wallets, sweep jobs and the
@@ -14,6 +14,9 @@ from .models import (
     Deposit,
     GasTopupIntent,
     HotWallet,
+    LedgerAccount,
+    LedgerPosting,
+    LedgerTransaction,
     SweepJob,
     UserWallet,
     WithdrawalRequest,
@@ -124,3 +127,32 @@ class AdminActionLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+class ImmutableLedgerAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LedgerAccount)
+class LedgerAccountAdmin(ImmutableLedgerAdmin):
+    list_display = ("owner_type", "owner_id", "asset_key", "bucket", "created_at")
+    list_filter = ("owner_type", "asset_key", "bucket")
+
+
+@admin.register(LedgerTransaction)
+class LedgerTransactionAdmin(ImmutableLedgerAdmin):
+    list_display = ("event_key", "event_type", "asset_key", "ref_type", "ref_id", "created_at")
+    list_filter = ("event_type", "asset_key")
+
+
+@admin.register(LedgerPosting)
+class LedgerPostingAdmin(ImmutableLedgerAdmin):
+    list_display = ("transaction", "account", "amount", "created_at")
+    list_filter = ("account__asset_key",)

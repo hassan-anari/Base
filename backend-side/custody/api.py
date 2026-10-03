@@ -42,11 +42,13 @@ from .config import (
     native_asset_key,
     validate_chain_asset,
 )
+from .deposits import ingest_event
 from .gas_station import admin_topup
 from .hd_wallet import derive_deposit_address, stable_user_index
 from .indexer.base import IndexerUnavailable
 from .indexer.factory import get_indexer
-from .models import Deposit, HotWallet, SweepJob, UserWallet, WithdrawalRequest
+from .ledger import InsufficientFunds, user_balances
+from .models import Deposit, HotWallet, LedgerAccount, SweepJob, UserWallet, WithdrawalRequest
 from .rate_limit import RateLimitExceeded, rate_limiter
 from .schemas import (
     AddressRequest,
@@ -62,6 +64,8 @@ from .schemas import (
     GasStationListResponse,
     GasStationTopupRequest,
     GasStationTopupResponse,
+    InternalBalanceEntry,
+    InternalBalanceResponse,
     SweepStatusResponse,
     WalletAddressDTO,
     WithdrawalAdminAction,
@@ -427,13 +431,15 @@ def balance_check(
     bal = indexer.get_balance(
         w.deposit_address, memo=w.memo if is_memo_required(Network(chain_id)) else None
     )
+    for event in bal.deposit_events:
+        ingest_event(w, event)
     confirmed = float(bal.confirmed_balance)
     threshold = effective_deposit_threshold(asset)
     triggered = False
     job_id = None
     reason = None
     if confirmed > threshold:
-        triggered, job_id, reason = trigger_sweep(w, actor_id=operator_id)
+        triggered, job_id, reason = trigger_sweep(w, actor_id=operator_id, balance_result=bal)
     else:
         reason = "balance below threshold"
     return BalanceCheckResponse(
@@ -731,11 +737,47 @@ def withdrawal_request(
             asset_key=asset_key,
             idempotency_key=payload.idempotency_key,
         )
+    except InsufficientFunds as exc:
+        raise HttpError(409, str(exc)) from exc
     except ValueError as exc:
         if "already used" in str(exc):
             raise HttpError(409, str(exc)) from exc
         raise
     return _wd_to_schema(req)
+
+
+@api.get("/admin/ledger/balances/{subject_user_id}", response=InternalBalanceResponse)
+def internal_ledger_balances(
+    request,
+    subject_user_id: str,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_role: Optional[str] = Header(None),
+):
+    """Authoritative internal balances; never an on-chain address balance."""
+    _actor, role = _current_user(authorization, x_user_id, x_role)
+    require_operator(role)
+    assets = (
+        LedgerAccount.objects.filter(owner_type="USER", owner_id=subject_user_id)
+        .values_list("asset_key", flat=True)
+        .distinct()
+    )
+    entries = []
+    for asset_key in sorted(assets):
+        balances = user_balances(subject_user_id, asset_key)
+        entries.append(
+            InternalBalanceEntry(
+                asset_key=asset_key,
+                available_balance=str(balances["available"]),
+                reserved_balance=str(balances["reserved"]),
+                total_balance=str(balances["total"]),
+            )
+        )
+    return InternalBalanceResponse(
+        subject_user_id=subject_user_id,
+        source="authoritative_internal_ledger_not_on_chain_balance",
+        balances=entries,
+    )
 
 
 @api.get("/withdrawals", response=WithdrawalListResponse)

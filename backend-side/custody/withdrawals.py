@@ -24,11 +24,12 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
 from .config import Network, ensure_hot_wallet, native_asset_key, validate_chain_asset
+from .ledger import release_withdrawal, reserve_withdrawal, settle_withdrawal
 from .models import WithdrawalRequest
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
@@ -39,7 +40,7 @@ def create_request(
     user_id: str,
     network: str,
     to_address: str,
-    amount: float,
+    amount: Decimal,
     asset_key: str | None = None,
     idempotency_key: str | None = None,
 ) -> WithdrawalRequest:
@@ -48,20 +49,33 @@ def create_request(
     validate_chain_asset(network, asset_key, "withdrawal")
     if idempotency_key is None:
         raise ValueError("idempotency_key is required")
+    decimal_amount = Decimal(str(amount))
+    if decimal_amount <= 0:
+        raise ValueError("amount must be greater than zero")
     requested = {
         "user_id": user_id,
         "chain_id": network,
         "asset_key": asset_key,
         "to_address": to_address,
-        "amount": Decimal(str(amount)),
+        "amount": decimal_amount,
     }
-    req, created = WithdrawalRequest.objects.get_or_create(
-        idempotency_key=idempotency_key,
-        defaults={**requested, "status": "PENDING_APPROVAL"},
-    )
-    if not created and any(getattr(req, key) != value for key, value in requested.items()):
-        raise ValueError("idempotency_key was already used with different parameters")
-    return req
+    with transaction.atomic():
+        try:
+            # The unique key is the arbitration boundary. The savepoint keeps
+            # the outer transaction usable when a concurrent creator wins.
+            with transaction.atomic():
+                req = WithdrawalRequest.objects.create(
+                    idempotency_key=idempotency_key, **requested, status="PENDING_APPROVAL"
+                )
+            created = True
+        except IntegrityError:
+            req = WithdrawalRequest.objects.select_for_update().get(idempotency_key=idempotency_key)
+            created = False
+        if any(getattr(req, key) != value for key, value in requested.items()):
+            raise ValueError("idempotency_key was already used with different parameters")
+        if created:
+            reserve_withdrawal(req)
+        return req
 
 
 def approve(admin_id: str, req_id: int, notes: str | None = None) -> WithdrawalRequest:
@@ -95,8 +109,11 @@ def deny(admin_id: str, req_id: int, notes: str | None = None) -> WithdrawalRequ
     """Admin denial."""
     with transaction.atomic():
         req = WithdrawalRequest.objects.select_for_update().get(id=req_id)
+        if req.status == "DENIED":
+            return req
         if req.status != "PENDING_APPROVAL":
             raise ValueError(f"cannot deny in state {req.status}")
+        release_withdrawal(req)
         req.status = "DENIED"
         req.admin_notes = notes
         req.save(update_fields=["status", "admin_notes", "updated_at"])
@@ -183,7 +200,15 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
     return req
 
 
-def mark_confirmed(req_id: int) -> None:
-    req = WithdrawalRequest.objects.get(id=req_id)
-    req.status = "CONFIRMED"
-    req.save(update_fields=["status", "updated_at"])
+def mark_confirmed(req_id: int) -> WithdrawalRequest:
+    """Atomically settle a final on-chain withdrawal exactly once."""
+    with transaction.atomic():
+        req = WithdrawalRequest.objects.select_for_update().get(id=req_id)
+        if req.status == "CONFIRMED":
+            return req
+        if req.status != "BROADCASTED":
+            raise ValueError(f"cannot confirm withdrawal in state {req.status}")
+        settle_withdrawal(req)
+        req.status = "CONFIRMED"
+        req.save(update_fields=["status", "updated_at"])
+        return req

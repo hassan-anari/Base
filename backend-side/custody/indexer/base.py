@@ -11,8 +11,7 @@ Reorg handling (approach, implemented in comments / stubs):
   - Each returned deposit includes ``block`` and ``confirmations``.
   - If a previously-parsed deposit's block is no longer in the canonical chain
     (detected via reorg callback / re-scan), we UNWIND the ledger entry:
-        * mark the Deposit as reverted (or delete with an audit record),
-        * recompute user balance,
+        * mark the Deposit REVERTED and append its exact inverse journal entry,
         * if a sweep already moved funds, escalate to manual review (do NOT
           auto-reverse on-chain; log + alert).
   - Finality = (chain_head - deposit.block) >= network.confirmations.
@@ -21,6 +20,7 @@ Reorg handling (approach, implemented in comments / stubs):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import List, Optional
 
 
@@ -31,7 +31,7 @@ class IndexerUnavailable(RuntimeError):
 @dataclass
 class DepositEvent:
     tx_hash: str
-    amount: float
+    amount: Decimal
     block: int
     confirmations: int
     memo: Optional[str] = None
@@ -39,8 +39,8 @@ class DepositEvent:
 
 @dataclass
 class BalanceResult:
-    confirmed_balance: float
-    pending_balance: float = 0.0
+    confirmed_balance: Decimal
+    pending_balance: Decimal = Decimal("0")
     last_scanned_block: Optional[int] = None
     deposit_events: List[DepositEvent] = field(default_factory=list)
 
@@ -78,16 +78,19 @@ class IndexerClient:
         return mode == "stub"
 
     def _stub_balance(self, memo: Optional[str] = None) -> BalanceResult:
+        from custody.config import get_confirmation_threshold
+
+        confirmations = get_confirmation_threshold(str(self.network))
         return BalanceResult(
-            confirmed_balance=self.stub_funded_balance,
-            pending_balance=0.0,
+            confirmed_balance=Decimal(str(self.stub_funded_balance)),
+            pending_balance=Decimal("0"),
             last_scanned_block=1_000_000,
             deposit_events=[
                 DepositEvent(
                     tx_hash="0xstubdeposit",
-                    amount=self.stub_funded_balance,
+                    amount=Decimal(str(self.stub_funded_balance)),
                     block=999_999,
-                    confirmations=10,
+                    confirmations=confirmations,
                     memo=memo,
                 )
             ],

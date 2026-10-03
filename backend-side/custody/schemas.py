@@ -7,6 +7,7 @@ at the boundary (Ninja/Pydantic) before any business logic runs.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Optional
 
 from ninja import Schema
@@ -139,12 +140,12 @@ class WithdrawalRequestInput(Schema):
     network: str
     asset_key: Optional[str] = None
     to_address: str = Field(min_length=1, max_length=128)
-    amount: float = Field(gt=0)
+    amount: Decimal = Field(gt=0)
     idempotency_key: str = Field(min_length=8, max_length=64)
 
     @field_validator("amount")
     @classmethod
-    def _positive(cls, v: float) -> float:
+    def _positive(cls, v: Decimal) -> Decimal:
         if v <= 0:
             raise ValueError("amount must be > 0")
         return v
@@ -175,6 +176,19 @@ class WithdrawalAdminAction(Schema):
 
 class WithdrawalListResponse(Schema):
     items: list[WithdrawalRequestResponse]
+
+
+class InternalBalanceEntry(Schema):
+    asset_key: str
+    available_balance: str
+    reserved_balance: str
+    total_balance: str
+
+
+class InternalBalanceResponse(Schema):
+    subject_user_id: str
+    source: str
+    balances: list[InternalBalanceEntry]
 
 
 # ---------------- Gas station ----------------

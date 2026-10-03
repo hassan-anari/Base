@@ -9,9 +9,11 @@ from django.test import Client, TestCase, override_settings
 from custody.auth import create_token
 from custody.checks import custody_signer_configuration
 from custody.config import ensure_hot_wallet
+from custody.deposits import ingest_event
 from custody.gas_station import AmbiguousBroadcastError, admin_topup, ensure_gas
-from custody.indexer.base import BalanceResult, IndexerUnavailable
-from custody.models import HotWallet, SweepJob, UserWallet, WithdrawalRequest
+from custody.indexer.base import BalanceResult, DepositEvent, IndexerUnavailable
+from custody.ledger import ensure_accounts, post_transaction
+from custody.models import HotWallet, LedgerAccount, SweepJob, UserWallet, WithdrawalRequest
 from custody.rate_limit import RateLimitExceeded
 from custody.signer_adapter import LocalVault
 from custody.sweeper import trigger_sweep
@@ -42,6 +44,21 @@ def wallet(chain="ETH", asset="ETH"):
 class CustodyWorkflowTests(TestCase):
     def setUp(self):
         HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        ensure_accounts("customer", "ETH")
+        available = LedgerAccount.objects.get(
+            owner_type="USER", owner_id="customer", asset_key="ETH", bucket="AVAILABLE"
+        )
+        clearing = LedgerAccount.objects.get(
+            owner_type="SYSTEM", owner_id="custody", asset_key="ETH", bucket="CUSTODY_CLEARING"
+        )
+        post_transaction(
+            event_key="test:opening-funds",
+            event_type="DEPOSIT_CREDIT",
+            asset_key="ETH",
+            ref_type="TestFixture",
+            ref_id="opening",
+            postings=[(available, Decimal("100")), (clearing, Decimal("-100"))],
+        )
 
     @patch("custody.sweeper.ensure_gas", return_value=True)
     @patch("custody.sweeper.get_signer")
@@ -304,6 +321,22 @@ class ConfigurationTests(TestCase):
 class IndexerAndApiTests(TestCase):
     def setUp(self):
         self.client = Client()
+        funded = UserWallet.objects.create(
+            user_id="c",
+            chain_id="ETH",
+            asset_key="ETH",
+            derivation_path="m/api-funded",
+            deposit_address="0x" + "a" * 40,
+        )
+        ingest_event(
+            funded,
+            DepositEvent(
+                tx_hash="0xapi-funded",
+                amount=Decimal("10"),
+                block=1,
+                confirmations=12,
+            ),
+        )
 
     def bearer(self, user, role):
         return {"HTTP_AUTHORIZATION": f"Bearer {create_token(user, role)}"}

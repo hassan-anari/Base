@@ -79,7 +79,12 @@ def main():
         if jid:
             print("   SAME JOB ID:", jid == r2.json().get("sweep_job_id"))
 
-        # --- withdrawals (operator creates ON BEHALF OF subject) ---
+        # Fund the same BSC asset before withdrawal. The concrete confirmed
+        # stub event is ingested into the authoritative ledger by this check.
+        call("BAL CHECK BSC -> ledger credit", "POST", "/api/wallet/balance/check",
+             json={"subject_user_id": SUBJECT, "network": "BSC"}, headers=H)
+
+        # --- withdrawals (operator creates ON BEHALF OF funded subject) ---
         r = call("WD REQUEST", "POST", "/api/withdrawals/request",
                   json={"subject_user_id": SUBJECT, "network": "BSC",
                         "to_address": "0x0000000000000000000000000000000000000002",

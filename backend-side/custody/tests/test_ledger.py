@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 
 from custody.deposits import ingest_event, reverse_confirmed
@@ -182,6 +184,65 @@ class LedgerTests(TestCase):
         posting.refresh_from_db()
         self.assertEqual(journal.event_type, "DEPOSIT_CREDIT")
         self.assertNotEqual(posting.amount, Decimal("99"))
+
+    def test_posted_account_identity_is_immutable_and_not_deletable(self):
+        wallet = make_wallet()
+        ingest_event(wallet, event())
+        account = LedgerAccount.objects.get(
+            owner_type="USER", owner_id="alice", asset_key="ETH", bucket="AVAILABLE"
+        )
+        mutations = {
+            "owner_type": "SYSTEM",
+            "owner_id": "mallory",
+            "asset_key": "BNB",
+            "bucket": "RESERVED",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                setattr(account, field, value)
+                with self.assertRaisesMessage(ValueError, "identity is immutable"):
+                    account.save()
+                account.refresh_from_db()
+        with self.assertRaisesMessage(ValueError, "identity is immutable"):
+            LedgerAccount.objects.filter(pk=account.pk).update(asset_key="BNB")
+        with self.assertRaisesMessage(ValueError, "cannot be deleted"):
+            account.delete()
+        with self.assertRaisesMessage(ValueError, "cannot be deleted"):
+            LedgerAccount.objects.filter(pk=account.pk).delete()
+        account.refresh_from_db()
+        self.assertEqual(
+            (account.owner_type, account.owner_id, account.asset_key, account.bucket),
+            ("USER", "alice", "ETH", "AVAILABLE"),
+        )
+
+    def test_invalid_account_shapes_are_rejected(self):
+        malformed = [
+            ("USER", "alice", "CUSTODY_CLEARING"),
+            ("SYSTEM", "custody", "AVAILABLE"),
+            ("SYSTEM", "custody", "RESERVED"),
+            ("SYSTEM", "other", "CUSTODY_CLEARING"),
+        ]
+        for index, (owner_type, owner_id, bucket) in enumerate(malformed):
+            with self.subTest(owner_type=owner_type, owner_id=owner_id, bucket=bucket):
+                with self.assertRaisesMessage(ValidationError, "invalid ledger account"):
+                    LedgerAccount.objects.create(
+                        owner_type=owner_type,
+                        owner_id=owner_id,
+                        asset_key=f"BAD{index}",
+                        bucket=bucket,
+                    )
+        # bulk_create bypasses model save(), so verify the database constraint too.
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            LedgerAccount.objects.bulk_create(
+                [
+                    LedgerAccount(
+                        owner_type="SYSTEM",
+                        owner_id="other",
+                        asset_key="BAD-DB",
+                        bucket="CUSTODY_CLEARING",
+                    )
+                ]
+            )
 
     def test_legacy_withdrawals_cannot_release_or_settle_other_reservations(self):
         wallet = make_wallet()

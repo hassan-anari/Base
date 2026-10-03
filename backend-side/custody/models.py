@@ -15,6 +15,7 @@ sweeps/withdrawals (see Meta). Indexes support fast lookups by address/user.
 
 from __future__ import annotations
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -245,6 +246,26 @@ class AdminActionLog(models.Model):
         ]
 
 
+class ImmutableAccountQuerySet(models.QuerySet):
+    """Allow account creation and locking, but never bulk mutation/deletion."""
+
+    def update(self, **kwargs):
+        raise ValueError("ledger account identity is immutable")
+
+    def delete(self):
+        raise ValueError("ledger accounts cannot be deleted")
+
+
+class AppendOnlyQuerySet(models.QuerySet):
+    """Block journal mutation through normal Django ORM queryset APIs."""
+
+    def update(self, **kwargs):
+        raise ValueError("ledger journal rows are append-only")
+
+    def delete(self):
+        raise ValueError("ledger journal rows are append-only")
+
+
 class LedgerAccount(models.Model):
     """Stable account identity; balances are derived only from postings."""
 
@@ -259,24 +280,51 @@ class LedgerAccount(models.Model):
     asset_key = models.CharField(max_length=32, db_index=True)
     bucket = models.CharField(max_length=24, choices=BUCKETS)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableAccountQuerySet.as_manager()
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["owner_type", "owner_id", "asset_key", "bucket"],
                 name="uq_ledger_account_identity",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_type="USER", bucket__in=["AVAILABLE", "RESERVED"])
+                    | models.Q(
+                        owner_type="SYSTEM",
+                        owner_id="custody",
+                        bucket="CUSTODY_CLEARING",
+                    )
+                ),
+                name="ledger_account_valid_shape",
+            ),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            identity = (self.owner_type, self.owner_id, self.asset_key, self.bucket)
+            original_identity = (
+                original.owner_type,
+                original.owner_id,
+                original.asset_key,
+                original.bucket,
+            )
+            if identity != original_identity:
+                raise ValueError("ledger account identity is immutable")
+        valid_user = self.owner_type == "USER" and self.bucket in {"AVAILABLE", "RESERVED"}
+        valid_system = (
+            self.owner_type == "SYSTEM"
+            and self.owner_id == "custody"
+            and self.bucket == "CUSTODY_CLEARING"
+        )
+        if not (valid_user or valid_system):
+            raise ValidationError("invalid ledger account identity shape")
+        return super().save(*args, **kwargs)
 
-class AppendOnlyQuerySet(models.QuerySet):
-    """Block journal mutation through normal Django ORM queryset APIs."""
-
-    def update(self, **kwargs):
-        raise ValueError("ledger journal rows are append-only")
-
-    def delete(self):
-        raise ValueError("ledger journal rows are append-only")
+    def delete(self, *args, **kwargs):
+        raise ValueError("ledger accounts cannot be deleted")
 
 
 class LedgerTransaction(models.Model):

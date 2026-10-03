@@ -5,6 +5,7 @@ LIVE mode (default): real Solana JSON-RPC via the editable node registry
 Deposit events = getSignaturesForAddress + getTransaction (best-effort).
 STUB mode (CUSTODY_INDEXER_MODE=stub): offline simulated balance.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,7 +13,7 @@ from typing import List
 
 import requests
 
-from .base import BalanceResult, DepositEvent, IndexerClient
+from .base import BalanceResult, DepositEvent, IndexerClient, IndexerUnavailable
 from .rpc_nodes import rpc_urls
 
 logger = logging.getLogger("custody.indexer.sol")
@@ -21,9 +22,11 @@ RPC_TIMEOUT = 8.0
 
 
 def _rpc(url: str, method: str, params: list):
-    r = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
-                                 "method": method, "params": params},
-                      timeout=RPC_TIMEOUT)
+    r = requests.post(
+        url,
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        timeout=RPC_TIMEOUT,
+    )
     r.raise_for_status()
     data = r.json()
     if "error" in data:
@@ -39,36 +42,37 @@ class SolIndexer(IndexerClient):
             return self._stub_balance()
         urls = rpc_urls("SOL")
         if not urls:
-            logger.error("no RPC node configured for SOL")
-            return BalanceResult(confirmed_balance=0.0)
+            raise IndexerUnavailable("no RPC node configured for SOL")
         last_err: Exception | None = None
         for u in urls:
             try:
                 slot = int(_rpc(u, "getSlot", []))
-                lamports = int(_rpc(u, "getBalance",
-                                    [address, {"commitment": "confirmed"}])
-                               ["value"])
+                lamports = int(
+                    _rpc(u, "getBalance", [address, {"commitment": "confirmed"}])["value"]
+                )
                 confirmed = lamports / 1_000_000_000
 
                 events: List[DepositEvent] = []
                 try:
-                    sigs = _rpc(u, "getSignaturesForAddress",
-                                [address, {"limit": 25}]) or []
+                    sigs = _rpc(u, "getSignaturesForAddress", [address, {"limit": 25}]) or []
                     for s in sigs:
                         if s.get("err"):
                             continue
                         try:
-                            tx = _rpc(u, "getTransaction",
-                                      [s["signature"],
-                                       {"encoding": "jsonParsed",
-                                        "maxSupportedTransactionVersion": 0}])
+                            tx = _rpc(
+                                u,
+                                "getTransaction",
+                                [
+                                    s["signature"],
+                                    {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
+                                ],
+                            )
                         except Exception:  # noqa: BLE001
                             continue
                         if not tx:
                             continue
                         meta = tx.get("meta") or {}
-                        msg = (tx.get("transaction", {}).get("message", {})
-                               or {})
+                        msg = tx.get("transaction", {}).get("message", {}) or {}
                         accs = msg.get("accountKeys", [])
                         # Find this address's index in the account list.
                         idx = None
@@ -83,25 +87,28 @@ class SolIndexer(IndexerClient):
                         post = (meta.get("postBalances") or [0] * (idx + 1))[idx]
                         delta = post - pre
                         if delta > 0:
-                            events.append(DepositEvent(
-                                tx_hash=s["signature"],
-                                amount=delta / 1_000_000_000,
-                                block=int(tx.get("slot", 0)),
-                                confirmations=max(0, slot - int(
-                                    tx.get("slot", slot))),
-                            ))
+                            events.append(
+                                DepositEvent(
+                                    tx_hash=s["signature"],
+                                    amount=delta / 1_000_000_000,
+                                    block=int(tx.get("slot", 0)),
+                                    confirmations=max(0, slot - int(tx.get("slot", slot))),
+                                )
+                            )
                 except Exception as e:  # noqa: BLE001
                     logger.warning("SOL tx scan failed for %s: %s", address, e)
 
-                return BalanceResult(confirmed_balance=confirmed,
-                                     pending_balance=0.0,
-                                     last_scanned_block=slot,
-                                     deposit_events=events)
+                return BalanceResult(
+                    confirmed_balance=confirmed,
+                    pending_balance=0.0,
+                    last_scanned_block=slot,
+                    deposit_events=events,
+                )
             except Exception as e:  # noqa: BLE001 - failover to next node
                 last_err = e
                 logger.warning("sol rpc fail url=%s err=%s", u, e)
         logger.error("SOL live balance failed for %s: %s", address, last_err)
-        return BalanceResult(confirmed_balance=0.0, last_scanned_block=0)
+        raise IndexerUnavailable("SOL balance unavailable") from last_err
 
     def get_txs(self, address: str, after_block=None, memo=None):
         return []

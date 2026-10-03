@@ -10,7 +10,10 @@ class CustodyConfig(AppConfig):
     def ready(self):
         # Seed config-registry data (assets + hot wallets) once migrations
         # have created the tables. Idempotent (upsert by unique key).
-        from . import config
+        from . import (
+            checks,  # noqa: F401 - register deployment safety checks
+            config,
+        )
         from .models import Asset, HotWallet
 
         def _seed(sender, **kwargs):

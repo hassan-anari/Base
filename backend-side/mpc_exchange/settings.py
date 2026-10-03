@@ -3,12 +3,11 @@ Django settings for mpc_exchange (production-oriented skeleton).
 Loads all configuration from environment variables (see .env.example).
 No secrets are hard-coded.
 """
+
 from pathlib import Path
-import os
 
+from decouple import Csv, config
 from dotenv import load_dotenv
-
-from decouple import config, Csv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -58,12 +57,14 @@ TEMPLATES = [
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [],
         "APP_DIRS": True,
-        "OPTIONS": {"context_processors": [
-            "django.template.context_processors.debug",
-            "django.template.context_processors.request",
-            "django.contrib.auth.context_processors.auth",
-            "django.contrib.messages.context_processors.messages",
-        ]},
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ]
+        },
     },
 ]
 
@@ -74,23 +75,29 @@ WSGI_APPLICATION = "mpc_exchange.wsgi.application"
 # ----------------------------------------------------------------------------
 _db_url = config("DATABASE_URL", default="sqlite:///db.sqlite3")
 if _db_url.startswith("postgres://") or _db_url.startswith("postgresql://"):
-    DATABASES = {"default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("POSTGRES_DB", default="mpc_exchange"),
-        "USER": config("POSTGRES_USER", default="mpc"),
-        "PASSWORD": config("POSTGRES_PASSWORD", default=""),
-        "HOST": config("POSTGRES_HOST", default="127.0.0.1"),
-        "PORT": config("POSTGRES_PORT", default="5432"),
-    }}
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": config("POSTGRES_DB", default="mpc_exchange"),
+            "USER": config("POSTGRES_USER", default="mpc"),
+            "PASSWORD": config("POSTGRES_PASSWORD", default=""),
+            "HOST": config("POSTGRES_HOST", default="127.0.0.1"),
+            "PORT": config("POSTGRES_PORT", default="5432"),
+        }
+    }
 else:
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3",
-                             "NAME": BASE_DIR / "db.sqlite3"}}
+    DATABASES = {
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}
+    }
 
 # ----------------------------------------------------------------------------
 # Security
 # ----------------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 10},
+    },
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
@@ -102,8 +109,9 @@ X_FRAME_OPTIONS = "DENY"
 # ----------------------------------------------------------------------------
 # CORS (frontend origin)
 # ----------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = [o for o in config("CORS_ALLOWED_ORIGINS",
-                              default="http://localhost:5173", cast=Csv())]
+CORS_ALLOWED_ORIGINS = [
+    o for o in config("CORS_ALLOWED_ORIGINS", default="http://localhost:5173", cast=Csv())
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # ----------------------------------------------------------------------------
@@ -125,6 +133,7 @@ ALLOW_DEV_STUB_AUTH = config("ALLOW_DEV_STUB_AUTH", default=False, cast=bool)
 #   mpc_vendor -> delegate ALL signing to external MPC signer (production)
 # ----------------------------------------------------------------------------
 MPC_SIGNER_BACKEND = config("MPC_SIGNER_BACKEND", default="local_key")
+CUSTODY_DEMO_MODE = config("CUSTODY_DEMO_MODE", default=False, cast=bool)
 # For production MPC vendor:
 MPC_VENDOR_URL = config("MPC_VENDOR_URL", default="")
 MPC_VENDOR_API_KEY = config("MPC_VENDOR_API_KEY", default="")
@@ -143,6 +152,7 @@ RATE_LIMIT_SIGN_PER_MINUTE = config("RATE_LIMIT_SIGN_PER_MINUTE", default=20, ca
 SENTRY_DSN = config("SENTRY_DSN", default="")
 if SENTRY_DSN:
     import sentry_sdk
+
     sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
 
 # ----------------------------------------------------------------------------
@@ -154,6 +164,8 @@ STATIC_ROOT = BASE_DIR / "static_collected"
 # standalone API Simulator (output of `npm --prefix ../frontend run build:sim`)
 # are copied into the dirs below before collectstatic serves them at /static/.
 # The main app index is served at "/" by index_spa; the simulator at "/simulator/".
-STATICFILES_DIRS = [BASE_DIR / "frontend_dist", BASE_DIR / "simulator_dist"]
+STATICFILES_DIRS = [
+    path for path in (BASE_DIR / "frontend_dist", BASE_DIR / "simulator_dist") if path.exists()
+]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "/api/auth/login"

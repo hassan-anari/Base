@@ -21,15 +21,15 @@ Operator manual top-up (admin):
 SECURITY: amount is a tiny fixed gas grant (auto) or admin-bounded amount;
 never logs secrets; every signing request is authorized + validated + audited.
 """
+
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 
-from .config import Network, get_chain, get_asset, is_memo_required
-from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 from .audit import AuditAction, write_audit_log
-from .models import UserWallet, HotWallet
+from .config import Network, get_chain, is_memo_required, native_asset_key
+from .models import HotWallet, UserWallet
+from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
 logger = logging.getLogger("custody.gas")
 
@@ -46,7 +46,7 @@ def ensure_gas(user_wallet: UserWallet) -> bool:
     tx = UnsignedTx(
         network=net,
         chain_id=user_wallet.chain_id,
-        asset_key=user_wallet.asset_key,
+        asset_key=native_asset_key(user_wallet.chain_id),
         from_address=hot.address,
         to_address=user_wallet.deposit_address,
         amount=grant,
@@ -56,22 +56,33 @@ def ensure_gas(user_wallet: UserWallet) -> bool:
     signer = get_signer()
     try:
         res = signer.sign_and_broadcast(
-            actor_id="system:gas_station", tx=tx,
-            policy=SignPolicy.GAS_TOPUP, idempotency_key=idem,
+            actor_id="system:gas_station",
+            tx=tx,
+            policy=SignPolicy.GAS_TOPUP,
+            idempotency_key=idem,
         )
-        write_audit_log("system:gas_station", AuditAction.GAS_TOPUP,
-                        "UserWallet", str(user_wallet.id),
-                        {"tx": res.tx_hash})
-        logger.info("gas topup broadcast %s -> %s (%s)", hot.address,
-                    user_wallet.deposit_address, res.tx_hash)
+        write_audit_log(
+            "system:gas_station",
+            AuditAction.GAS_TOPUP,
+            "UserWallet",
+            str(user_wallet.id),
+            {"tx": res.tx_hash},
+        )
+        logger.info(
+            "gas topup broadcast %s -> %s (%s)",
+            hot.address,
+            user_wallet.deposit_address,
+            res.tx_hash,
+        )
         return True
     except Exception:
         logger.exception("gas topup failed for %s", user_wallet.id)
         return False
 
 
-def admin_topup(actor_id: str, chain_id: str, to_address: str, amount: float,
-                memo: str | None = None) -> dict:
+def admin_topup(
+    actor_id: str, chain_id: str, to_address: str, amount: float, memo: str | None = None
+) -> dict:
     """Operator/admin manual top-up of a gas-station address.
 
     SECURITY / GUARD POINTS (enforced before signing):
@@ -97,7 +108,9 @@ def admin_topup(actor_id: str, chain_id: str, to_address: str, amount: float,
     # Accept either the chain's hot wallet or an active user deposit EOA.
     known_hot = HotWallet.objects.filter(chain_id=chain_id, address=to_address).exists()
     known_deposit = UserWallet.objects.filter(
-        chain_id=chain_id, deposit_address=to_address, status="ACTIVE",
+        chain_id=chain_id,
+        deposit_address=to_address,
+        status="ACTIVE",
     ).exists()
     if not (known_hot or known_deposit):
         raise ValueError(
@@ -112,7 +125,7 @@ def admin_topup(actor_id: str, chain_id: str, to_address: str, amount: float,
     tx = UnsignedTx(
         network=net,
         chain_id=chain_id,
-        asset_key=cfg.native_asset_key or chain_id,
+        asset_key=native_asset_key(chain_id),
         from_address=hot.address,
         to_address=to_address,
         amount=amount,
@@ -121,9 +134,10 @@ def admin_topup(actor_id: str, chain_id: str, to_address: str, amount: float,
     )
     signer = get_signer()
     res = signer.sign_and_broadcast(
-        actor_id=actor_id, tx=tx,
-        policy=SignPolicy.GAS_TOPUP, idempotency_key=idem,
+        actor_id=actor_id,
+        tx=tx,
+        policy=SignPolicy.GAS_TOPUP,
+        idempotency_key=idem,
     )
-    logger.info("admin gas topup broadcast %s -> %s (%s)", hot.address,
-                to_address, res.tx_hash)
+    logger.info("admin gas topup broadcast %s -> %s (%s)", hot.address, to_address, res.tx_hash)
     return {"tx_hash": res.tx_hash, "to": to_address, "amount": amount}

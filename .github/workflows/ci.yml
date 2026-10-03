@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-side
+    env:
+      DJANGO_SECRET_KEY: ci-only-secret
+      MPC_SIGNER_BACKEND: local_key
+      CUSTODY_DEMO_MODE: "true"
+      LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-only-local-signer-passphrase
+      CUSTODY_INDEXER_MODE: stub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend-side/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - run: pytest
+      - run: >-
+          ruff format --check custody/api.py custody/apps.py custody/checks.py
+          custody/config.py custody/gas_station.py custody/models.py custody/indexer/base.py
+          custody/indexer/bsc.py custody/indexer/eth.py custody/indexer/sol.py
+          custody/indexer/ton.py custody/indexer/trx.py custody/schemas.py
+          custody/signer_adapter.py custody/sweeper.py custody/withdrawals.py
+          custody/tests mpc_exchange/settings.py
+      - run: >-
+          ruff check custody/api.py custody/apps.py custody/checks.py
+          custody/config.py custody/gas_station.py custody/models.py custody/indexer/base.py
+          custody/indexer/bsc.py custody/indexer/eth.py custody/indexer/sol.py
+          custody/indexer/ton.py custody/indexer/trx.py custody/schemas.py
+          custody/signer_adapter.py custody/sweeper.py custody/withdrawals.py
+          custody/tests mpc_exchange/settings.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front-side
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: front-side/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:sim

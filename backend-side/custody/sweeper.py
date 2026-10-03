@@ -25,6 +25,7 @@ POLICY ENFORCEMENT (see mpc_signer):
   - Sweeper policy requires balance-check trigger + threshold met (checked in
     trigger_sweep) and destination == hot wallet (checked in signer.validate).
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,24 +34,27 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from .config import Network, get_chain, get_asset, effective_deposit_threshold, is_memo_required, ensure_hot_wallet
-from .mpc_signer import SignPolicy, UnsignedTx, get_signer
-from .models import UserWallet, SweepJob, Deposit
-from .indexer.factory import get_indexer
-from .gas_station import ensure_gas
-from .rate_limit import rate_limiter
 from .audit import AuditAction, write_audit_log
+from .config import (
+    Network,
+    effective_deposit_threshold,
+    ensure_hot_wallet,
+    get_chain,
+    is_memo_required,
+    validate_chain_asset,
+)
+from .gas_station import ensure_gas
+from .indexer.factory import get_indexer
+from .models import Deposit, SweepJob, UserWallet
+from .mpc_signer import SignPolicy, UnsignedTx, get_signer
+from .rate_limit import rate_limiter
 
 logger = logging.getLogger("custody.sweeper")
 
 
 def _current_round(user_wallet_id: int) -> int:
     """Next sweep round = (max existing round) + 1, else 1."""
-    last = (
-        SweepJob.objects.filter(user_wallet_id=user_wallet_id)
-        .order_by("-sweep_round")
-        .first()
-    )
+    last = SweepJob.objects.filter(user_wallet_id=user_wallet_id).order_by("-sweep_round").first()
     return (last.sweep_round + 1) if last else 1
 
 
@@ -76,7 +80,7 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
     """
     net = Network(user_wallet.chain_id)
     cfg = get_chain(user_wallet.chain_id)
-    asset = get_asset(user_wallet.asset_key)
+    asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key)
     threshold = effective_deposit_threshold(asset, cfg)
 
     # Idempotency: if a sweep is already in flight, do not start another.
@@ -88,8 +92,7 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
     lock_key = f"sweep:{user_wallet.id}"
     if not rate_limiter.acquire_lock(lock_key, ttl=120):
         inflight = _inflight_job(user_wallet)
-        return (inflight is not None, inflight.id if inflight else None,
-                "already running")
+        return (inflight is not None, inflight.id if inflight else None, "already running")
 
     try:
         # Re-check after acquiring the lock (race-safe).
@@ -113,6 +116,7 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
         with transaction.atomic():
             job = SweepJob.objects.create(
                 user_wallet=user_wallet,
+                asset_key=user_wallet.asset_key,
                 sweep_round=round_no,
                 balance_snapshot=confirmed,
                 status="CREATED",
@@ -120,7 +124,8 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
             )
             for ev in bal.deposit_events:
                 Deposit.objects.get_or_create(
-                    user_wallet=user_wallet, tx_hash=ev.tx_hash,
+                    user_wallet=user_wallet,
+                    tx_hash=ev.tx_hash,
                     asset_key=user_wallet.asset_key,
                     defaults={
                         "amount": Decimal(str(ev.amount)),
@@ -129,11 +134,20 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
                         "memo": ev.memo,
                     },
                 )
-            write_audit_log(actor_id, AuditAction.SWEEP_TRIGGER, "SweepJob",
-                            str(job.id), {"round": round_no, "balance": float(confirmed)})
+            write_audit_log(
+                actor_id,
+                AuditAction.SWEEP_TRIGGER,
+                "SweepJob",
+                str(job.id),
+                {"round": round_no, "balance": float(confirmed)},
+            )
 
         # Gas top-up step (if needed) -> then sweep. Run in background in prod.
-        _run_sweep(job, actor_id)
+        try:
+            _run_sweep(job, actor_id)
+        except Exception:
+            SweepJob.objects.filter(pk=job.pk).update(status="FAILED", completed_at=timezone.now())
+            raise
         return (True, job.id, "sweep started")
     finally:
         rate_limiter.release_lock(lock_key)
@@ -151,9 +165,13 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
         # STUB gas check; assume needed for skeleton.
         job.status = "GAS_TOPUP_REQUIRED"
         job.save(update_fields=["status"])
-        if ensure_gas(job.user_wallet):
-            job.status = "GAS_TOPUP_BROADCASTED"
-            job.save(update_fields=["status"])
+        if not ensure_gas(job.user_wallet):
+            job.status = "FAILED"
+            job.completed_at = timezone.now()
+            job.save(update_fields=["status", "completed_at"])
+            raise RuntimeError("gas top-up failed; sweep aborted")
+        job.status = "GAS_TOPUP_BROADCASTED"
+        job.save(update_fields=["status"])
 
     # Step B: build + sign + broadcast the sweep (EOA -> hot wallet).
     tx = UnsignedTx(
@@ -168,8 +186,10 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
     )
     signer = get_signer()
     res = signer.sign_and_broadcast(
-        actor_id=actor_id, tx=tx,
-        policy=SignPolicy.SWEEPER, idempotency_key=job.idempotency_key,
+        actor_id=actor_id,
+        tx=tx,
+        policy=SignPolicy.SWEEPER,
+        idempotency_key=job.idempotency_key,
     )
     job.status = "SWEEP_BROADCASTED"
     job.tx_hash = res.tx_hash

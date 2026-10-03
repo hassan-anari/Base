@@ -3,11 +3,12 @@
 LIVE mode (default): real JSON-RPC via the editable node registry.
 STUB mode (CUSTODY_INDEXER_MODE=stub): offline simulated balance.
 """
+
 from __future__ import annotations
 
 import logging
 
-from .base import BalanceResult, IndexerClient
+from .base import BalanceResult, IndexerClient, IndexerUnavailable
 from .evm_live import evm_get_balance
 
 logger = logging.getLogger("custody.indexer.bsc")
@@ -21,9 +22,9 @@ class BscIndexer(IndexerClient):
             return self._stub_balance()
         try:
             return evm_get_balance("BSC", address)
-        except Exception as e:  # noqa: BLE001 - degrade to zero, never 500
+        except Exception as e:
             logger.error("BSC live balance failed for %s: %s", address, e)
-            return BalanceResult(confirmed_balance=0.0, last_scanned_block=0)
+            raise IndexerUnavailable("BSC balance unavailable") from e
 
     def get_txs(self, address: str, after_block=None, memo=None):
         return []

@@ -16,22 +16,25 @@ from custody.withdrawals import create_request, process_withdrawal
 
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock integration test")
 class WithdrawalConcurrencyTests(TransactionTestCase):
-    def test_two_workers_cannot_double_reserve(self):
-        ensure_accounts("concurrent", "ETH")
+    def fund(self, user="concurrent", amount="1"):
+        ensure_accounts(user, "ETH")
         available = LedgerAccount.objects.get(
-            owner_type="USER", owner_id="concurrent", asset_key="ETH", bucket="AVAILABLE"
+            owner_type="USER", owner_id=user, asset_key="ETH", bucket="AVAILABLE"
         )
         clearing = LedgerAccount.objects.get(
             owner_type="SYSTEM", owner_id="custody", asset_key="ETH", bucket="CUSTODY_CLEARING"
         )
         post_transaction(
-            event_key="concurrency:fund",
+            event_key=f"concurrency:{user}:fund",
             event_type="DEPOSIT_CREDIT",
             asset_key="ETH",
             ref_type="TestFixture",
             ref_id="fund",
-            postings=[(available, Decimal("1")), (clearing, Decimal("-1"))],
+            postings=[(available, Decimal(amount)), (clearing, -Decimal(amount))],
         )
+
+    def test_two_workers_cannot_double_reserve(self):
+        self.fund()
 
         def reserve(key):
             close_old_connections()
@@ -53,6 +56,65 @@ class WithdrawalConcurrencyTests(TransactionTestCase):
         )
         self.assertEqual(
             LedgerTransaction.objects.filter(event_type="WITHDRAWAL_RESERVE").count(), 1
+        )
+
+    def test_concurrent_same_idempotency_key_returns_same_request(self):
+        self.fund("same-key", "2")
+
+        def worker():
+            close_old_connections()
+            try:
+                return create_request(
+                    "same-key",
+                    "ETH",
+                    "0x" + "a" * 40,
+                    Decimal("0.75"),
+                    idempotency_key="concurrent-same-key",
+                ).pk
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: worker(), range(2)))
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(
+            WithdrawalRequest.objects.filter(idempotency_key="concurrent-same-key").count(), 1
+        )
+        self.assertEqual(
+            LedgerTransaction.objects.filter(
+                event_type="WITHDRAWAL_RESERVE", ref_id=str(results[0])
+            ).count(),
+            1,
+        )
+
+    def test_concurrent_same_key_conflicting_payload_is_conflict(self):
+        self.fund("conflict-key", "2")
+
+        def worker(destination):
+            close_old_connections()
+            try:
+                return create_request(
+                    "conflict-key",
+                    "ETH",
+                    destination,
+                    Decimal("0.75"),
+                    idempotency_key="concurrent-conflict-key",
+                ).pk
+            except ValueError as exc:
+                return str(exc)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(worker, ["0x" + "b" * 40, "0x" + "c" * 40]))
+        self.assertEqual(sum(isinstance(result, int) for result in results), 1)
+        self.assertEqual(sum("different parameters" in str(result) for result in results), 1)
+        request = WithdrawalRequest.objects.get(idempotency_key="concurrent-conflict-key")
+        self.assertEqual(
+            LedgerTransaction.objects.filter(
+                event_type="WITHDRAWAL_RESERVE", ref_id=str(request.pk)
+            ).count(),
+            1,
         )
 
     def test_two_workers_broadcast_exactly_once(self):

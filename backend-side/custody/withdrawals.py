@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
@@ -60,25 +60,21 @@ def create_request(
         "amount": decimal_amount,
     }
     with transaction.atomic():
-        # Serialize retries on the same key where a row already exists.
-        req = (
-            WithdrawalRequest.objects.select_for_update()
-            .filter(idempotency_key=idempotency_key)
-            .first()
-        )
-        if req:
-            if any(getattr(req, key) != value for key, value in requested.items()):
-                raise ValueError("idempotency_key was already used with different parameters")
-            return req
-        # Account locking and the balance check precede creation. The request
-        # and reservation still commit in this single outer transaction.
-        from .ledger import lock_user_accounts
-
-        lock_user_accounts(user_id, asset_key)
-        req = WithdrawalRequest.objects.create(
-            idempotency_key=idempotency_key, **requested, status="PENDING_APPROVAL"
-        )
-        reserve_withdrawal(req)
+        try:
+            # The unique key is the arbitration boundary. The savepoint keeps
+            # the outer transaction usable when a concurrent creator wins.
+            with transaction.atomic():
+                req = WithdrawalRequest.objects.create(
+                    idempotency_key=idempotency_key, **requested, status="PENDING_APPROVAL"
+                )
+            created = True
+        except IntegrityError:
+            req = WithdrawalRequest.objects.select_for_update().get(idempotency_key=idempotency_key)
+            created = False
+        if any(getattr(req, key) != value for key, value in requested.items()):
+            raise ValueError("idempotency_key was already used with different parameters")
+        if created:
+            reserve_withdrawal(req)
         return req
 
 

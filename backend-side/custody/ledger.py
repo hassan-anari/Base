@@ -17,6 +17,14 @@ class InsufficientFunds(ValueError):
     pass
 
 
+class LedgerIdempotencyConflict(ValueError):
+    pass
+
+
+class ReservationReconciliationRequired(ValueError):
+    pass
+
+
 def ensure_accounts(user_id: str, asset_key: str) -> None:
     identities = [
         ("USER", user_id, "AVAILABLE"),
@@ -86,9 +94,6 @@ def post_transaction(
     postings: list[tuple[LedgerAccount, Decimal]],
     metadata: dict | None = None,
 ) -> tuple[LedgerTransaction, bool]:
-    existing = LedgerTransaction.objects.filter(event_key=event_key).first()
-    if existing:
-        return existing, False
     normalized = [(account, Decimal(amount)) for account, amount in postings]
     if not normalized or any(amount == ZERO for _, amount in normalized):
         raise ValueError("ledger postings must be non-zero")
@@ -96,6 +101,12 @@ def post_transaction(
         raise ValueError("ledger transaction cannot mix assets")
     if sum((amount for _, amount in normalized), ZERO) != ZERO:
         raise ValueError("ledger transaction postings must balance to zero")
+    existing = LedgerTransaction.objects.filter(event_key=event_key).first()
+    if existing:
+        _validate_existing_transaction(
+            existing, event_type, asset_key, ref_type, str(ref_id), normalized
+        )
+        return existing, False
     journal = LedgerTransaction.objects.create(
         event_key=event_key,
         event_type=event_type,
@@ -111,6 +122,58 @@ def post_transaction(
         ]
     )
     return journal, True
+
+
+def _posting_signature(postings):
+    return sorted(
+        (
+            account.owner_type,
+            account.owner_id,
+            account.asset_key,
+            account.bucket,
+            Decimal(amount),
+        )
+        for account, amount in postings
+    )
+
+
+def _validate_existing_transaction(
+    existing, event_type, asset_key, ref_type, ref_id, expected_postings
+):
+    header = (existing.event_type, existing.asset_key, existing.ref_type, existing.ref_id)
+    expected_header = (event_type, asset_key, ref_type, ref_id)
+    actual_postings = [
+        (posting.account, posting.amount)
+        for posting in existing.postings.select_related("account").all()
+    ]
+    if header != expected_header or _posting_signature(actual_postings) != _posting_signature(
+        expected_postings
+    ):
+        raise LedgerIdempotencyConflict(
+            f"ledger event key {existing.event_key!r} already has different semantics"
+        )
+
+
+def _require_withdrawal_reservation(req, accounts):
+    event_key = f"withdrawal:{req.pk}:reserve"
+    reservation = LedgerTransaction.objects.filter(event_key=event_key).first()
+    if reservation is None:
+        raise ReservationReconciliationRequired(
+            f"withdrawal {req.pk} has no valid reservation; explicit reconciliation required"
+        )
+    try:
+        _validate_existing_transaction(
+            reservation,
+            "WITHDRAWAL_RESERVE",
+            req.asset_key,
+            "WithdrawalRequest",
+            str(req.pk),
+            [(accounts["AVAILABLE"], -req.amount), (accounts["RESERVED"], req.amount)],
+        )
+    except LedgerIdempotencyConflict as exc:
+        raise ReservationReconciliationRequired(
+            f"withdrawal {req.pk} reservation is invalid; explicit reconciliation required"
+        ) from exc
 
 
 def credit_deposit(deposit):
@@ -159,6 +222,7 @@ def reserve_withdrawal(req):
 
 def release_withdrawal(req):
     accounts = lock_user_accounts(req.user_id, req.asset_key)
+    _require_withdrawal_reservation(req, accounts)
     return post_transaction(
         event_key=f"withdrawal:{req.pk}:release",
         event_type="WITHDRAWAL_RELEASE",
@@ -171,6 +235,7 @@ def release_withdrawal(req):
 
 def settle_withdrawal(req):
     accounts = lock_user_accounts(req.user_id, req.asset_key)
+    _require_withdrawal_reservation(req, accounts)
     return post_transaction(
         event_key=f"withdrawal:{req.pk}:settle",
         event_type="WITHDRAWAL_SETTLE",

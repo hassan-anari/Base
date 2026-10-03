@@ -269,6 +269,16 @@ class LedgerAccount(models.Model):
         ]
 
 
+class AppendOnlyQuerySet(models.QuerySet):
+    """Block journal mutation through normal Django ORM queryset APIs."""
+
+    def update(self, **kwargs):
+        raise ValueError("ledger journal rows are append-only")
+
+    def delete(self):
+        raise ValueError("ledger journal rows are append-only")
+
+
 class LedgerTransaction(models.Model):
     """Immutable journal header. Corrections are compensating transactions."""
 
@@ -286,6 +296,7 @@ class LedgerTransaction(models.Model):
     ref_id = models.CharField(max_length=128)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = AppendOnlyQuerySet.as_manager()
 
     def save(self, *args, **kwargs):
         if self.pk:
@@ -305,6 +316,7 @@ class LedgerPosting(models.Model):
     account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT, related_name="postings")
     amount = models.DecimalField(max_digits=40, decimal_places=18)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = AppendOnlyQuerySet.as_manager()
 
     class Meta:
         constraints = [

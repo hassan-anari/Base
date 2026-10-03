@@ -18,8 +18,11 @@ no zero line, and sums exactly to zero using `Decimal` arithmetic.
 * Confirmed withdrawal settlement: reserved `-X`, clearing `+X`.
 * Deposit reversal: the exact inverse of its deposit credit.
 
-Journal history is append-only. Deterministic event keys make domain actions
-idempotent; a correction is a new compensating transaction, never an edit.
+Journal history is append-only through normal Django model and QuerySet APIs.
+Deterministic event keys make domain actions idempotent; a correction is a new
+compensating transaction, never an edit. This application boundary does not
+claim protection against privileged raw SQL; production deployments should
+restrict database privileges and may add database triggers for defense in depth.
 
 ## State-machine boundaries
 

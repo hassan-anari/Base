@@ -10,29 +10,31 @@ Covers the PATCH /api/ops/nodes/{id} endpoint:
 
 These run against a throwaway test database (migrate first: manage.py test).
 """
+
 from __future__ import annotations
 
-from django.test import TestCase, Client
+from custody.models import AdminActionLog
+from django.test import Client, TestCase, override_settings
 
 from ops.models import Chain, NodeEndpoint
-from custody.models import AdminActionLog
-from django.test import override_settings
 
 
 class NodeUpdateAPITests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        chain = Chain.objects.create(
+        chain, _ = Chain.objects.update_or_create(
             chain_id="BSC",
-            display_name="BNB Smart Chain Testnet",
-            kind="evm",
-            evm_chain_id=97,
-            native_asset_key="BNB",
-            is_testnet=True,
-            min_confirmations=15,
-            sweep_threshold="0.01",
-            memo_required=False,
-            enabled=True,
+            defaults={
+                "display_name": "BNB Smart Chain Testnet",
+                "kind": "evm",
+                "evm_chain_id": 97,
+                "native_asset_key": "BNB",
+                "is_testnet": True,
+                "min_confirmations": 15,
+                "sweep_threshold": "0.01",
+                "memo_required": False,
+                "enabled": True,
+            },
         )
         cls.chain = chain
         cls.node = NodeEndpoint.objects.create(

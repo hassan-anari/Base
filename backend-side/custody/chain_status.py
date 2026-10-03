@@ -15,6 +15,7 @@ Design:
     include full URLs in responses (only the host) to avoid leaking internal
     topology to lower-privileged users.
 """
+
 from __future__ import annotations
 
 import logging
@@ -61,10 +62,15 @@ def _tcp_reachable(url: str, timeout: float = 3.0) -> bool:
 
 def _probe_chain(chain_id: str, timeout: float = 6.0) -> dict:
     """Probe one chain: primary RPC + TCP fallback diagnostics."""
-    from .indexer.rpc_nodes import rpc_urls, probe_node as _probe
+    from .chain_registry import ChainUnavailable
+    from .indexer.rpc_nodes import probe_node as _probe
+    from .indexer.rpc_nodes import rpc_urls
 
     cfg = get_chains()[chain_id]
-    urls = rpc_urls(chain_id)
+    try:
+        urls = rpc_urls(chain_id)
+    except ChainUnavailable:
+        urls = []
     primary = urls[0] if urls else ""
 
     result = {
@@ -110,8 +116,7 @@ def _probe_chain(chain_id: str, timeout: float = 6.0) -> dict:
     return result
 
 
-def check_all_chains(chain_id: Optional[str] = None,
-                     timeout: float = 6.0) -> dict:
+def check_all_chains(chain_id: Optional[str] = None, timeout: float = 6.0) -> dict:
     """Probe every enabled chain (or a single one) and roll up the result.
 
     Returns:
@@ -123,8 +128,9 @@ def check_all_chains(chain_id: Optional[str] = None,
         }
     """
     registry = get_chains()
-    ids = ([chain_id] if chain_id in registry
-           else [c.chain_id for c in registry.values() if c.enabled])
+    ids = (
+        [chain_id] if chain_id in registry else [c.chain_id for c in registry.values() if c.enabled]
+    )
 
     with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, max(1, len(ids)))) as ex:
         rows = list(ex.map(lambda cid: _probe_chain(cid, timeout=timeout), ids))

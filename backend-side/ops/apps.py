@@ -19,8 +19,8 @@ class OpsConfig(AppConfig):
             except Exception:  # pragma: no cover - never crash startup on seed
                 import logging
 
-                logging.getLogger("ops").warning(
-                    "ops seed_defaults skipped", exc_info=True
-                )
+                logging.getLogger("ops").warning("ops seed_defaults skipped", exc_info=True)
 
-        post_migrate.connect(_seed, sender=self)
+        post_migrate.connect(
+            _seed, sender=self, weak=False, dispatch_uid="ops.seed_bootstrap_registry"
+        )

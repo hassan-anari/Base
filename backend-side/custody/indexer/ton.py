@@ -21,6 +21,7 @@ STUB mode (CUSTODY_INDEXER_MODE=stub): offline simulated balance.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import List
 
 import requests
@@ -34,12 +35,13 @@ RPC_TIMEOUT = 8.0
 
 
 class TonIndexer(IndexerClient):
-    network = "TON"
+    def __init__(self, chain_id: str = "TON"):
+        super().__init__(chain_id)
 
     def get_balance(self, address: str, memo: str | None = None) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance(memo=memo)
-        urls = rpc_urls("TON")
+        urls = rpc_urls(self.chain_id)
         if not urls:
             raise IndexerUnavailable("no RPC node configured for TON")
         last_err: Exception | None = None
@@ -54,7 +56,11 @@ class TonIndexer(IndexerClient):
                 if not data.get("ok"):
                     raise RuntimeError(f"toncenter error: {data}")
                 nanotons = int(data["result"])
-                confirmed = nanotons / 1_000_000_000
+                from ..chain_registry import get_chain_spec
+
+                spec = get_chain_spec(self.chain_id)
+                divisor = Decimal(10**spec.native_decimals)
+                confirmed = Decimal(nanotons) / divisor
 
                 # Masterchain seqno as a coarse "last scanned" marker.
                 last_block = None
@@ -85,12 +91,17 @@ class TonIndexer(IndexerClient):
                             # (e.g. hot-wallet sweep-in accounting) credit all.
                             if memo is not None and comment != memo:
                                 continue
+                            # TonCenter v2 getTransactions provides utime and
+                            # transaction logical time, neither of which is an
+                            # inclusion block or confirmation depth. Until a
+                            # reviewed indexed/block API is integrated, retain
+                            # the event as pending without inventing evidence.
                             events.append(
                                 DepositEvent(
                                     tx_hash=tx.get("transaction_id", {}).get("hash", ""),
-                                    amount=value / 1_000_000_000,
-                                    block=int(tx.get("utime", 0)),
-                                    confirmations=10,
+                                    amount=Decimal(value) / divisor,
+                                    block=0,
+                                    confirmations=0,
                                     memo=comment or None,
                                 )
                             )
@@ -102,11 +113,20 @@ class TonIndexer(IndexerClient):
                 # the sum of memo-matched deposits as the confirmed amount so
                 # per-user accounting stays correct.
                 if memo is not None:
-                    confirmed = sum(e.amount for e in events)
+                    confirmed = sum(
+                        (e.amount for e in events if e.confirmations >= spec.confirmations),
+                        Decimal("0"),
+                    )
+                    pending = sum(
+                        (e.amount for e in events if e.confirmations < spec.confirmations),
+                        Decimal("0"),
+                    )
+                else:
+                    pending = Decimal("0")
 
                 return BalanceResult(
                     confirmed_balance=confirmed,
-                    pending_balance=0.0,
+                    pending_balance=pending,
                     last_scanned_block=last_block,
                     deposit_events=events,
                 )

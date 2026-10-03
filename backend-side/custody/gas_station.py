@@ -28,7 +28,7 @@ import logging
 from decimal import Decimal
 
 from .audit import AuditAction, write_audit_log
-from .config import Network, ensure_hot_wallet, get_chain, is_memo_required, native_asset_key
+from .config import ensure_hot_wallet, get_chain, is_memo_required, native_asset_key
 from .models import GasTopupIntent, HotWallet, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
@@ -65,7 +65,6 @@ def _claim_intent(intent: GasTopupIntent) -> None:
 
 def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
     """Top up gas for user_wallet deposit EOA if needed. Returns True if topped."""
-    net = Network(user_wallet.chain_id)
     cfg = get_chain(user_wallet.chain_id)
     hot_address = ensure_hot_wallet(user_wallet.chain_id)
     # Bounded grant from chain config (tiny, fixed) — prevents abuse.
@@ -77,21 +76,20 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
         chain_id=user_wallet.chain_id,
         to_address=user_wallet.deposit_address,
         amount=grant,
-        memo=user_wallet.memo if is_memo_required(net) else None,
+        memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
     )
     if intent.status == "BROADCASTED":
         return True
     if intent.status in {"PROCESSING", "RECONCILIATION_REQUIRED"}:
         raise AmbiguousBroadcastError("gas top-up requires reconciliation")
     tx = UnsignedTx(
-        network=net,
         chain_id=user_wallet.chain_id,
         asset_key=native_asset_key(user_wallet.chain_id),
         from_address=hot_address,
         to_address=user_wallet.deposit_address,
         amount=grant,
         derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
-        memo=user_wallet.memo if is_memo_required(net) else None,
+        memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
     )
     _claim_intent(intent)
     signer = get_signer()
@@ -131,7 +129,7 @@ def admin_topup(
     actor_id: str,
     chain_id: str,
     to_address: str,
-    amount: float,
+    amount: Decimal,
     idempotency_key: str,
     memo: str | None = None,
 ) -> dict:
@@ -147,7 +145,7 @@ def admin_topup(
     Returns {"tx_hash": ..., "to": ..., "amount": ...}.
     """
     cfg = get_chain(chain_id)
-    net = Network(chain_id)
+    amount = Decimal(str(amount))
 
     # ---- Validation: amount > 0 + bounded ceiling ----
     if amount <= 0:
@@ -184,14 +182,13 @@ def admin_topup(
         raise AmbiguousBroadcastError("gas top-up requires reconciliation")
 
     tx = UnsignedTx(
-        network=net,
         chain_id=chain_id,
         asset_key=native_asset_key(chain_id),
         from_address=hot_address,
         to_address=to_address,
         amount=amount,
         derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
-        memo=memo if is_memo_required(net) else None,
+        memo=memo if is_memo_required(chain_id) else None,
     )
     _claim_intent(intent)
     signer = get_signer()

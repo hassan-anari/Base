@@ -13,7 +13,16 @@ from typing import Optional
 from ninja import Schema
 from pydantic import Field, field_validator, model_validator
 
+from .chain_registry import ChainRegistryError
 from .config import chain_ids, get_asset, native_asset_key, validate_chain_asset
+
+
+def _validated_native_asset_key(chain_id: str) -> str:
+    """Translate fail-closed registry errors into an API validation error."""
+    try:
+        return native_asset_key(chain_id)
+    except ChainRegistryError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 # ---------------- Wallet ----------------
@@ -32,7 +41,7 @@ class AddressRequest(Schema):
     @model_validator(mode="after")
     def _check_chain(self):
         validate_chain_asset(
-            self.network, self.asset_key or native_asset_key(self.network), "deposit"
+            self.network, self.asset_key or _validated_native_asset_key(self.network), "deposit"
         )
         return self
 
@@ -77,7 +86,7 @@ class CreateWalletRequest(Schema):
     def _check(self):
         if self.networks:
             for n in self.networks:
-                validate_chain_asset(n, native_asset_key(n), "deposit")
+                validate_chain_asset(n, _validated_native_asset_key(n), "deposit")
         if self.asset_keys:
             for a in self.asset_keys:
                 try:
@@ -105,7 +114,7 @@ class BalanceCheckRequest(Schema):
     @model_validator(mode="after")
     def _check_asset(self):
         validate_chain_asset(
-            self.network, self.asset_key or native_asset_key(self.network), "deposit"
+            self.network, self.asset_key or _validated_native_asset_key(self.network), "deposit"
         )
         return self
 
@@ -152,7 +161,7 @@ class WithdrawalRequestInput(Schema):
 
     @model_validator(mode="after")
     def _check_asset(self):
-        ak = self.asset_key or native_asset_key(self.network)
+        ak = self.asset_key or _validated_native_asset_key(self.network)
         validate_chain_asset(self.network, ak, "withdrawal")
         return self
 

@@ -4,13 +4,14 @@ from decimal import Decimal
 
 from django.db import transaction
 
-from .config import get_confirmation_threshold
+from .config import get_confirmation_threshold, validate_chain_asset
 from .ledger import credit_deposit, reverse_deposit_posting
 from .models import Deposit
 
 
 def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
     """Persist/update one concrete indexer event and credit at finality exactly once."""
+    validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
     amount = Decimal(str(event.amount))
     threshold = get_confirmation_threshold(user_wallet.chain_id)
     with transaction.atomic():

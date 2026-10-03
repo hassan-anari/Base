@@ -28,7 +28,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
-from .config import Network, ensure_hot_wallet, native_asset_key, validate_chain_asset
+from .config import ensure_hot_wallet, native_asset_key, validate_chain_asset
 from .ledger import release_withdrawal, reserve_withdrawal, settle_withdrawal
 from .models import WithdrawalRequest
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
@@ -100,7 +100,7 @@ def approve(admin_id: str, req_id: int, notes: str | None = None) -> WithdrawalR
             AuditAction.WITHDRAWAL_APPROVE,
             "WithdrawalRequest",
             str(req.id),
-            {"to": req.to_address, "amount": float(req.amount)},
+            {"to": req.to_address, "amount": str(req.amount)},
         )
     return req
 
@@ -150,15 +150,13 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
             claimed_by_this_call = True
 
     try:
-        net = Network(req.chain_id)
         hot = ensure_hot_wallet(req.chain_id)
         tx = UnsignedTx(
-            network=net,
             chain_id=req.chain_id,
             asset_key=req.asset_key,
             from_address=hot,
             to_address=req.to_address,
-            amount=float(req.amount),
+            amount=req.amount,
             derivation_path="<hot-wallet-path>",
             memo=None,
         )

@@ -15,13 +15,14 @@ logger = logging.getLogger("custody.indexer.bsc")
 
 
 class BscIndexer(IndexerClient):
-    network = "BSC"
+    def __init__(self):
+        super().__init__("BSC")
 
     def get_balance(self, address: str, memo=None) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance()
         try:
-            return evm_get_balance("BSC", address)
+            return evm_get_balance(self.chain_id, address)
         except Exception as e:
             logger.error("BSC live balance failed for %s: %s", address, e)
             raise IndexerUnavailable("BSC balance unavailable") from e

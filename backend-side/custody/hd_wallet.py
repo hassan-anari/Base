@@ -34,23 +34,16 @@ raw private keys. Here we compute the *public* address from a published
 extended public key (xpub / on-chain verified) or ask the MPC vault for the
 derived EOA address via an adapter call. We stub the adapter call.
 """
+
+import hashlib
 from dataclasses import dataclass
 from enum import StrEnum
-import hashlib
 
-from .config import Network
+from .chain_adapters import get_adapter
 
 EXCHANGE_HARDENED_INDEX = 0  # identifies this exchange
 
 # Per-network purpose' value (hardened). Mirrors SLIP-44-ish assignment.
-PURPOSE_BY_NETWORK = {
-    Network.ETH: 44,
-    Network.BSC: 44,
-    Network.TRX: 44,
-    Network.SOL: 501,
-    Network.TON: 396,
-}
-
 HARDENED = 0x80000000  # BIP-32 hardened offset
 
 
@@ -61,24 +54,24 @@ class AddressStatus(StrEnum):
 
 @dataclass(frozen=True)
 class DerivedAddress:
-    network: Network
-    deposit_address: str          # the EOA address shown to the user
-    derivation_path: str          # e.g. "m/44'/0'/12'/0"
+    chain_id: str
+    deposit_address: str  # the EOA address shown to the user
+    derivation_path: str  # e.g. "m/44'/0'/12'/0"
     address_index: int
 
 
-def build_derivation_path(network: Network, user_index: int, address_index: int,
-                          asset_key: str | None = None) -> str:
+def build_derivation_path(
+    chain_id: str, user_index: int, address_index: int, asset_key: str | None = None
+) -> str:
     """Return the BIP-32 style path string (display + storage).
 
     Includes an asset-specific hardened salt so each (chain, asset) gets a
     distinct deterministic EOA while remaining reproducible.
     """
-    purpose = PURPOSE_BY_NETWORK[network]
-    asset_salt = _asset_salt(asset_key or network.value)
+    purpose = get_adapter(chain_id).derivation_purpose
+    asset_salt = _asset_salt(asset_key or chain_id)
     # hardened indices are denoted with a trailing '
-    return (f"m/{purpose}'/{EXCHANGE_HARDENED_INDEX}'/{user_index}'/"
-            f"{address_index}'/{asset_salt}'")
+    return f"m/{purpose}'/{EXCHANGE_HARDENED_INDEX}'/{user_index}'/{address_index}'/{asset_salt}'"
 
 
 def _asset_salt(asset_key: str) -> int:
@@ -87,7 +80,7 @@ def _asset_salt(asset_key: str) -> int:
 
 
 def derive_deposit_address(
-    network: Network,
+    chain_id: str,
     user_index: int,
     address_index: int = 0,
     *,
@@ -105,11 +98,11 @@ def derive_deposit_address(
       - Never returns a contract address. Adapters MUST return EOAs.
       - Validate the returned address format per network before persisting.
     """
-    path = build_derivation_path(network, user_index, address_index, asset_key)
-    eoa = _resolve_eoa(network, path, mpc_adapter)
-    _assert_eoa_format(network, eoa)  # sanity check (no contract addresses)
+    path = build_derivation_path(chain_id, user_index, address_index, asset_key)
+    eoa = _resolve_eoa(chain_id, path, mpc_adapter)
+    get_adapter(chain_id).validate_address(eoa, custody_derived=True)
     return DerivedAddress(
-        network=network,
+        chain_id=chain_id,
         deposit_address=eoa,
         derivation_path=path,
         address_index=address_index,
@@ -126,7 +119,7 @@ def stable_user_index(user_id: str) -> int:
     return int.from_bytes(digest[:4], "big") % (2**31)
 
 
-def _resolve_eoa(network: Network, path: str, mpc_adapter=None) -> str:
+def _resolve_eoa(chain_id: str, path: str, mpc_adapter=None) -> str:
     """Ask the MPC vault for the EOA address at ``path``.
 
     In production this calls the vendor adapter (Fireblocks/Turnkey/Lit/...)
@@ -139,21 +132,6 @@ def _resolve_eoa(network: Network, path: str, mpc_adapter=None) -> str:
     """
     if mpc_adapter is None:
         from .signer_adapter import get_adapter
+
         mpc_adapter = get_adapter()
-    return mpc_adapter.get_derived_address(network.value, path)
-
-
-def _assert_eoa_format(network: Network, address: str) -> None:
-    """Lightweight format assertion. Real EOA validation lives in adapters."""
-    if not address:
-        raise ValueError("Empty deposit address produced by adapter")
-    # Network-specific basic shape checks (stub-level).
-    if network in (Network.ETH, Network.BSC) and not address.startswith("0x"):
-        raise ValueError(f"ETH/BSC EOA must start with 0x: {address}")
-    if network is Network.TRX and not (address.startswith("T") or address.startswith("0x")):
-        raise ValueError(f"TRX EOA must be a T-address or hex: {address}")
-    if network is Network.SOL and len(address) < 32:
-        raise ValueError(f"SOL EOA pubkey too short: {address}")
-    if network is Network.TON and not address:
-        raise ValueError("TON EOA empty")
-    # IMPORTANT: We deliberately do NOT allow contract-address derivation here.
+    return mpc_adapter.get_derived_address(chain_id, path)

@@ -21,7 +21,7 @@ import hashlib
 import logging
 from typing import Any, Optional
 
-from .config import Network
+from .chain_registry import ChainKind, get_chain_spec
 from .crypto_utils import derive_scalar
 
 logger = logging.getLogger("custody.vault")
@@ -64,28 +64,28 @@ class LocalVault:
 
     # ---- TON produces a deterministic EOA + stubbed signature ----
     def get_derived_address(self, network: str, path: str) -> str:
-        net = Network(network)
+        kind = get_chain_spec(network).kind
         scalar = derive_scalar(network, path, _seed())
-        if net in (Network.ETH, Network.BSC, Network.TRX):
+        if kind in (ChainKind.EVM, ChainKind.TRON):
             from eth_keys import keys
 
             priv = keys.PrivateKey(scalar)
-            if net is Network.TRX:
+            if kind is ChainKind.TRON:
                 return _trx_address(priv.public_key.to_hex())
             return priv.public_key.to_checksum_address()
-        if net is Network.SOL:
+        if kind is ChainKind.SOLANA:
             from solders.keypair import Keypair
 
             kp = Keypair.from_seed(scalar)
             return str(kp.pubkey())
-        if net is Network.TON:
+        if kind is ChainKind.TON:
             return _ton_raw_address(scalar)
         raise NotImplementedError("Unknown network for address derivation")
 
     def sign(self, network: str, raw: dict, path: str, idempotency_key: str) -> str:
-        net = Network(network)
+        kind = get_chain_spec(network).kind
         scalar = derive_scalar(network, path, _seed())
-        if net in (Network.ETH, Network.BSC):
+        if kind is ChainKind.EVM:
             from eth_account import Account
 
             # STUB BROADCAST PATH: when no real (nonce/chainId/gas) fields are
@@ -100,14 +100,14 @@ class LocalVault:
             acct = Account.from_key(scalar)
             signed = acct.sign_transaction(raw)
             return "signed:" + signed.raw_transaction.hex()
-        if net is Network.TRX:
+        if kind is ChainKind.TRON:
             from tronpy.keys import PrivateKey as TronPrivateKey
 
             pk = TronPrivateKey(scalar)
             tx_id = raw.get("tx_id", b"")
             tx_id_hex = tx_id.hex() if isinstance(tx_id, bytes) else str(tx_id)
             return "signed:" + pk.sign_msg(tx_id_hex)
-        if net is Network.SOL:
+        if kind is ChainKind.SOLANA:
             from solders.keypair import Keypair
 
             kp = Keypair.from_seed(scalar)
@@ -118,7 +118,7 @@ class LocalVault:
             # solders returns a Signature object; convert to bytes
             sig_bytes = bytes(sig) if not isinstance(sig, bytes) else sig
             return "signed:" + base64.b64encode(sig_bytes).decode()
-        if net is Network.TON:
+        if kind is ChainKind.TON:
             # STUB: production delegates TON signing to the MPC vendor.
             return "signed:ton:" + hashlib.sha256(f"{path}:{idempotency_key}".encode()).hexdigest()
         raise NotImplementedError("Unknown network for signing")

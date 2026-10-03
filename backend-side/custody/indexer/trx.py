@@ -10,6 +10,7 @@ STUB mode (CUSTODY_INDEXER_MODE=stub): offline simulated balance.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import List
 
 import requests
@@ -22,13 +23,21 @@ logger = logging.getLogger("custody.indexer.trx")
 RPC_TIMEOUT = 8.0
 
 
+def _positive_block_number(value) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class TrxIndexer(IndexerClient):
-    network = "TRX"
+    def __init__(self, chain_id: str = "TRX"):
+        super().__init__(chain_id)
 
     def get_balance(self, address: str, memo=None) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance()
-        urls = rpc_urls("TRX")
+        urls = rpc_urls(self.chain_id)
         if not urls:
             raise IndexerUnavailable("no RPC node configured for TRX")
         last_err: Exception | None = None
@@ -43,7 +52,10 @@ class TrxIndexer(IndexerClient):
                 r.raise_for_status()
                 data = r.json()
                 balance_sun = int(data.get("balance", 0))
-                confirmed = balance_sun / 1_000_000
+                from ..chain_registry import get_chain_spec
+
+                divisor = Decimal(10 ** get_chain_spec(self.chain_id).native_decimals)
+                confirmed = Decimal(balance_sun) / divisor
 
                 head_block = None
                 try:
@@ -69,14 +81,21 @@ class TrxIndexer(IndexerClient):
                                 p = c.get("parameter", {}).get("value", {})
                                 amount_sun = int(p.get("amount", 0))
                                 if c.get("type") == "TransferContract" and amount_sun > 0:
+                                    # TronGrid's blockNumber is the mined block. The
+                                    # transaction ref block is only an expiration/
+                                    # anti-replay reference and is not finality evidence.
+                                    block = _positive_block_number(tx.get("blockNumber"))
+                                    confirmations = (
+                                        max(0, head_block - block + 1)
+                                        if head_block is not None and block > 0
+                                        else 0
+                                    )
                                     events.append(
                                         DepositEvent(
                                             tx_hash=tx.get("txID", ""),
-                                            amount=amount_sun / 1_000_000,
-                                            block=int(raw.get("ref_block_bytes", "0"), 16)
-                                            if raw.get("ref_block_bytes")
-                                            else 0,
-                                            confirmations=10,
+                                            amount=Decimal(amount_sun) / divisor,
+                                            block=block,
+                                            confirmations=confirmations,
                                         )
                                     )
                 except Exception as e:  # noqa: BLE001
@@ -84,7 +103,7 @@ class TrxIndexer(IndexerClient):
 
                 return BalanceResult(
                     confirmed_balance=confirmed,
-                    pending_balance=0.0,
+                    pending_balance=Decimal("0"),
                     last_scanned_block=head_block,
                     deposit_events=events,
                 )

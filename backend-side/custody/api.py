@@ -21,6 +21,7 @@ SECURITY:
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 from django.db.models import Count, Sum
@@ -399,6 +400,11 @@ def create_wallet(
 
 
 # ---------------- Balance check + auto sweep ----------------
+def _balance_exceeds_threshold(confirmed: Decimal, threshold: Decimal) -> bool:
+    """Keep exact monetary precision at the sweep decision boundary."""
+    return confirmed > threshold
+
+
 @api.post("/wallet/balance/check", response=BalanceCheckResponse)
 def balance_check(
     request,
@@ -427,12 +433,12 @@ def balance_check(
     )
     for event in bal.deposit_events:
         ingest_event(w, event)
-    confirmed = float(bal.confirmed_balance)
+    confirmed = Decimal(bal.confirmed_balance)
     threshold = effective_deposit_threshold(asset)
     triggered = False
     job_id = None
     reason = None
-    if confirmed > threshold:
+    if _balance_exceeds_threshold(confirmed, threshold):
         triggered, job_id, reason = trigger_sweep(w, actor_id=operator_id, balance_result=bal)
     else:
         reason = "balance below threshold"

@@ -132,7 +132,7 @@ def trigger_sweep(
                 AuditAction.SWEEP_TRIGGER,
                 "SweepJob",
                 str(job.id),
-                {"round": round_no, "balance": float(confirmed)},
+                {"round": round_no, "balance": str(confirmed)},
             )
 
         # Gas top-up step (if needed) -> then sweep. Run in background in prod.

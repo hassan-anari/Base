@@ -23,6 +23,13 @@ logger = logging.getLogger("custody.indexer.trx")
 RPC_TIMEOUT = 8.0
 
 
+def _positive_block_number(value) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class TrxIndexer(IndexerClient):
     def __init__(self, chain_id: str = "TRX"):
         super().__init__(chain_id)
@@ -74,14 +81,21 @@ class TrxIndexer(IndexerClient):
                                 p = c.get("parameter", {}).get("value", {})
                                 amount_sun = int(p.get("amount", 0))
                                 if c.get("type") == "TransferContract" and amount_sun > 0:
+                                    # TronGrid's blockNumber is the mined block. The
+                                    # transaction ref block is only an expiration/
+                                    # anti-replay reference and is not finality evidence.
+                                    block = _positive_block_number(tx.get("blockNumber"))
+                                    confirmations = (
+                                        max(0, head_block - block + 1)
+                                        if head_block is not None and block > 0
+                                        else 0
+                                    )
                                     events.append(
                                         DepositEvent(
                                             tx_hash=tx.get("txID", ""),
                                             amount=Decimal(amount_sun) / divisor,
-                                            block=int(raw.get("ref_block_bytes", "0"), 16)
-                                            if raw.get("ref_block_bytes")
-                                            else 0,
-                                            confirmations=10,
+                                            block=block,
+                                            confirmations=confirmations,
                                         )
                                     )
                 except Exception as e:  # noqa: BLE001

@@ -56,7 +56,7 @@ class Chain(models.Model):
 
 
 # ---------------------------------------------------------------------------
-# Asset / token registry (token onboarding — config-driven)
+# Operational asset metadata; it does not enable custody token support.
 # ---------------------------------------------------------------------------
 class Asset(models.Model):
     """Operational metadata only; custody.Asset owns custody capabilities."""

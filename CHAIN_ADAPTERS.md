@@ -40,3 +40,9 @@ work, and `LocalVault` remains explicitly demo-only with fail-closed settings.
 Node failover occurs inside each indexer across the canonical resolver's ordered
 endpoint list. Exhausted nodes raise an indexer-unavailable error; they are never
 reported as a zero balance. Full RPC SSRF hardening is intentionally deferred.
+
+Deposit finality is evidence-driven. TRON computes depth only from TronGrid's
+mined `blockNumber` and the current head; `ref_block_bytes` is never treated as a
+height. TON does not treat `utime` or logical time as a height and requires an
+explicit provider confirmation count. Missing or malformed evidence produces a
+pending event with zero confirmations and cannot credit the ledger.

@@ -124,7 +124,7 @@ DEFAULT_CHAINS: dict[str, ChainConfig] = {
         memo_required=True,
         gas_topup_amount=Decimal("0.1"),
     ),
-    # Example CUSTOM EVM chain added via config only (no code change needed):
+    # Bootstrap example only; runtime custom chains are operator DB records:
     # "BASE": ChainConfig(
     #     chain_id="BASE", kind=ChainKind.EVM, display_name="Base Sepolia",
     #     rpc_url=_env("RPC_BASE", "https://sepolia.base.org"),
@@ -293,23 +293,13 @@ def get_indexer_base_url() -> str:
 
 
 def is_memo_required(chain_id) -> bool:
-    try:
-        return get_chain(str(chain_id)).memo_required
-    except Exception:
-        return False
+    """Return memo policy from the authoritative registry, failing closed."""
+    return get_chain(str(chain_id)).memo_required
 
 
 def native_asset_key(chain_id: str) -> str:
-    """Return the native asset key for a chain (e.g. BSC -> 'BNB').
-
-    Finds the AssetConfig whose chain_id matches and is_native=True. This
-    decouples the chain id from its native asset symbol (BSC != BNB).
-    Falls back to the chain_id itself when no native asset entry exists.
-    """
-    for a in get_assets().values():
-        if a.chain_id == str(chain_id) and a.is_native:
-            return a.asset_key
-    return str(chain_id)
+    """Return the validated native custody asset; never guess from chain_id."""
+    return get_chain(str(chain_id)).native_asset_key
 
 
 def validate_chain_asset(
@@ -334,15 +324,12 @@ def validate_chain_asset(
 
 
 def effective_deposit_threshold(asset: AssetConfig, chain=None) -> Decimal:
+    resolved_chain = get_chain(asset.chain_id)
+    if chain is not None and chain.chain_id != resolved_chain.chain_id:
+        raise ValueError("threshold chain does not match asset chain")
     if asset.deposit_threshold is not None:
         return asset.deposit_threshold
-    if chain is not None:
-        return chain.deposit_threshold
-    # Fallback when no chain context is supplied (rare): use the asset's chain.
-    try:
-        return get_chain(asset.chain_id).deposit_threshold
-    except Exception:
-        return Decimal("0")
+    return resolved_chain.deposit_threshold
 
 
 def get_confirmation_threshold(chain_id: str) -> int:

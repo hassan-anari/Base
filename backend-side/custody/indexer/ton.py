@@ -34,6 +34,13 @@ logger = logging.getLogger("custody.indexer.ton")
 RPC_TIMEOUT = 8.0
 
 
+def _nonnegative_int(value) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class TonIndexer(IndexerClient):
     def __init__(self, chain_id: str = "TON"):
         super().__init__(chain_id)
@@ -58,7 +65,8 @@ class TonIndexer(IndexerClient):
                 nanotons = int(data["result"])
                 from ..chain_registry import get_chain_spec
 
-                divisor = Decimal(10 ** get_chain_spec(self.chain_id).native_decimals)
+                spec = get_chain_spec(self.chain_id)
+                divisor = Decimal(10**spec.native_decimals)
                 confirmed = Decimal(nanotons) / divisor
 
                 # Masterchain seqno as a coarse "last scanned" marker.
@@ -90,12 +98,24 @@ class TonIndexer(IndexerClient):
                             # (e.g. hot-wallet sweep-in accounting) credit all.
                             if memo is not None and comment != memo:
                                 continue
+                            # Timestamp/utime and logical time are not block
+                            # heights. Keep explicit block metadata for audit,
+                            # but accept finality only when the provider supplies
+                            # an explicit confirmation count.
+                            block_data = tx.get("block_id") or {}
+                            block = _nonnegative_int(block_data.get("seqno"))
+                            provider_confirmations = tx.get("confirmations")
+                            confirmations = (
+                                _nonnegative_int(provider_confirmations)
+                                if provider_confirmations is not None
+                                else 0
+                            )
                             events.append(
                                 DepositEvent(
                                     tx_hash=tx.get("transaction_id", {}).get("hash", ""),
                                     amount=Decimal(value) / divisor,
-                                    block=int(tx.get("utime", 0)),
-                                    confirmations=10,
+                                    block=block,
+                                    confirmations=confirmations,
                                     memo=comment or None,
                                 )
                             )
@@ -107,11 +127,20 @@ class TonIndexer(IndexerClient):
                 # the sum of memo-matched deposits as the confirmed amount so
                 # per-user accounting stays correct.
                 if memo is not None:
-                    confirmed = sum(e.amount for e in events)
+                    confirmed = sum(
+                        (e.amount for e in events if e.confirmations >= spec.confirmations),
+                        Decimal("0"),
+                    )
+                    pending = sum(
+                        (e.amount for e in events if e.confirmations < spec.confirmations),
+                        Decimal("0"),
+                    )
+                else:
+                    pending = Decimal("0")
 
                 return BalanceResult(
                     confirmed_balance=confirmed,
-                    pending_balance=Decimal("0"),
+                    pending_balance=pending,
                     last_scanned_block=last_block,
                     deposit_events=events,
                 )

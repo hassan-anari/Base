@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.test import TestCase, override_settings
 from ops.models import Chain, NodeEndpoint
 
+from custody.api import _balance_exceeds_threshold
 from custody.chain_adapters import EvmAdapter, from_base_units, get_adapter
 from custody.chain_registry import (
     ChainDisabled,
@@ -12,6 +13,12 @@ from custody.chain_registry import (
     UnsupportedChainKind,
     get_chain_spec,
     rpc_urls,
+)
+from custody.config import (
+    effective_deposit_threshold,
+    get_asset,
+    is_memo_required,
+    native_asset_key,
 )
 from custody.hd_wallet import build_derivation_path, derive_deposit_address
 from custody.indexer.evm import EvmIndexer
@@ -104,6 +111,25 @@ class RuntimeChainRegistryTests(TestCase):
         Chain.objects.filter(chain_id="ETH").update(kind="mystery")
         with self.assertRaises(UnsupportedChainKind):
             get_chain_spec("ETH")
+        with self.assertRaises(UnsupportedChainKind):
+            is_memo_required("ETH")
+
+    def test_compatibility_helpers_propagate_registry_failures(self):
+        asset = get_asset("ETH")
+        Chain.objects.filter(chain_id="ETH").update(enabled=False)
+        with self.assertRaises(ChainDisabled):
+            is_memo_required("ETH")
+        with self.assertRaises(ChainDisabled):
+            native_asset_key("ETH")
+        with self.assertRaises(ChainDisabled):
+            effective_deposit_threshold(asset)
+        with self.assertRaises(UnknownChain):
+            native_asset_key("UNKNOWN")
+
+    def test_malformed_native_asset_configuration_fails_closed(self):
+        Chain.objects.filter(chain_id="ETH").update(native_asset_key="MISSING")
+        with self.assertRaises(ChainUnavailable):
+            native_asset_key("ETH")
 
 
 class DecimalConversionTests(TestCase):
@@ -111,3 +137,9 @@ class DecimalConversionTests(TestCase):
         value = 10**18 + 1
         self.assertEqual(from_base_units(value, 18), Decimal("1.000000000000000001"))
         self.assertIsInstance(from_base_units(1, 9), Decimal)
+
+    def test_sweep_threshold_decision_does_not_collapse_to_float(self):
+        threshold = Decimal("1.000000000000000000")
+        confirmed = Decimal("1.000000000000000001")
+        self.assertEqual(float(threshold), float(confirmed))
+        self.assertTrue(_balance_exceeds_threshold(confirmed, threshold))

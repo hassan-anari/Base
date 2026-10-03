@@ -26,7 +26,11 @@ class CustodyConfig(AppConfig):
                         "is_native": a.is_native,
                         "contract_address": a.contract_address or "",
                         "decimals": a.decimals,
-                        "deposit_threshold": config.effective_deposit_threshold(a),
+                        "deposit_threshold": (
+                            a.deposit_threshold
+                            if a.deposit_threshold is not None
+                            else config.DEFAULT_CHAINS[a.chain_id].deposit_threshold
+                        ),
                         "enabled": a.enabled,
                         "deposit_supported": a.deposit_supported,
                         "withdrawal_supported": a.withdrawal_supported,

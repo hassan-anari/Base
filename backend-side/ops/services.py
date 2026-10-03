@@ -2,7 +2,7 @@
 Ops service layer: all read/write business logic for the operations platform.
 
 Responsibilities:
-  * Asset/chain registry (config-driven onboarding, no code change)
+  * Operational asset metadata and authoritative runtime chain registry
   * Node health monitoring (RPC/Indexer reachability, block height, latency)
   - Balance snapshots (current + historical) for any address
   * Operator activity tracking + audit integration
@@ -107,7 +107,10 @@ def add_asset(
     deposit_threshold: str = "0.0",
     withdraw_enabled: bool = True,
 ) -> M.Asset:
-    """Admin/operator adds a new token (onboarding). No code change needed.
+    """Register operational asset metadata.
+
+    This does not enable custody. ``custody.Asset`` capability flags and a
+    reviewed Phase 5 adapter implementation remain required for tokens.
 
     RBAC (operator+) is enforced at the API boundary; this layer only
     attributes the action to ``actor_id`` for audit.

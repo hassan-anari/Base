@@ -100,7 +100,7 @@ def approve(admin_id: str, req_id: int, notes: str | None = None) -> WithdrawalR
             AuditAction.WITHDRAWAL_APPROVE,
             "WithdrawalRequest",
             str(req.id),
-            {"to": req.to_address, "amount": float(req.amount)},
+            {"to": req.to_address, "amount": str(req.amount)},
         )
     return req
 

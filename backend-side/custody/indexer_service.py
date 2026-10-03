@@ -88,7 +88,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
         return result
 
     confirmed = Decimal(str(bal.confirmed_balance))
-    result["confirmed_balance"] = float(confirmed)
+    result["confirmed_balance"] = confirmed
 
     # Concrete events, rather than aggregate address balance, back credits.
     for ev in bal.deposit_events:
@@ -110,7 +110,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
                 {
                     "wallet": user_wallet.deposit_address,
                     "tx_hash": ev.tx_hash,
-                    "amount": float(ev.amount),
+                    "amount": str(ev.amount),
                 },
             )
     with transaction.atomic():

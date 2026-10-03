@@ -20,10 +20,10 @@ from django.db import models
 
 
 class Asset(models.Model):
-    """Catalog of supported assets (native coins + tokens like USDT).
+    """Authoritative custody capability record for a reviewed asset.
 
-    This is the single place to "add a token on a chain". Populated from
-    ``config.DEFAULT_ASSETS`` at startup; admins can also add rows.
+    Token metadata alone does not provide custody support. Token capability
+    flags remain disabled until a reviewed Phase 5 implementation exists.
     """
 
     asset_key = models.CharField(max_length=32, unique=True)  # "USDT-BSC"

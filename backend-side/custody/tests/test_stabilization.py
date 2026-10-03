@@ -3,6 +3,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.db import DatabaseError
 from django.test import Client, TestCase, override_settings
 
 from custody.auth import create_token
@@ -79,6 +80,32 @@ class CustodyWorkflowTests(TestCase):
         with self.assertRaises(AmbiguousBroadcastError):
             trigger_sweep(wallet(), "operator")
         self.assertEqual(SweepJob.objects.get().status, "RECONCILIATION_REQUIRED")
+
+    @patch("custody.sweeper.ensure_gas", return_value=True)
+    @patch("custody.sweeper.get_signer")
+    @patch("custody.sweeper.get_indexer")
+    def test_sweep_result_persistence_failure_is_not_retryable(self, indexer, signer, _gas):
+        indexer.return_value.get_balance.return_value = BalanceResult(Decimal("1"))
+        fake_signer = FakeSigner()
+        signer.return_value = fake_signer
+        w = wallet()
+        original_save = SweepJob.save
+
+        def fail_broadcast_save(instance, *args, **kwargs):
+            if instance.status == "SWEEP_BROADCASTED":
+                raise DatabaseError("database write lost")
+            return original_save(instance, *args, **kwargs)
+
+        with patch.object(SweepJob, "save", autospec=True, side_effect=fail_broadcast_save):
+            with self.assertRaises(AmbiguousBroadcastError):
+                trigger_sweep(w, "operator")
+
+        job = SweepJob.objects.get()
+        self.assertEqual(job.status, "RECONCILIATION_REQUIRED")
+        retry = trigger_sweep(w, "operator")
+        self.assertEqual(retry[1], job.pk)
+        self.assertEqual(SweepJob.objects.count(), 1)
+        self.assertEqual(fake_signer.calls, 1)
 
     @patch("custody.gas_station.get_signer")
     def test_admin_topup_uses_canonical_native_asset(self, get_signer):
@@ -184,6 +211,37 @@ class CustodyWorkflowTests(TestCase):
         self.assertEqual(req.status, "RECONCILIATION_REQUIRED")
         with self.assertRaisesMessage(ValueError, "must be APPROVED"):
             process_withdrawal("admin", req.pk)
+
+    @patch("custody.withdrawals.get_signer")
+    def test_withdrawal_result_persistence_failure_requires_reconciliation(self, get_signer):
+        signer = FakeSigner()
+        get_signer.return_value = signer
+        req = create_request(
+            "customer",
+            "ETH",
+            "0x" + "4" * 40,
+            1,
+            idempotency_key="withdrawal-persistence-key",
+        )
+        approve("admin", req.pk)
+        original_save = WithdrawalRequest.save
+
+        def fail_broadcast_save(instance, *args, **kwargs):
+            if instance.status == "BROADCASTED":
+                raise DatabaseError("database write lost")
+            return original_save(instance, *args, **kwargs)
+
+        with patch.object(
+            WithdrawalRequest, "save", autospec=True, side_effect=fail_broadcast_save
+        ):
+            with self.assertRaises(DatabaseError):
+                process_withdrawal("admin", req.pk)
+
+        req.refresh_from_db()
+        self.assertEqual(req.status, "RECONCILIATION_REQUIRED")
+        with self.assertRaisesMessage(ValueError, "must be APPROVED"):
+            process_withdrawal("admin", req.pk)
+        self.assertEqual(signer.calls, 1)
 
     @patch("custody.gas_station.get_signer")
     def test_ambiguous_gas_topup_is_persisted_and_not_retried(self, get_signer):

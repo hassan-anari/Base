@@ -14,10 +14,8 @@ from custody.withdrawals import process_withdrawal
 
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock integration test")
 class WithdrawalConcurrencyTests(TransactionTestCase):
-    reset_sequences = True
-
     def test_two_workers_broadcast_exactly_once(self):
-        HotWallet.objects.create(chain_id="ETH", address="0x" + "2" * 40)
+        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
         req = WithdrawalRequest.objects.create(
             user_id="customer",
             chain_id="ETH",

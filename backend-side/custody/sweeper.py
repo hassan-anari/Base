@@ -193,9 +193,19 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
         )
     except Exception as exc:
         raise AmbiguousBroadcastError("sweep outcome is unknown; reconcile before retry") from exc
-    job.status = "SWEEP_BROADCASTED"
-    job.tx_hash = res.tx_hash
-    job.save(update_fields=["status", "tx_hash"])
+    # Cross the external-effect boundary fail-closed: persist an uncertain,
+    # non-retryable state before attempting to record the successful response.
+    # If the final DB write fails, reconciliation remains required.
+    try:
+        job.status = "RECONCILIATION_REQUIRED"
+        job.save(update_fields=["status"])
+        job.status = "SWEEP_BROADCASTED"
+        job.tx_hash = res.tx_hash
+        job.save(update_fields=["status", "tx_hash"])
+    except Exception as exc:
+        raise AmbiguousBroadcastError(
+            "sweep was broadcast but its result could not be persisted"
+        ) from exc
     logger.info("sweep broadcast job=%s tx=%s", job.id, res.tx_hash)
     # Confirmation monitoring is indexer-driven (separate task/worker).
 

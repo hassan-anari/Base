@@ -159,14 +159,26 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
                 status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
             )
         raise
-    with transaction.atomic():
-        req = WithdrawalRequest.objects.select_for_update().get(pk=req.pk)
-        if req.status != "PROCESSING":
-            raise ValueError(f"unexpected withdrawal state {req.status}")
-        req.status = "BROADCASTED"
-        req.tx_hash = res.tx_hash
-        req.updated_at = timezone.now()
-        req.save(update_fields=["status", "tx_hash", "updated_at"])
+    # Persist a safe non-retryable state before recording the successful
+    # external response. A failed final write therefore cannot expose the
+    # withdrawal as APPROVED/retryable.
+    WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
+        status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
+    )
+    try:
+        with transaction.atomic():
+            req = WithdrawalRequest.objects.select_for_update().get(pk=req.pk)
+            if req.status != "RECONCILIATION_REQUIRED":
+                raise ValueError(f"unexpected withdrawal state {req.status}")
+            req.status = "BROADCASTED"
+            req.tx_hash = res.tx_hash
+            req.updated_at = timezone.now()
+            req.save(update_fields=["status", "tx_hash", "updated_at"])
+    except Exception:
+        WithdrawalRequest.objects.filter(pk=req.pk).exclude(status="BROADCASTED").update(
+            status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
+        )
+        raise
     logger.info("withdrawal broadcast req=%s tx=%s", req.id, res.tx_hash)
     return req
 

@@ -45,6 +45,8 @@ export const SCENARIOS = [
     desc: 'Operator creates a withdrawal on behalf of the customer (PENDING_APPROVAL, no broadcast). Admin lists, approves, and the MPC signer broadcasts. We poll the withdrawal status.',
     steps: [
       { endpointId: 'login', role: 'ops', note: 'Operator authenticates.', vars: {} },
+      { endpointId: 'wallet_address', role: 'ops', note: 'Provision the ETH deposit EOA before funding.', vars: { network: 'ETH' } },
+      { endpointId: 'balance_check', role: 'ops', note: 'Ingest a confirmed deposit event and credit AVAILABLE before withdrawal.', vars: { network: 'ETH' } },
       {
         endpointId: 'wd_request',
         role: 'ops',
@@ -100,6 +102,8 @@ export const SCENARIOS = [
     desc: 'Verify that a non-admin role CANNOT approve withdrawals (server-side enforcement). Operator creates a withdrawal, then attempts to approve it and must receive 403.',
     steps: [
       { endpointId: 'login', role: 'ops', note: 'Operator authenticates.', vars: {} },
+      { endpointId: 'wallet_address', role: 'ops', note: 'Provision the ETH deposit EOA before funding.', vars: { network: 'ETH' } },
+      { endpointId: 'balance_check', role: 'ops', note: 'Credit the confirmed deposit to the internal ledger.', vars: { network: 'ETH' } },
       {
         endpointId: 'wd_request',
         role: 'ops',

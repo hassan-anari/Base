@@ -43,9 +43,10 @@ from .config import (
     is_memo_required,
     validate_chain_asset,
 )
+from .deposits import ingest_event
 from .gas_station import AmbiguousBroadcastError, ensure_gas
 from .indexer.factory import get_indexer
-from .models import Deposit, SweepJob, UserWallet
+from .models import SweepJob, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 from .rate_limit import rate_limiter
 
@@ -68,7 +69,9 @@ def _inflight_job(user_wallet: UserWallet):
     )
 
 
-def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | None, str]:
+def trigger_sweep(
+    user_wallet: UserWallet, actor_id: str, balance_result=None
+) -> tuple[bool, int | None, str]:
     """Entry point from balance-check. Returns (triggered, sweep_job_id, reason).
 
     Called by the balance-check endpoint AFTER confirming balance > threshold.
@@ -101,11 +104,15 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
             return (True, inflight.id, "already running")
 
         # Pull confirmed balance + deposit events from indexer.
-        indexer = get_indexer(net)
-        bal = indexer.get_balance(
-            user_wallet.deposit_address,
-            memo=user_wallet.memo if is_memo_required(net) else None,
-        )
+        bal = balance_result
+        if bal is None:
+            indexer = get_indexer(net)
+            bal = indexer.get_balance(
+                user_wallet.deposit_address,
+                memo=user_wallet.memo if is_memo_required(net) else None,
+            )
+        for event in bal.deposit_events:
+            ingest_event(user_wallet, event)
         confirmed = Decimal(str(bal.confirmed_balance))
         if confirmed <= Decimal(str(threshold)):
             return (False, None, "balance below threshold")
@@ -122,18 +129,6 @@ def trigger_sweep(user_wallet: UserWallet, actor_id: str) -> tuple[bool, int | N
                 status="CREATED",
                 idempotency_key=f"sweep:{user_wallet.id}:{round_no}",
             )
-            for ev in bal.deposit_events:
-                Deposit.objects.get_or_create(
-                    user_wallet=user_wallet,
-                    tx_hash=ev.tx_hash,
-                    asset_key=user_wallet.asset_key,
-                    defaults={
-                        "amount": Decimal(str(ev.amount)),
-                        "block": ev.block,
-                        "confirmations": ev.confirmations,
-                        "memo": ev.memo,
-                    },
-                )
             write_audit_log(
                 actor_id,
                 AuditAction.SWEEP_TRIGGER,

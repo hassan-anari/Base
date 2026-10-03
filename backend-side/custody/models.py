@@ -1,5 +1,4 @@
-"""
-Custody data models (PostgreSQL-backed ledger/state).
+"""Custody state and authoritative financial-ledger models.
 
 Models
 ------
@@ -244,3 +243,78 @@ class AdminActionLog(models.Model):
             models.Index(fields=["actor_id", "created_at"]),
             models.Index(fields=["action_type", "created_at"]),
         ]
+
+
+class LedgerAccount(models.Model):
+    """Stable account identity; balances are derived only from postings."""
+
+    OWNER_TYPES = [("USER", "USER"), ("SYSTEM", "SYSTEM")]
+    BUCKETS = [
+        ("AVAILABLE", "AVAILABLE"),
+        ("RESERVED", "RESERVED"),
+        ("CUSTODY_CLEARING", "CUSTODY_CLEARING"),
+    ]
+    owner_type = models.CharField(max_length=16, choices=OWNER_TYPES)
+    owner_id = models.CharField(max_length=64)
+    asset_key = models.CharField(max_length=32, db_index=True)
+    bucket = models.CharField(max_length=24, choices=BUCKETS)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner_type", "owner_id", "asset_key", "bucket"],
+                name="uq_ledger_account_identity",
+            )
+        ]
+
+
+class LedgerTransaction(models.Model):
+    """Immutable journal header. Corrections are compensating transactions."""
+
+    TYPES = [
+        ("DEPOSIT_CREDIT", "DEPOSIT_CREDIT"),
+        ("DEPOSIT_REVERSAL", "DEPOSIT_REVERSAL"),
+        ("WITHDRAWAL_RESERVE", "WITHDRAWAL_RESERVE"),
+        ("WITHDRAWAL_RELEASE", "WITHDRAWAL_RELEASE"),
+        ("WITHDRAWAL_SETTLE", "WITHDRAWAL_SETTLE"),
+    ]
+    event_key = models.CharField(max_length=160, unique=True)
+    event_type = models.CharField(max_length=32, choices=TYPES)
+    asset_key = models.CharField(max_length=32, db_index=True)
+    ref_type = models.CharField(max_length=32)
+    ref_id = models.CharField(max_length=128)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError("ledger transactions are append-only")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("ledger transactions are append-only")
+
+
+class LedgerPosting(models.Model):
+    """Signed journal line: positive adds to an account, negative removes."""
+
+    transaction = models.ForeignKey(
+        LedgerTransaction, on_delete=models.PROTECT, related_name="postings"
+    )
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT, related_name="postings")
+    amount = models.DecimalField(max_digits=40, decimal_places=18)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=~models.Q(amount=0), name="ledger_posting_nonzero")
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError("ledger postings are append-only")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("ledger postings are append-only")

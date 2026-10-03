@@ -55,6 +55,7 @@ jobs:
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
           custody/indexer custody/hd_wallet.py custody/signer_adapter.py
           ops/services.py ops/models.py ops/migrations/0004_normalize_chain_kinds.py
+          custody/migrations/0007_disable_ton_deposits.py
       - run: >-
           ruff check custody/admin.py custody/api.py custody/apps.py
           custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
@@ -66,6 +67,7 @@ jobs:
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
           custody/indexer custody/hd_wallet.py custody/signer_adapter.py
           ops/services.py ops/models.py ops/migrations/0004_normalize_chain_kinds.py
+          custody/migrations/0007_disable_ton_deposits.py
 
   frontend:
     runs-on: ubuntu-latest

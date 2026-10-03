@@ -43,6 +43,11 @@ reported as a zero balance. Full RPC SSRF hardening is intentionally deferred.
 
 Deposit finality is evidence-driven. TRON computes depth only from TronGrid's
 mined `blockNumber` and the current head; `ref_block_bytes` is never treated as a
-height. TON does not treat `utime` or logical time as a height and requires an
-explicit provider confirmation count. Missing or malformed evidence produces a
-pending event with zero confirmations and cannot credit the ledger.
+height. TonCenter v2 `getTransactions` exposes `utime` and transaction logical
+time, but neither is authoritative inclusion/finality evidence. TON events are
+therefore pending with zero confirmations, and TON native deposit capability is
+disabled until a reviewed indexed/block finality integration is implemented.
+
+Phase 3 custody is hard-limited to native assets. Even if an operator manually
+enables token capability flags, deposit ingestion, withdrawal creation, and
+sweeping reject non-native assets before any ledger or external side effect.

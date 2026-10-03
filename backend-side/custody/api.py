@@ -312,6 +312,7 @@ def _ensure_deposit_address(
 
     ``actor_id`` is the operator who triggered provisioning (for audit).
     """
+    validate_chain_asset(net, asset_key, "deposit")
     existing = UserWallet.objects.filter(
         user_id=user_id,
         chain_id=net,

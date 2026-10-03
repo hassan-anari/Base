@@ -135,8 +135,7 @@ DEFAULT_CHAINS: dict[str, ChainConfig] = {
 
 
 # ---------------------------------------------------------------------------
-# DEFAULT ASSETS (native + tokens like USDT). Tokens are how you "add any
-# token on a chain" (e.g. USDT on BSC / ETH / Tron / your custom EVM).
+# DEFAULT ASSETS (native custody capabilities plus disabled token metadata).
 # ---------------------------------------------------------------------------
 DEFAULT_ASSETS: dict[str, AssetConfig] = {
     # native coins
@@ -144,7 +143,17 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
     "BNB": AssetConfig(asset_key="BNB", chain_id="BSC", symbol="BNB", decimals=18, is_native=True),
     "TRX": AssetConfig(asset_key="TRX", chain_id="TRX", symbol="TRX", decimals=6, is_native=True),
     "SOL": AssetConfig(asset_key="SOL", chain_id="SOL", symbol="SOL", decimals=9, is_native=True),
-    "TON": AssetConfig(asset_key="TON", chain_id="TON", symbol="TON", decimals=9, is_native=True),
+    # Address/indexer scaffolding exists, but TonCenter v2 getTransactions does
+    # not provide authoritative inclusion/finality evidence. Deposits remain
+    # disabled until a reviewed TON finality integration is implemented.
+    "TON": AssetConfig(
+        asset_key="TON",
+        chain_id="TON",
+        symbol="TON",
+        decimals=9,
+        is_native=True,
+        deposit_supported=False,
+    ),
     # Token metadata presets. End-to-end token transfer support is planned;
     # these entries alone do not imply signing/broadcast support.
     #   ETH  -> USDT on Sepolia
@@ -317,6 +326,10 @@ def validate_chain_asset(
     if asset.chain_id != chain_id:
         raise ValueError(f"asset {asset_key} belongs to {asset.chain_id}, not {chain_id}")
     if capability:
+        if capability in {"deposit", "withdrawal", "sweep"} and not asset.is_native:
+            raise ValueError(
+                f"{capability} is not supported for non-native asset {asset_key} before Phase 5"
+            )
         flag = f"{capability}_supported"
         if not getattr(asset, flag, False):
             raise ValueError(f"{capability} is not supported for asset {asset_key}")

@@ -88,55 +88,50 @@ class LiveFinalityTests(TestCase):
         self.assertEqual(unknown.status, "PENDING")
         self.assertEqual(user_balances("tron-user", "TRX")["available"], Decimal("1"))
 
-    def _ton_get(self, confirmations):
+    def _ton_get(self):
         def get(url, **kwargs):
             if url.endswith("getAddressBalance"):
                 return Response({"ok": True, "result": "1000000000"})
             if url.endswith("getMasterchainInfo"):
                 return Response({"ok": True, "result": {"last": {"seqno": 100}}})
-            tx = {
-                "transaction_id": {
-                    "hash": "ton-unknown" if confirmations is None else "ton-deposit",
-                    "lt": "999",
-                },
-                "utime": 999999999,
-                "in_msg": {"value": "1000000000", "message": "memo-1"},
-                "block_id": {"seqno": 90},
-            }
-            if confirmations is not None:
-                tx["confirmations"] = confirmations
-            return Response({"ok": True, "result": [tx]})
+            # Real TonCenter v2 getTransactions shape: no confirmations or
+            # inclusion block height is present on the transaction object.
+            return Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "transaction_id": {"hash": "ton-deposit", "lt": "999"},
+                            "utime": 999999999,
+                            "fee": "1",
+                            "storage_fee": "0",
+                            "other_fee": "1",
+                            "in_msg": {
+                                "source": "0:" + "2" * 64,
+                                "destination": self.ton_wallet.deposit_address,
+                                "value": "1000000000",
+                                "message": "memo-1",
+                            },
+                            "out_msgs": [],
+                        }
+                    ],
+                }
+            )
 
         return get
 
     @patch("custody.indexer.ton.requests.get")
-    def test_ton_requires_explicit_provider_finality(self, get):
-        get.side_effect = self._ton_get(4)
+    def test_ton_real_provider_shape_remains_pending_without_finality(self, get):
+        get.side_effect = self._ton_get()
         result = TonIndexer().get_balance(self.ton_wallet.deposit_address, memo="memo-1")
-        deposit, _ = ingest_event(self.ton_wallet, result.deposit_events[0])
-        self.assertEqual(deposit.status, "PENDING")
+        event = result.deposit_events[0]
+        self.assertEqual((event.block, event.confirmations), (0, 0))
         self.assertEqual(result.confirmed_balance, Decimal("0"))
         self.assertEqual(result.pending_balance, Decimal("1"))
 
-        get.side_effect = self._ton_get(5)
-        event = (
-            TonIndexer()
-            .get_balance(self.ton_wallet.deposit_address, memo="memo-1")
-            .deposit_events[0]
-        )
-        deposit, _ = ingest_event(self.ton_wallet, event)
-        self.assertEqual(deposit.status, "CONFIRMED")
-        ingest_event(self.ton_wallet, event)
-        self.assertEqual(user_balances("ton-user", "TON")["available"], Decimal("1"))
-
-        get.side_effect = self._ton_get(None)
-        event = (
-            TonIndexer()
-            .get_balance(self.ton_wallet.deposit_address, memo="memo-1")
-            .deposit_events[0]
-        )
-        self.assertEqual(event.confirmations, 0)
-        unknown, _ = ingest_event(self.ton_wallet, event)
-        self.assertEqual(unknown.status, "PENDING")
-        self.assertEqual(Deposit.objects.filter(status="CONFIRMED").count(), 1)
-        self.assertEqual(user_balances("ton-user", "TON")["available"], Decimal("1"))
+        # TON deposit capability is disabled, so ingestion fails before a
+        # Deposit or ledger posting can be created.
+        with self.assertRaisesMessage(ValueError, "deposit is not supported"):
+            ingest_event(self.ton_wallet, event)
+        self.assertFalse(Deposit.objects.filter(tx_hash="ton-deposit").exists())
+        self.assertEqual(user_balances("ton-user", "TON")["available"], Decimal("0"))

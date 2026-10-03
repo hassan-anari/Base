@@ -34,13 +34,6 @@ logger = logging.getLogger("custody.indexer.ton")
 RPC_TIMEOUT = 8.0
 
 
-def _nonnegative_int(value) -> int:
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
-
-
 class TonIndexer(IndexerClient):
     def __init__(self, chain_id: str = "TON"):
         super().__init__(chain_id)
@@ -98,24 +91,17 @@ class TonIndexer(IndexerClient):
                             # (e.g. hot-wallet sweep-in accounting) credit all.
                             if memo is not None and comment != memo:
                                 continue
-                            # Timestamp/utime and logical time are not block
-                            # heights. Keep explicit block metadata for audit,
-                            # but accept finality only when the provider supplies
-                            # an explicit confirmation count.
-                            block_data = tx.get("block_id") or {}
-                            block = _nonnegative_int(block_data.get("seqno"))
-                            provider_confirmations = tx.get("confirmations")
-                            confirmations = (
-                                _nonnegative_int(provider_confirmations)
-                                if provider_confirmations is not None
-                                else 0
-                            )
+                            # TonCenter v2 getTransactions provides utime and
+                            # transaction logical time, neither of which is an
+                            # inclusion block or confirmation depth. Until a
+                            # reviewed indexed/block API is integrated, retain
+                            # the event as pending without inventing evidence.
                             events.append(
                                 DepositEvent(
                                     tx_hash=tx.get("transaction_id", {}).get("hash", ""),
                                     amount=Decimal(value) / divisor,
-                                    block=block,
-                                    confirmations=confirmations,
+                                    block=0,
+                                    confirmations=0,
                                     memo=comment or None,
                                 )
                             )

@@ -24,6 +24,7 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
+from django.db import transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 from ninja import Header, Router, Schema
@@ -33,7 +34,7 @@ from .audit import AuditAction, write_audit_log
 from .auth import authenticate, decode_token
 from .chain_status import check_all_chains
 from .config import (
-    chain_ids,
+    default_deposit_targets,
     effective_deposit_threshold,
     get_asset,
     get_assets,
@@ -380,23 +381,26 @@ def create_wallet(
         # Explicit network list: native asset per network.
         targets = [(n, native_asset_key(n)) for n in payload.networks]
     else:
-        # Default: all enabled chains, native asset each.
-        targets = [(c, native_asset_key(c)) for c in chain_ids()]
+        # Default: only enabled native assets with reviewed deposit capability.
+        targets = default_deposit_targets()
 
-    out: list[WalletAddressDTO] = []
+    # Validate the complete plan before deriving or persisting any address.
     for net, ak in targets:
         validate_chain_asset(net, ak, "deposit")
-        w = _ensure_deposit_address(subject, net, ak, actor_id=operator_id)
-        out.append(
-            WalletAddressDTO(
-                network=net,
-                asset_key=w.asset_key,
-                deposit_address=w.deposit_address,
-                derivation_path=w.derivation_path,
-                memo=w.memo,
-                status=w.status,
+    out: list[WalletAddressDTO] = []
+    with transaction.atomic():
+        for net, ak in targets:
+            w = _ensure_deposit_address(subject, net, ak, actor_id=operator_id)
+            out.append(
+                WalletAddressDTO(
+                    network=net,
+                    asset_key=w.asset_key,
+                    deposit_address=w.deposit_address,
+                    derivation_path=w.derivation_path,
+                    memo=w.memo,
+                    status=w.status,
+                )
             )
-        )
     return CreateWalletResponse(user_id=subject, addresses=out)
 
 

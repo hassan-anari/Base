@@ -293,6 +293,19 @@ def chain_ids() -> list[str]:
     return list(Chain.objects.filter(enabled=True).values_list("chain_id", flat=True))
 
 
+def default_deposit_targets() -> list[tuple[str, str]]:
+    """Return fully validated native deposit targets for default provisioning."""
+    targets = []
+    for chain_id in chain_ids():
+        asset_key = native_asset_key(chain_id)
+        asset = get_asset(asset_key)
+        if not asset.deposit_supported:
+            continue
+        validate_chain_asset(chain_id, asset_key, "deposit")
+        targets.append((chain_id, asset_key))
+    return targets
+
+
 def asset_keys() -> list[str]:
     return [a.asset_key for a in get_assets().values() if a.enabled]
 

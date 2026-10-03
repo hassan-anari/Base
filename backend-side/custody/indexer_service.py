@@ -35,7 +35,12 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
-from .config import effective_deposit_threshold, get_asset, get_chain, is_memo_required
+from .config import (
+    effective_deposit_threshold,
+    get_chain,
+    is_memo_required,
+    validate_chain_asset,
+)
 from .deposits import ingest_event
 from .indexer.factory import get_indexer
 from .models import UserWallet
@@ -56,20 +61,26 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
       3. Update confirmation status
       4. If balance > threshold, trigger gas + sweep
     """
-    cfg = get_chain(user_wallet.chain_id)
-    asset = get_asset(user_wallet.asset_key)
-    threshold = effective_deposit_threshold(asset, cfg)
-
     result = {
         "wallet_id": user_wallet.id,
         "address": user_wallet.deposit_address,
         "network": user_wallet.chain_id,
         "new_deposits": 0,
-        "confirmed_balance": 0.0,
+        "confirmed_balance": Decimal("0"),
         "sweep_triggered": False,
         "sweep_job_id": None,
         "reason": "",
+        "outcome": "pending",
     }
+
+    try:
+        asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
+        cfg = get_chain(user_wallet.chain_id)
+        threshold = effective_deposit_threshold(asset, cfg)
+    except ValueError as exc:
+        result["outcome"] = "unsupported"
+        result["reason"] = f"deposit scanning unsupported: {exc}"
+        return result
 
     try:
         indexer = get_indexer(user_wallet.chain_id)
@@ -85,6 +96,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
             e,
         )
         result["reason"] = f"indexer error: {e}"
+        result["outcome"] = "indexer_unavailable"
         return result
 
     confirmed = Decimal(str(bal.confirmed_balance))
@@ -135,8 +147,10 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
         result["sweep_triggered"] = triggered
         result["sweep_job_id"] = job_id
         result["reason"] = reason
+        result["outcome"] = "sweep"
     else:
         result["reason"] = "balance below threshold"
+        result["outcome"] = "scanned"
 
     return result
 
@@ -152,7 +166,21 @@ def scan_all_wallets(networks: list[str] | None = None) -> list[dict]:
 
     results = []
     for wallet in qs.iterator(chunk_size=100):
-        result = scan_wallet(wallet)
+        try:
+            result = scan_wallet(wallet)
+        except Exception as exc:  # isolate a malformed wallet from the batch
+            logger.exception("wallet scan failed wallet=%s", wallet.id)
+            result = {
+                "wallet_id": wallet.id,
+                "address": wallet.deposit_address,
+                "network": wallet.chain_id,
+                "new_deposits": 0,
+                "confirmed_balance": Decimal("0"),
+                "sweep_triggered": False,
+                "sweep_job_id": None,
+                "reason": f"wallet scan error: {exc}",
+                "outcome": "error",
+            }
         results.append(result)
 
     return results

@@ -51,3 +51,7 @@ disabled until a reviewed indexed/block finality integration is implemented.
 Phase 3 custody is hard-limited to native assets. Even if an operator manually
 enables token capability flags, deposit ingestion, withdrawal creation, and
 sweeping reject non-native assets before any ledger or external side effect.
+Default wallet provisioning prevalidates its complete plan and includes only
+enabled native assets with deposit capability; disabled TON is omitted. The
+scanner similarly skips legacy wallets whose exact chain/asset deposit capability
+is unavailable, while isolating each wallet so valid wallets continue scanning.

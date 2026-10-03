@@ -1,0 +1,192 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-slate-50 text-slate-700 font-sans antialiased;
+    background-image: radial-gradient(1100px 600px at 12% -8%, rgba(8,145,178,0.10), transparent 60%),
+      radial-gradient(900px 500px at 105% 0%, rgba(16,185,129,0.08), transparent 55%);
+    background-attachment: fixed;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
+  ::-webkit-scrollbar-track { @apply bg-slate-100; }
+}
+
+@layer components {
+  /* ---------- Bento card (light) ---------- */
+  .bento {
+    @apply relative rounded-3xl border border-slate-200/80 bg-white/85 backdrop-blur-xl
+           shadow-card overflow-hidden;
+  }
+  .bento::before {
+    content: '';
+    @apply pointer-events-none absolute inset-0 opacity-[0.5];
+    background-image: theme('backgroundImage.grid-faint');
+    background-size: theme('backgroundSize.grid');
+    mask-image: radial-gradient(120% 100% at 0% 0%, black, transparent 70%);
+  }
+  .bento-pad { @apply relative p-5 sm:p-6; }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium
+           tracking-wide bg-slate-100 text-slate-600 border border-slate-200;
+  }
+  .chip-brand { @apply bg-brand-50 text-brand-700 border-brand-200; }
+  .chip-accent { @apply bg-accent-50 text-accent-700 border-accent-200; }
+  .chip-danger { @apply bg-danger-50 text-danger-600 border-danger-200; }
+
+  .label { @apply text-[11px] uppercase tracking-[0.18em] text-slate-500 font-medium; }
+  .stat-num { @apply font-display text-2xl sm:text-3xl text-slate-900 font-semibold tabular-nums; }
+
+  /* ---------- Inputs ---------- */
+  .field {
+    @apply w-full rounded-xl bg-white border border-slate-300 px-3.5 py-2.5 text-sm
+           text-slate-900 placeholder:text-slate-400 outline-none transition
+           focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20;
+  }
+  /* alias used by legacy markup */
+  .input { @apply field; }
+  .mono { @apply font-mono text-[12px] sm:text-[13px]; }
+
+  /* ---------- LIQUID BUTTON (colored gradient, white text) ---------- */
+  .liquid {
+    @apply relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl
+           px-5 py-2.5 text-sm font-semibold text-white select-none transition
+           duration-300 ease-out active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed;
+    background: linear-gradient(135deg, #0891b2, #06b6d4 55%, #22d3ee);
+    box-shadow: 0 8px 30px -10px rgba(8,145,178,0.45);
+  }
+  .liquid::before {
+    content: '';
+    @apply absolute left-1/2 top-1/2 h-0 w-0 rounded-full bg-white/30
+           transition-all duration-500 ease-out -translate-x-1/2 -translate-y-1/2;
+  }
+  .liquid:hover::before { @apply h-[260%] w-[260%]; }
+  .liquid:hover { @apply shadow-glow; }
+  .liquid > * { @apply relative z-10; }
+
+  .liquid-accent {
+    @apply liquid;
+    background: linear-gradient(135deg, #059669, #10b981 55%, #34d399);
+    box-shadow: 0 8px 30px -10px rgba(16,185,129,0.45);
+  }
+  .liquid-accent:hover { @apply shadow-glow-accent; }
+
+  .liquid-danger {
+    @apply liquid;
+    background: linear-gradient(135deg, #be123c, #f43f5e 55%, #fb7185);
+    box-shadow: 0 8px 30px -10px rgba(225,29,72,0.4);
+  }
+  .liquid-danger:hover { @apply shadow-glow-danger; }
+
+  .liquid-ghost {
+    @apply liquid;
+    background: rgba(15,23,42,0.04);
+    border: 1px solid rgba(15,23,42,0.10);
+    box-shadow: none;
+    @apply text-slate-700;
+  }
+  .liquid-ghost:hover { @apply shadow-card; }
+
+  .nav-pill { @apply relative px-4 py-2 rounded-xl text-sm font-medium text-slate-500 transition; }
+  .nav-pill.active { @apply text-brand-700 bg-brand-50 shadow-inner; }
+
+  /* ---------- Bento design system (dashboard, light) ---------- */
+  .glass { @apply bento; }
+  .glass-pad { @apply bento-pad; }
+
+  .text-grad {
+    @apply bg-gradient-to-r from-brand-600 via-brand-500 to-accent-500
+           bg-clip-text text-transparent;
+  }
+
+  /* Ambient blur orbs (subtle on light) */
+  .orb {
+    @apply pointer-events-none absolute rounded-full blur-3xl opacity-50;
+  }
+
+  /* Bento KPI tile */
+  .kpi {
+    @apply bento bento-pad relative transition duration-300
+           hover:-translate-y-0.5 hover:shadow-glow;
+  }
+  .kpi::after {
+    content: '';
+    @apply pointer-events-none absolute inset-x-0 top-0 h-px;
+    background: linear-gradient(90deg, transparent, rgba(8,145,178,0.6), transparent);
+  }
+  .kpi-icon {
+    @apply h-11 w-11 shrink-0 rounded-2xl grid place-items-center text-xl
+           bg-gradient-to-br from-brand-50 to-accent-50 text-brand-700 border border-brand-100;
+  }
+
+  /* Bento grid container */
+  .bento-grid {
+    @apply grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-min;
+  }
+
+  /* Section title accent bar */
+  .section-bar { @apply h-4 w-1 rounded-full bg-gradient-to-b from-brand-500 to-accent-500; }
+
+  /* Mini progress bar */
+  .meter { @apply h-1.5 w-full rounded-full bg-slate-200 overflow-hidden; }
+  .meter > span { @apply block h-full rounded-full bg-gradient-to-r from-brand-500 to-accent-500; }
+}
+
+/* =====================================================================
+   LIGHT-MODE OVERRIDES for hardcoded utilities in page templates.
+   These rules are intentionally OUTSIDE @layer so they win over
+   Tailwind's layered utility classes (unlayered > layered in the
+   cascade, regardless of specificity).
+   ===================================================================== */
+.text-white { color: #0f172a; }          /* dark text on light surfaces */
+.text-ink-950 { color: #ffffff; }        /* logo glyph stays light on colored gradient */
+
+.text-slate-200 { color: #334155; }      /* emphasis text */
+.text-slate-300 { color: #475569; }
+.text-slate-400 { color: #64748b; }
+.text-slate-600 { color: #475569; }
+
+/* low-contrast colored text -> darker, readable on white */
+.text-brand-300 { color: #0e7490; }
+.text-accent-400 { color: #047857; }
+.text-danger-400 { color: #e11d48; }
+
+/* ink backgrounds -> translucent white surface */
+.bg-ink-950\/40,
+.bg-ink-950\/70,
+.bg-ink-900\/50,
+.bg-ink-900\/60,
+.bg-ink-900\/70,
+.bg-ink-850\/80 {
+  background-color: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* white/* fills -> faint dark tint */
+.bg-white\/5 { background-color: rgba(15, 23, 42, 0.04) !important; }
+.bg-white\/8 { background-color: rgba(15, 23, 42, 0.05) !important; }
+.hover\:bg-white\/5:hover { background-color: rgba(15, 23, 42, 0.06) !important; }
+
+/* white/* borders -> light border */
+.border-white\/5 { border-color: rgba(15, 23, 42, 0.08) !important; }
+.border-white\/8 { border-color: rgba(15, 23, 42, 0.10) !important; }
+.border-white\/10 { border-color: rgba(15, 23, 42, 0.12) !important; }
+
+/* table row dividers */
+.divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+/* keep colored liquid buttons readable (white text on gradient) */
+.liquid,
+.liquid-accent,
+.liquid-danger {
+  color: #ffffff !important;
+}

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 
 
 class Asset(models.Model):
@@ -32,11 +33,69 @@ class Asset(models.Model):
     decimals = models.PositiveIntegerField(default=18)
     is_native = models.BooleanField(default=False)
     contract_address = models.CharField(max_length=128, null=True, blank=True)
+    TOKEN_STANDARDS = [(value, value) for value in ("ERC20", "TRC20", "SPL")]
+    token_standard = models.CharField(max_length=8, choices=TOKEN_STANDARDS, null=True, blank=True)
+    metadata_verified_at = models.DateTimeField(null=True, blank=True)
+    metadata_fingerprint = models.CharField(max_length=64, blank=True, default="")
     deposit_threshold = models.DecimalField(max_digits=40, decimal_places=18, null=True, blank=True)
     enabled = models.BooleanField(default=True)
     deposit_supported = models.BooleanField(default=True)
     withdrawal_supported = models.BooleanField(default=True)
     sweep_supported = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(is_native=True, token_standard__isnull=True)
+                    | Q(is_native=False, token_standard__isnull=False)
+                    | Q(
+                        is_native=False,
+                        token_standard__isnull=True,
+                        deposit_supported=False,
+                        withdrawal_supported=False,
+                        sweep_supported=False,
+                    )
+                ),
+                name="asset_native_token_standard_shape",
+            ),
+            models.CheckConstraint(
+                condition=Q(is_native=False) | Q(contract_address__isnull=True),
+                name="asset_native_has_no_contract",
+            ),
+            models.UniqueConstraint(
+                fields=["chain_id", "contract_address", "token_standard"],
+                condition=Q(is_native=False, enabled=True),
+                name="uq_active_token_identity",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.is_native:
+            if self.token_standard or self.contract_address:
+                raise ValidationError("native assets cannot have token metadata")
+        elif not self.token_standard or not self.contract_address:
+            raise ValidationError("tokens require a standard and contract/mint")
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values("chain_id", "contract_address", "decimals", "token_standard")
+                .first()
+            )
+            identity = (self.chain_id, self.contract_address, self.decimals, self.token_standard)
+            if old and identity != tuple(old[key] for key in old):
+                self.metadata_verified_at = None
+                self.metadata_fingerprint = ""
+                if kwargs.get("update_fields") is not None:
+                    kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                        "metadata_verified_at",
+                        "metadata_fingerprint",
+                    }
+        return super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"Asset({self.asset_key},{self.symbol})"
@@ -85,6 +144,8 @@ class UserWallet(models.Model):
     # Indexer scan metadata
     last_scanned_at = models.DateTimeField(null=True, blank=True)
     last_scanned_block = models.BigIntegerField(null=True, blank=True)
+    # SPL ATA. The signing authority remains deposit_address.
+    asset_account_address = models.CharField(max_length=128, null=True, blank=True)
 
     def __str__(self) -> str:
         return f"UserWallet({self.user_id},{self.chain_id},{self.asset_key})"
@@ -99,6 +160,8 @@ class Deposit(models.Model):
     amount = models.DecimalField(max_digits=40, decimal_places=18)
     block = models.BigIntegerField(null=True, blank=True)
     confirmations = models.PositiveIntegerField(default=0)
+    event_index = models.CharField(max_length=64, default="native:0")
+    block_hash = models.CharField(max_length=128, null=True, blank=True)
     parsed_at = models.DateTimeField(auto_now_add=True)
     # TON memo (echoed for attribution / reorg backfill).
     memo = models.CharField(max_length=128, null=True, blank=True)
@@ -114,8 +177,8 @@ class Deposit(models.Model):
         constraints = [
             # Idempotency: do not double-count the same deposit tx for a wallet.
             models.UniqueConstraint(
-                fields=["user_wallet", "tx_hash", "asset_key"],
-                name="uq_deposit_wallet_tx_asset",
+                fields=["user_wallet", "tx_hash", "asset_key", "event_index"],
+                name="uq_deposit_wallet_tx_asset_event",
             ),
         ]
 
@@ -184,6 +247,7 @@ class SweepJob(models.Model):
         ("CREATED", "CREATED"),
         ("GAS_TOPUP_REQUIRED", "GAS_TOPUP_REQUIRED"),
         ("GAS_TOPUP_BROADCASTED", "GAS_TOPUP_BROADCASTED"),
+        ("GAS_TOPUP_CONFIRMED", "GAS_TOPUP_CONFIRMED"),
         ("SWEEP_BROADCASTED", "SWEEP_BROADCASTED"),
         ("RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"),
         ("CONFIRMED", "CONFIRMED"),
@@ -200,6 +264,9 @@ class SweepJob(models.Model):
     idempotency_key = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    gas_topup_intent = models.OneToOneField(
+        "GasTopupIntent", null=True, blank=True, on_delete=models.PROTECT, related_name="sweep_job"
+    )
 
     class Meta:
         constraints = [

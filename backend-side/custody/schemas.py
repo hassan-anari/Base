@@ -63,6 +63,7 @@ class WalletAddressDTO(Schema):
     deposit_address: str  # EOA
     derivation_path: str
     memo: Optional[str] = None
+    asset_account_address: Optional[str] = None
     status: str
 
 

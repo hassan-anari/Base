@@ -109,6 +109,8 @@ def trigger_sweep(
             indexer = get_indexer(user_wallet.chain_id)
             bal = indexer.get_balance(
                 user_wallet.deposit_address,
+                asset_key=user_wallet.asset_key,
+                after_block=user_wallet.last_scanned_block,
                 memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
             )
         for event in bal.deposit_events:

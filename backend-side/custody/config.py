@@ -53,6 +53,9 @@ class AssetConfig:
     is_native: bool = False  # True for the chain's gas/native coin
     # ERC-20 / TRC-20 / SPL / jetton contract address. None for native.
     contract_address: str | None = None
+    token_standard: str | None = None
+    metadata_verified_at: object | None = None
+    metadata_fingerprint: str = ""
     deposit_threshold: Decimal | None = None  # overrides chain default if set
     sweep_dust: Decimal = Decimal("0")
     enabled: bool = True
@@ -169,6 +172,7 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         symbol="USDT",
         decimals=6,
         is_native=False,
+        token_standard="ERC20",
         contract_address=_env("USDT_ETH_CONTRACT", "0x07081d8c4c165da3cba3c5c6e3c5c5c5c5c5c5c5c5"),
         deposit_threshold=Decimal("1.0"),
         deposit_supported=False,
@@ -181,6 +185,7 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         symbol="USDT",
         decimals=18,
         is_native=False,
+        token_standard="ERC20",
         contract_address=_env("USDT_BSC_CONTRACT", "0x337610d27c682E347C9cD60BD4b3b107C9d34dDd"),
         deposit_threshold=Decimal("1.0"),
         deposit_supported=False,
@@ -193,6 +198,7 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         symbol="USDT",
         decimals=6,
         is_native=False,
+        token_standard="TRC20",
         contract_address=_env("USDT_TRX_CONTRACT", "TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs"),
         deposit_threshold=Decimal("1.0"),
         deposit_supported=False,
@@ -205,6 +211,7 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         symbol="USDT",
         decimals=6,
         is_native=False,
+        token_standard="SPL",
         contract_address=_env("USDT_SOL_CONTRACT", "Es9VVM7aGzC8t7k1Z3e2jJ9qB5rF6nT8mY4pL3xN7wQ"),
         deposit_threshold=Decimal("1.0"),
         deposit_supported=False,
@@ -281,6 +288,9 @@ def _asset_config(row) -> AssetConfig:
         decimals=row.decimals,
         is_native=row.is_native,
         contract_address=row.contract_address or None,
+        token_standard=row.token_standard,
+        metadata_verified_at=row.metadata_verified_at,
+        metadata_fingerprint=row.metadata_fingerprint,
         deposit_threshold=row.deposit_threshold,
         enabled=row.enabled,
         deposit_supported=row.deposit_supported,
@@ -341,13 +351,13 @@ def validate_chain_asset(
     if asset.chain_id != chain_id:
         raise ValueError(f"asset {asset_key} belongs to {asset.chain_id}, not {chain_id}")
     if capability:
-        if capability in {"deposit", "withdrawal", "sweep"} and not asset.is_native:
-            raise ValueError(
-                f"{capability} is not supported for non-native asset {asset_key} before Phase 5"
-            )
         flag = f"{capability}_supported"
         if not getattr(asset, flag, False):
             raise ValueError(f"{capability} is not supported for asset {asset_key}")
+    if not asset.is_native:
+        from .token_metadata import assert_verified_token
+
+        assert_verified_token(asset_key)
     return asset
 
 

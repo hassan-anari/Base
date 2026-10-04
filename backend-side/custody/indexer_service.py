@@ -84,10 +84,21 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
 
     try:
         indexer = get_indexer(user_wallet.chain_id)
-        bal = indexer.get_balance(
-            user_wallet.deposit_address,
-            memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
-        )
+        try:
+            bal = indexer.get_balance(
+                user_wallet.deposit_address,
+                asset_key=user_wallet.asset_key,
+                after_block=user_wallet.last_scanned_block,
+                memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
+            )
+        except TypeError as exc:
+            # Temporary compatibility for externally supplied Phase 4 clients.
+            if "unexpected keyword argument" not in str(exc) or not asset.is_native:
+                raise
+            bal = indexer.get_balance(
+                user_wallet.deposit_address,
+                memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
+            )
     except Exception as e:
         logger.warning(
             "indexer query failed for %s (%s): %s",

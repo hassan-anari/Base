@@ -10,6 +10,11 @@ def custody_signer_configuration(app_configs, **kwargs):
     errors = []
     backend = settings.MPC_SIGNER_BACKEND
     demo = settings.CUSTODY_DEMO_MODE
+    tx_mode = settings.CUSTODY_TX_MODE
+    if tx_mode not in {"stub", "live"}:
+        errors.append(Error("CUSTODY_TX_MODE must be stub or live", id="custody.E005"))
+    if tx_mode == "stub" and not demo:
+        errors.append(Error("stub transaction transport requires demo mode", id="custody.E006"))
     if backend not in {"local_key", "mpc_vendor"}:
         errors.append(Error("Unknown MPC_SIGNER_BACKEND", id="custody.E001"))
     if backend == "mpc_vendor":

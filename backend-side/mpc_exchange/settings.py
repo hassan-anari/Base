@@ -134,6 +134,7 @@ ALLOW_DEV_STUB_AUTH = config("ALLOW_DEV_STUB_AUTH", default=False, cast=bool)
 # ----------------------------------------------------------------------------
 MPC_SIGNER_BACKEND = config("MPC_SIGNER_BACKEND", default="local_key")
 CUSTODY_DEMO_MODE = config("CUSTODY_DEMO_MODE", default=False, cast=bool)
+CUSTODY_TX_MODE = config("CUSTODY_TX_MODE", default="live").strip().lower()
 # For production MPC vendor:
 MPC_VENDOR_URL = config("MPC_VENDOR_URL", default="")
 MPC_VENDOR_API_KEY = config("MPC_VENDOR_API_KEY", default="")

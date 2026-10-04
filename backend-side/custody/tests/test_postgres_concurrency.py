@@ -7,15 +7,105 @@ from unittest import skipUnless
 from unittest.mock import patch
 
 from django.db import close_old_connections, connection
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 
 from custody.ledger import InsufficientFunds, ensure_accounts, post_transaction, user_balances
-from custody.models import HotWallet, LedgerAccount, LedgerTransaction, WithdrawalRequest
-from custody.withdrawals import create_request, process_withdrawal
+from custody.models import (
+    HotWallet,
+    LedgerAccount,
+    LedgerTransaction,
+    OnchainTransactionAttempt,
+    WithdrawalRequest,
+)
+from custody.native_tx import PreparedNativeTransaction, allocate_evm_nonce
+from custody.withdrawals import approve, create_request, process_withdrawal
 
 
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock integration test")
 class WithdrawalConcurrencyTests(TransactionTestCase):
+    def test_evm_nonce_allocator_assigns_consecutive_unique_nonces(self):
+        def allocate():
+            close_old_connections()
+            try:
+                return allocate_evm_nonce("ETH", "0x" + "2" * 40, 41)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            nonces = sorted(pool.map(lambda _: allocate(), range(2)))
+        self.assertEqual(nonces, [41, 42])
+
+    @override_settings(CUSTODY_TX_MODE="live")
+    def test_two_live_withdrawals_own_consecutive_nonces_without_settlement(self):
+        self.fund("live-nonce", "3")
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
+        requests = [
+            create_request(
+                "live-nonce",
+                "ETH",
+                "0x" + suffix * 40,
+                Decimal("1"),
+                idempotency_key=f"live-nonce-{suffix}",
+            )
+            for suffix in ("a", "b")
+        ]
+        for request in requests:
+            approve("admin", request.pk)
+        broadcasts = []
+        lock = threading.Lock()
+
+        class Executor:
+            def prepare(self, chain, asset, source, destination, amount):
+                return PreparedNativeTransaction(
+                    chain,
+                    asset,
+                    source,
+                    destination,
+                    amount,
+                    10**18,
+                    b"",
+                    {"chainId": 1, "nonce": 50, "value": 10**18},
+                    {},
+                    sequence=50,
+                )
+
+            def assemble(self, prepared, signed):
+                return bytes([prepared.unsigned_payload["nonce"]])
+
+            def transaction_id(self, signed):
+                return "0x" + signed.hex()
+
+            def broadcast(self, chain, signed, expected):
+                with lock:
+                    broadcasts.append((signed, expected))
+
+        class Signer:
+            def sign(self, *args, **kwargs):
+                return "signed:00"
+
+        def worker(request):
+            close_old_connections()
+            try:
+                return process_withdrawal("admin", request.pk).status
+            finally:
+                close_old_connections()
+
+        with (
+            patch("custody.outbound.get_native_executor", return_value=Executor()),
+            patch("custody.outbound.get_signer", return_value=Signer()),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            statuses = list(pool.map(worker, requests))
+        attempts = OnchainTransactionAttempt.objects.filter(operation_type="WITHDRAWAL")
+        self.assertEqual(statuses, ["BROADCASTED", "BROADCASTED"])
+        self.assertEqual(attempts.count(), 2)
+        self.assertEqual(sorted(attempts.values_list("sequence", flat=True)), [50, 51])
+        self.assertEqual(len(broadcasts), 2)
+        self.assertEqual(len({raw for raw, _ in broadcasts}), 2)
+        self.assertEqual(user_balances("live-nonce", "ETH")["reserved"], Decimal("2"))
+
     def fund(self, user="concurrent", amount="1"):
         ensure_accounts(user, "ETH")
         available = LedgerAccount.objects.get(
@@ -118,7 +208,9 @@ class WithdrawalConcurrencyTests(TransactionTestCase):
         )
 
     def test_two_workers_broadcast_exactly_once(self):
-        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
         req = WithdrawalRequest.objects.create(
             user_id="customer",
             chain_id="ETH",

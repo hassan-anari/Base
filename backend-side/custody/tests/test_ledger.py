@@ -21,7 +21,7 @@ from custody.models import (
     UserWallet,
     WithdrawalRequest,
 )
-from custody.withdrawals import approve, create_request, deny, mark_confirmed
+from custody.withdrawals import approve, create_request, deny
 
 
 def make_wallet(user="alice", asset="ETH", suffix="1"):
@@ -70,8 +70,10 @@ class LedgerTests(TestCase):
         self.assertEqual(user_balances("alice", "ETH")["reserved"], Decimal("0.75"))
         req.status = "BROADCASTED"
         req.save(update_fields=["status"])
-        mark_confirmed(req.pk)
-        mark_confirmed(req.pk)
+        from custody.ledger import settle_withdrawal
+
+        settle_withdrawal(req)
+        settle_withdrawal(req)
         self.assertEqual(
             user_balances("alice", "ETH"),
             {"available": Decimal("1.25"), "reserved": Decimal("0"), "total": Decimal("1.25")},
@@ -275,7 +277,9 @@ class LedgerTests(TestCase):
             idempotency_key="legacy-broadcast",
         )
         with self.assertRaises(ReservationReconciliationRequired):
-            mark_confirmed(legacy_broadcast.pk)
+            from custody.ledger import settle_withdrawal
+
+            settle_withdrawal(legacy_broadcast)
         legacy_broadcast.refresh_from_db()
         self.assertEqual(legacy_broadcast.status, "BROADCASTED")
         self.assertEqual(user_balances("alice", "ETH"), expected_balances)

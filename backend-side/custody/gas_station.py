@@ -27,6 +27,8 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+from django.conf import settings
+
 from .audit import AuditAction, write_audit_log
 from .config import ensure_hot_wallet, get_chain, is_memo_required, native_asset_key
 from .models import GasTopupIntent, HotWallet, UserWallet
@@ -63,6 +65,36 @@ def _claim_intent(intent: GasTopupIntent) -> None:
         raise AmbiguousBroadcastError("gas top-up is already processing; do not retry")
 
 
+def _execute_live(intent, actor_id, source, asset_key):
+    from .native_tx import AmbiguousBroadcast
+    from .outbound import create_attempt, execute_attempt
+
+    attempt = create_attempt(
+        operation_type="GAS_TOPUP",
+        operation_id=intent.pk,
+        chain_id=intent.chain_id,
+        asset_key=asset_key,
+        source=source,
+        destination=intent.to_address,
+        amount=intent.amount,
+    )
+    try:
+        attempt = execute_attempt(attempt.pk, actor_id)
+    except AmbiguousBroadcast as exc:
+        GasTopupIntent.objects.filter(pk=intent.pk).update(status="RECONCILIATION_REQUIRED")
+        raise AmbiguousBroadcastError(str(exc)) from exc
+    except Exception:
+        attempt.refresh_from_db()
+        GasTopupIntent.objects.filter(pk=intent.pk).update(
+            status="FAILED" if attempt.status == "FAILED" else "RECONCILIATION_REQUIRED"
+        )
+        raise
+    GasTopupIntent.objects.filter(pk=intent.pk).update(
+        status="BROADCASTED", tx_hash=attempt.network_tx_id
+    )
+    return attempt
+
+
 def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
     """Top up gas for user_wallet deposit EOA if needed. Returns True if topped."""
     cfg = get_chain(user_wallet.chain_id)
@@ -88,10 +120,15 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
         from_address=hot_address,
         to_address=user_wallet.deposit_address,
         amount=grant,
-        derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
+        derivation_path=_hot_signing_ref(user_wallet.chain_id),
         memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
     )
     _claim_intent(intent)
+    if settings.CUSTODY_TX_MODE == "live":
+        attempt = _execute_live(
+            intent, "system:gas_station", hot_address, native_asset_key(user_wallet.chain_id)
+        )
+        return attempt.status == "BROADCASTED"
     signer = get_signer()
     try:
         res = signer.sign_and_broadcast(
@@ -187,10 +224,13 @@ def admin_topup(
         from_address=hot_address,
         to_address=to_address,
         amount=amount,
-        derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
+        derivation_path=_hot_signing_ref(chain_id),
         memo=memo if is_memo_required(chain_id) else None,
     )
     _claim_intent(intent)
+    if settings.CUSTODY_TX_MODE == "live":
+        attempt = _execute_live(intent, actor_id, hot_address, native_asset_key(chain_id))
+        return {"tx_hash": attempt.network_tx_id, "to": to_address, "amount": amount}
     signer = get_signer()
     try:
         res = signer.sign_and_broadcast(
@@ -209,3 +249,10 @@ def admin_topup(
     )
     logger.info("admin gas topup broadcast %s -> %s (%s)", hot_address, to_address, res.tx_hash)
     return {"tx_hash": res.tx_hash, "to": to_address, "amount": amount}
+
+
+def _hot_signing_ref(chain_id: str) -> str:
+    key_ref = HotWallet.objects.get(chain_id=chain_id).signing_key_ref
+    if not key_ref:
+        raise ValueError("hot wallet signing_key_ref is not configured")
+    return key_ref

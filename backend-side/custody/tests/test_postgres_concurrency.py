@@ -11,11 +11,24 @@ from django.test import TransactionTestCase
 
 from custody.ledger import InsufficientFunds, ensure_accounts, post_transaction, user_balances
 from custody.models import HotWallet, LedgerAccount, LedgerTransaction, WithdrawalRequest
+from custody.native_tx import allocate_evm_nonce
 from custody.withdrawals import create_request, process_withdrawal
 
 
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock integration test")
 class WithdrawalConcurrencyTests(TransactionTestCase):
+    def test_evm_nonce_allocator_assigns_consecutive_unique_nonces(self):
+        def allocate():
+            close_old_connections()
+            try:
+                return allocate_evm_nonce("ETH", "0x" + "2" * 40, 41)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            nonces = sorted(pool.map(lambda _: allocate(), range(2)))
+        self.assertEqual(nonces, [41, 42])
+
     def fund(self, user="concurrent", amount="1"):
         ensure_accounts(user, "ETH")
         available = LedgerAccount.objects.get(
@@ -118,7 +131,9 @@ class WithdrawalConcurrencyTests(TransactionTestCase):
         )
 
     def test_two_workers_broadcast_exactly_once(self):
-        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
         req = WithdrawalRequest.objects.create(
             user_id="customer",
             chain_id="ETH",

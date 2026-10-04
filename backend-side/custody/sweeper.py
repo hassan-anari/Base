@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -155,6 +156,34 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
     hot = ensure_hot_wallet(job.user_wallet.chain_id)
     amount = job.balance_snapshot
 
+    if settings.CUSTODY_TX_MODE == "live":
+        from .native_tx import AmbiguousBroadcast
+        from .outbound import create_attempt, execute_attempt
+
+        attempt = create_attempt(
+            operation_type="SWEEP",
+            operation_id=job.pk,
+            chain_id=job.user_wallet.chain_id,
+            asset_key=job.asset_key,
+            source=job.user_wallet.deposit_address,
+            destination=hot,
+            amount=amount,
+        )
+        try:
+            attempt = execute_attempt(attempt.pk, actor_id)
+        except AmbiguousBroadcast as exc:
+            job.status = "RECONCILIATION_REQUIRED"
+            job.save(update_fields=["status"])
+            raise AmbiguousBroadcastError(str(exc)) from exc
+        job.status = (
+            "RECONCILIATION_REQUIRED"
+            if attempt.status == "RECONCILIATION_REQUIRED"
+            else "SWEEP_BROADCASTED"
+        )
+        job.tx_hash = attempt.network_tx_id
+        job.save(update_fields=["status", "tx_hash"])
+        return
+
     # Step A: optional gas top-up of the deposit EOA.
     if cfg.kind.value in ("evm", "tron"):
         # STUB gas check; assume needed for skeleton.
@@ -202,8 +231,4 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
 
 
 def mark_confirmed(job_id: int) -> None:
-    """Called by indexer confirmation monitor once finality reached."""
-    job = SweepJob.objects.get(id=job_id)
-    job.status = "CONFIRMED"
-    job.completed_at = timezone.now()
-    job.save(update_fields=["status", "completed_at"])
+    raise RuntimeError("sweeps may only be confirmed by attempt reconciliation")

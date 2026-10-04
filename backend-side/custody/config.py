@@ -153,6 +153,8 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         decimals=9,
         is_native=True,
         deposit_supported=False,
+        withdrawal_supported=False,
+        sweep_supported=False,
     ),
     # Token metadata presets. End-to-end token transfer support is planned;
     # these entries alone do not imply signing/broadcast support.

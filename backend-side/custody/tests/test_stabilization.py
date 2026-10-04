@@ -43,7 +43,9 @@ def wallet(chain="ETH", asset="ETH"):
 
 class CustodyWorkflowTests(TestCase):
     def setUp(self):
-        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
         ensure_accounts("customer", "ETH")
         available = LedgerAccount.objects.get(
             owner_type="USER", owner_id="customer", asset_key="ETH", bucket="AVAILABLE"
@@ -129,7 +131,9 @@ class CustodyWorkflowTests(TestCase):
         signer = FakeSigner()
         get_signer.return_value = signer
         destination = wallet(chain="BSC", asset="USDT-BSC")
-        HotWallet.objects.update_or_create(chain_id="BSC", defaults={"address": "0x" + "3" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="BSC", defaults={"address": "0x" + "3" * 40, "signing_key_ref": "m/hot"}
+        )
         with patch.object(signer, "sign_and_broadcast", wraps=signer.sign_and_broadcast) as call:
             admin_topup(
                 "operator",
@@ -276,7 +280,9 @@ class CustodyWorkflowTests(TestCase):
         with self.assertRaises(RuntimeError):
             ensure_gas(w, idempotency_key="gas-missing")
         for address in ("", "ETH_HOT_STUB"):
-            HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": address})
+            HotWallet.objects.update_or_create(
+                chain_id="ETH", defaults={"address": address, "signing_key_ref": "m/hot"}
+            )
             with self.assertRaises(RuntimeError):
                 ensure_gas(w, idempotency_key=f"gas-{address or 'empty'}")
 
@@ -454,7 +460,9 @@ class IndexerAndApiTests(TestCase):
     @patch("custody.withdrawals.get_signer")
     def test_approval_retry_resumes_approved_after_rate_limit(self, get_signer):
         get_signer.return_value = FakeSigner()
-        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
         req = WithdrawalRequest.objects.create(
             user_id="c",
             chain_id="ETH",

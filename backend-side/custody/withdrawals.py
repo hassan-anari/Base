@@ -24,13 +24,14 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
 from .config import ensure_hot_wallet, native_asset_key, validate_chain_asset
-from .ledger import release_withdrawal, reserve_withdrawal, settle_withdrawal
-from .models import WithdrawalRequest
+from .ledger import release_withdrawal, reserve_withdrawal
+from .models import HotWallet, WithdrawalRequest
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
 logger = logging.getLogger("custody.withdrawals")
@@ -151,13 +152,58 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
 
     try:
         hot = ensure_hot_wallet(req.chain_id)
+        key_ref = HotWallet.objects.get(chain_id=req.chain_id).signing_key_ref
+        if not key_ref:
+            raise ValueError("hot wallet signing_key_ref is not configured")
+        if settings.CUSTODY_TX_MODE == "live":
+            from .native_tx import AmbiguousBroadcast
+            from .outbound import create_attempt, execute_attempt
+
+            claim_after_guards()
+            attempt = create_attempt(
+                operation_type="WITHDRAWAL",
+                operation_id=req.pk,
+                chain_id=req.chain_id,
+                asset_key=req.asset_key,
+                source=hot,
+                destination=req.to_address,
+                amount=req.amount,
+            )
+            try:
+                attempt = execute_attempt(attempt.pk, admin_id)
+            except AmbiguousBroadcast:
+                WithdrawalRequest.objects.filter(pk=req.pk).update(
+                    status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
+                )
+                raise
+            except Exception:
+                # No ambiguous external effect: preparation/signing failures
+                # remain safely retryable from the approved business intent.
+                state = type(attempt).objects.get(pk=attempt.pk).status
+                if state == "FAILED":
+                    WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
+                        status="APPROVED", updated_at=timezone.now()
+                    )
+                    claimed_by_this_call = False
+                raise
+            if attempt.status == "RECONCILIATION_REQUIRED":
+                WithdrawalRequest.objects.filter(pk=req.pk).update(
+                    status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
+                )
+                return WithdrawalRequest.objects.get(pk=req.pk)
+            WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
+                status="BROADCASTED",
+                tx_hash=attempt.network_tx_id,
+                updated_at=timezone.now(),
+            )
+            return WithdrawalRequest.objects.get(pk=req.pk)
         tx = UnsignedTx(
             chain_id=req.chain_id,
             asset_key=req.asset_key,
             from_address=hot,
             to_address=req.to_address,
             amount=req.amount,
-            derivation_path="<hot-wallet-path>",
+            derivation_path=key_ref,
             memo=None,
         )
         signer = get_signer()
@@ -199,14 +245,4 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
 
 
 def mark_confirmed(req_id: int) -> WithdrawalRequest:
-    """Atomically settle a final on-chain withdrawal exactly once."""
-    with transaction.atomic():
-        req = WithdrawalRequest.objects.select_for_update().get(id=req_id)
-        if req.status == "CONFIRMED":
-            return req
-        if req.status != "BROADCASTED":
-            raise ValueError(f"cannot confirm withdrawal in state {req.status}")
-        settle_withdrawal(req)
-        req.status = "CONFIRMED"
-        req.save(update_fields=["status", "updated_at"])
-        return req
+    raise RuntimeError("withdrawals may only be confirmed by attempt reconciliation")

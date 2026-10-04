@@ -159,6 +159,9 @@ class HotWallet(models.Model):
 
     chain_id = models.CharField(max_length=16, unique=True)
     address = models.CharField(max_length=128)
+    # Opaque signer-owned identity.  Deliberately nullable for non-destructive
+    # migration: legacy wallets must be repaired by an operator and fail closed.
+    signing_key_ref = models.CharField(max_length=255, null=True, blank=True)
 
     def __str__(self) -> str:
         return f"HotWallet({self.chain_id},{self.address})"
@@ -216,6 +219,7 @@ class GasTopupIntent(models.Model):
         ("BROADCASTED", "BROADCASTED"),
         ("RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"),
         ("FAILED", "FAILED"),
+        ("CONFIRMED", "CONFIRMED"),
     ]
     idempotency_key = models.CharField(max_length=64, unique=True)
     actor_id = models.CharField(max_length=64)
@@ -227,6 +231,90 @@ class GasTopupIntent(models.Model):
     tx_hash = models.CharField(max_length=128, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class SourceAccountSequence(models.Model):
+    """Durable allocator for account-chain sequence numbers (not a cache)."""
+
+    chain_id = models.CharField(max_length=16)
+    address = models.CharField(max_length=128)
+    next_sequence = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chain_id", "address"], name="uq_source_account_sequence"
+            )
+        ]
+
+
+class OnchainTransactionAttempt(models.Model):
+    """One immutable-identity execution attempt for a logical custody operation."""
+
+    OPERATION_TYPES = [
+        ("WITHDRAWAL", "WITHDRAWAL"),
+        ("SWEEP", "SWEEP"),
+        ("GAS_TOPUP", "GAS_TOPUP"),
+    ]
+    STATUSES = [
+        (value, value)
+        for value in (
+            "PREPARING",
+            "PREPARED",
+            "SIGNING",
+            "SIGNED",
+            "BROADCASTING",
+            "BROADCASTED",
+            "CONFIRMED",
+            "FAILED",
+            "RECONCILIATION_REQUIRED",
+        )
+    ]
+    operation_type = models.CharField(max_length=16, choices=OPERATION_TYPES)
+    operation_id = models.PositiveBigIntegerField()
+    attempt_number = models.PositiveIntegerField(default=1)
+    chain_id = models.CharField(max_length=16, db_index=True)
+    asset_key = models.CharField(max_length=32)
+    from_address = models.CharField(max_length=128)
+    to_address = models.CharField(max_length=128)
+    amount = models.DecimalField(max_digits=40, decimal_places=18)
+    base_unit_amount = models.DecimalField(max_digits=78, decimal_places=0)
+    status = models.CharField(max_length=32, choices=STATUSES, default="PREPARING")
+    network_tx_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
+    sequence = models.PositiveBigIntegerField(null=True, blank=True)
+    prepared_metadata = models.JSONField(default=dict, blank=True)
+    fee_metadata = models.JSONField(default=dict, blank=True)
+    # Required to replay the *same* authorized bytes after an uncertain RPC.
+    # Sensitive: never serialize this field through the public API or logs.
+    signed_payload = models.TextField(blank=True, default="")
+    expires_at = models.DateTimeField(null=True, blank=True)
+    last_valid_block = models.PositiveBigIntegerField(null=True, blank=True)
+    broadcast_started_at = models.DateTimeField(null=True, blank=True)
+    broadcast_at = models.DateTimeField(null=True, blank=True)
+    confirmation_metadata = models.JSONField(default=dict, blank=True)
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    error_message = models.CharField(max_length=512, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["operation_type", "operation_id", "attempt_number"],
+                name="uq_onchain_attempt_number",
+            ),
+            models.UniqueConstraint(
+                fields=["chain_id", "from_address", "sequence"],
+                condition=models.Q(sequence__isnull=False),
+                name="uq_onchain_source_sequence",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0) & models.Q(base_unit_amount__gt=0),
+                name="onchain_attempt_positive_amount",
+            ),
+        ]
+        indexes = [models.Index(fields=["status", "chain_id"])]
 
 
 class AdminActionLog(models.Model):

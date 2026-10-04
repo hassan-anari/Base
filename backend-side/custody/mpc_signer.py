@@ -128,6 +128,38 @@ class MpcSigner:
             logger.warning("rate limit hit for %s", key)
             raise
 
+    def sign(
+        self,
+        actor_id: str,
+        tx: UnsignedTx,
+        policy: SignPolicy,
+        *,
+        idempotency_key: str,
+    ) -> str:
+        """Authorize and sign prepared bytes; broadcasting belongs to the executor."""
+        self.authorize_request(actor_id, policy)
+        self.validate_transaction(tx, policy)
+        self.enforce_rate_limit(actor_id, policy)
+        adapter = self._adapter or _get_adapter()
+        derived = adapter.get_derived_address(tx.chain_id, tx.derivation_path)
+        if not _addresses_equal(tx.chain_id, derived, tx.from_address):
+            raise SignerError("signing key reference does not control source address")
+        write_audit_log(
+            actor_id=actor_id,
+            action=AuditAction.SIGN_REQUEST,
+            entity_type="PreparedNativeTransaction",
+            entity_id=idempotency_key,
+            metadata={
+                "chain_id": tx.chain_id,
+                "asset_key": tx.asset_key,
+                "policy": policy.value,
+                "from": tx.from_address,
+                "to": tx.to_address,
+                "amount": str(tx.amount),
+            },
+        )
+        return self._sign(tx, idempotency_key)
+
     # ---- Guard point 4 + 6/7: audit + sign + broadcast ----
     def sign_and_broadcast(
         self,
@@ -142,6 +174,10 @@ class MpcSigner:
 
         Returns SignResult with tx_hash. Raises on any guard failure.
         """
+        from django.conf import settings
+
+        if settings.CUSTODY_TX_MODE != "stub":
+            raise SignerError("legacy sign_and_broadcast is restricted to stub transport mode")
         # 1. authorize
         self.authorize_request(actor_id, policy)
         # 2. validate
@@ -213,6 +249,20 @@ def _get_adapter():
     from .signer_adapter import get_adapter
 
     return get_adapter()
+
+
+def _addresses_equal(chain_id: str, derived: str, expected: str) -> bool:
+    """Use family-correct address equivalence (Base58 is case-sensitive)."""
+    from .chain_registry import ChainKind, get_chain_spec
+
+    if get_chain_spec(chain_id).kind is ChainKind.EVM:
+        try:
+            from eth_utils import to_checksum_address
+
+            return to_checksum_address(derived) == to_checksum_address(expected)
+        except ValueError:
+            return False
+    return derived == expected
 
 
 # Singleton-ish convenience

@@ -8,9 +8,11 @@ from unittest.mock import patch
 
 from django.db import close_old_connections, connection
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 
 from custody.ledger import InsufficientFunds, ensure_accounts, post_transaction, user_balances
 from custody.models import (
+    Asset,
     HotWallet,
     LedgerAccount,
     LedgerTransaction,
@@ -18,6 +20,7 @@ from custody.models import (
     WithdrawalRequest,
 )
 from custody.native_tx import PreparedNativeTransaction, allocate_evm_nonce
+from custody.token_metadata import metadata_fingerprint
 from custody.withdrawals import approve, create_request, process_withdrawal
 
 
@@ -105,6 +108,114 @@ class WithdrawalConcurrencyTests(TransactionTestCase):
         self.assertEqual(len(broadcasts), 2)
         self.assertEqual(len({raw for raw, _ in broadcasts}), 2)
         self.assertEqual(user_balances("live-nonce", "ETH")["reserved"], Decimal("2"))
+
+    @override_settings(CUSTODY_TX_MODE="live")
+    def test_native_and_erc20_share_full_withdrawal_nonce_domain(self):
+        self.fund("cross-asset", "2")
+        token = Asset.objects.get(asset_key="USDT-ETH")
+        token.contract_address = "0x" + "1" * 40
+        token.token_standard = "ERC20"
+        token.decimals = 6
+        token.withdrawal_supported = True
+        token.metadata_verified_at = timezone.now()
+        token.metadata_fingerprint = metadata_fingerprint(token)
+        Asset.objects.filter(pk=token.pk).update(
+            contract_address=token.contract_address,
+            token_standard="ERC20",
+            decimals=6,
+            withdrawal_supported=True,
+            metadata_verified_at=token.metadata_verified_at,
+            metadata_fingerprint=token.metadata_fingerprint,
+        )
+        ensure_accounts("cross-asset", token.asset_key)
+        available = LedgerAccount.objects.get(
+            owner_type="USER", owner_id="cross-asset", asset_key=token.asset_key, bucket="AVAILABLE"
+        )
+        clearing = LedgerAccount.objects.get(
+            owner_type="SYSTEM",
+            owner_id="custody",
+            asset_key=token.asset_key,
+            bucket="CUSTODY_CLEARING",
+        )
+        post_transaction(
+            event_key="cross-asset:token-fund",
+            event_type="DEPOSIT_CREDIT",
+            asset_key=token.asset_key,
+            ref_type="TestFixture",
+            ref_id="token-fund",
+            postings=[(available, Decimal("2")), (clearing, Decimal("-2"))],
+        )
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
+        native = create_request(
+            "cross-asset", "ETH", "0x" + "a" * 40, Decimal("1"), idempotency_key="cross-native"
+        )
+        erc20 = create_request(
+            "cross-asset",
+            "ETH",
+            "0x" + "b" * 40,
+            Decimal("1"),
+            asset_key=token.asset_key,
+            idempotency_key="cross-token",
+        )
+        for request in (native, erc20):
+            approve("admin", request.pk)
+        broadcasts = []
+        lock = threading.Lock()
+
+        class Executor:
+            def prepare(self, chain, asset, source, destination, amount):
+                decimals = 18 if asset == "ETH" else 6
+                return PreparedNativeTransaction(
+                    chain,
+                    asset,
+                    source,
+                    destination,
+                    amount,
+                    int(amount * Decimal(10) ** decimals),
+                    b"",
+                    {"chainId": 1, "nonce": 70, "value": 0},
+                    {},
+                    sequence=70,
+                )
+
+            def assemble(self, prepared, signed):
+                return bytes([prepared.unsigned_payload["nonce"]])
+
+            def transaction_id(self, signed):
+                return "0x" + signed.hex()
+
+            def broadcast(self, chain, signed, expected):
+                with lock:
+                    broadcasts.append(expected)
+
+        class Signer:
+            def sign(self, *args, **kwargs):
+                return "signed:00"
+
+        def worker(request):
+            close_old_connections()
+            try:
+                return process_withdrawal("admin", request.pk).status
+            finally:
+                close_old_connections()
+
+        executor = Executor()
+        with (
+            patch("custody.outbound.get_native_executor", return_value=executor),
+            patch("custody.outbound.get_transfer_executor", return_value=executor),
+            patch("custody.outbound.get_signer", return_value=Signer()),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            statuses = list(pool.map(worker, [native, erc20]))
+        attempts = OnchainTransactionAttempt.objects.filter(operation_type="WITHDRAWAL")
+        self.assertEqual(statuses, ["BROADCASTED", "BROADCASTED"])
+        self.assertEqual(sorted(attempts.values_list("sequence", flat=True)), [70, 71])
+        self.assertEqual(attempts.values("from_address").distinct().count(), 1)
+        self.assertEqual(len(broadcasts), 2)
+        self.assertEqual(user_balances("cross-asset", "ETH")["reserved"], Decimal("1"))
+        self.assertEqual(user_balances("cross-asset", token.asset_key)["reserved"], Decimal("1"))
 
     def fund(self, user="concurrent", amount="1"):
         ensure_accounts(user, "ETH")

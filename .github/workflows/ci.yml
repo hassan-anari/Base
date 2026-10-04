@@ -56,6 +56,10 @@ jobs:
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
           custody/indexer custody/hd_wallet.py custody/signer_adapter.py custody/native_tx.py
           custody/outbound.py custody/reconciliation.py
+          custody/token_metadata.py custody/token_tx.py custody/spl.py
+          custody/management/commands/verify_token_asset.py
+          custody/management/commands/advance_pending_sweeps.py
+          custody/migrations/0010_phase5_token_custody.py
           custody/management/commands/reconcile_outbound.py
           custody/migrations/0008_native_transaction_lifecycle.py
           custody/migrations/0009_disable_ton_outbound.py
@@ -72,6 +76,10 @@ jobs:
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
           custody/indexer custody/hd_wallet.py custody/signer_adapter.py custody/native_tx.py
           custody/outbound.py custody/reconciliation.py
+          custody/token_metadata.py custody/token_tx.py custody/spl.py
+          custody/management/commands/verify_token_asset.py
+          custody/management/commands/advance_pending_sweeps.py
+          custody/migrations/0010_phase5_token_custody.py
           custody/management/commands/reconcile_outbound.py
           custody/migrations/0008_native_transaction_lifecycle.py
           custody/migrations/0009_disable_ton_outbound.py

@@ -46,7 +46,7 @@ from .config import (
 from .deposits import ingest_event
 from .gas_station import AmbiguousBroadcastError, ensure_gas
 from .indexer.factory import get_indexer
-from .models import SweepJob, UserWallet
+from .models import Asset, GasTopupIntent, SweepJob, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 from .native_tx import SafePreBroadcastRejection
 from .rate_limit import rate_limiter
@@ -89,6 +89,8 @@ def trigger_sweep(
     # Idempotency: if a sweep is already in flight, do not start another.
     inflight = _inflight_job(user_wallet)
     if inflight:
+        if not asset.is_native:
+            inflight = advance_sweep(inflight.pk, actor_id)
         return (True, inflight.id, "already running")
 
     # Guard point: lock is wallet-scoped (only one in-flight sweep at a time).
@@ -101,6 +103,8 @@ def trigger_sweep(
         # Re-check after acquiring the lock (race-safe).
         inflight = _inflight_job(user_wallet)
         if inflight:
+            if not asset.is_native:
+                inflight = advance_sweep(inflight.pk, actor_id)
             return (True, inflight.id, "already running")
 
         # Pull confirmed balance + deposit events from indexer.
@@ -109,6 +113,8 @@ def trigger_sweep(
             indexer = get_indexer(user_wallet.chain_id)
             bal = indexer.get_balance(
                 user_wallet.deposit_address,
+                asset_key=user_wallet.asset_key,
+                after_block=user_wallet.last_scanned_block,
                 memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
             )
         for event in bal.deposit_events:
@@ -139,7 +145,10 @@ def trigger_sweep(
 
         # Gas top-up step (if needed) -> then sweep. Run in background in prod.
         try:
-            _run_sweep(job, actor_id)
+            if asset.is_native:
+                _run_sweep(job, actor_id)
+            else:
+                advance_sweep(job.pk, actor_id)
         except AmbiguousBroadcastError:
             SweepJob.objects.filter(pk=job.pk).update(status="RECONCILIATION_REQUIRED")
             raise
@@ -240,3 +249,113 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
 
 def mark_confirmed(job_id: int) -> None:
     raise RuntimeError("sweeps may only be confirmed by attempt reconciliation")
+
+
+def _token_native_requirement(job: SweepJob) -> Decimal:
+    """Return a conservative reviewed native-fee requirement in human units."""
+    cfg = get_chain(job.user_wallet.chain_id)
+    settings = cfg.gas_settings
+    if cfg.kind.value == "evm":
+        units = int(settings["max_gas_limit"]) * int(settings["max_fee_per_gas"])
+    elif cfg.kind.value == "tron":
+        units = int(settings["max_trc20_fee_limit"])
+    elif cfg.kind.value == "solana":
+        units = int(settings["max_fee_lamports"]) + int(settings["max_ata_rent_lamports"])
+    else:
+        raise ValueError("token gas policy is unsupported for this chain")
+    return Decimal(units) / (Decimal(10) ** cfg.native_decimals)
+
+
+def advance_sweep(job_id: int, actor_id: str = "system:sweep-advancer") -> SweepJob:
+    """Idempotently advance a token sweep only after durable gas confirmation."""
+    with transaction.atomic():
+        job = (
+            SweepJob.objects.select_for_update()
+            .select_related("user_wallet", "gas_topup_intent")
+            .get(pk=job_id)
+        )
+        asset = Asset.objects.get(asset_key=job.asset_key, chain_id=job.user_wallet.chain_id)
+        if asset.is_native or job.status in {"CONFIRMED", "FAILED", "SWEEP_BROADCASTED"}:
+            return job
+        if asset.token_standard == "SPL":
+            from .spl import derive_ata
+
+            expected = derive_ata(job.user_wallet.deposit_address, asset.contract_address)
+            if job.user_wallet.asset_account_address != expected:
+                raise ValueError("SPL sweep source is not the canonical ATA")
+        if job.gas_topup_intent_id:
+            intent = job.gas_topup_intent
+            if intent.status != "CONFIRMED":
+                job.status = (
+                    "GAS_TOPUP_BROADCASTED"
+                    if intent.status == "BROADCASTED"
+                    else "GAS_TOPUP_REQUIRED"
+                )
+                job.save(update_fields=["status"])
+                return job
+            job.status = "GAS_TOPUP_CONFIRMED"
+            job.save(update_fields=["status"])
+        else:
+            native_key = get_chain(job.user_wallet.chain_id).native_asset_key
+            balance = (
+                get_indexer(job.user_wallet.chain_id)
+                .get_balance(job.user_wallet.deposit_address, asset_key=native_key)
+                .confirmed_balance
+            )
+            if Decimal(str(balance)) < _token_native_requirement(job):
+                key = f"gas_topup:sweep:{job.pk}"
+                ensure_gas(job.user_wallet, idempotency_key=key)
+                intent = GasTopupIntent.objects.get(idempotency_key=key)
+                job.gas_topup_intent = intent
+                job.status = (
+                    "GAS_TOPUP_BROADCASTED"
+                    if intent.status == "BROADCASTED"
+                    else "GAS_TOPUP_REQUIRED"
+                )
+                job.save(update_fields=["gas_topup_intent", "status"])
+                return job
+        # The operation unique key guarantees exactly one reusable token attempt.
+        from .outbound import create_attempt, execute_attempt
+
+        attempt = create_attempt(
+            operation_type="SWEEP",
+            operation_id=job.pk,
+            chain_id=job.user_wallet.chain_id,
+            asset_key=job.asset_key,
+            source=job.user_wallet.deposit_address,
+            destination=ensure_hot_wallet(job.user_wallet.chain_id),
+            amount=job.balance_snapshot,
+        )
+    attempt = execute_attempt(attempt.pk, actor_id)
+    with transaction.atomic():
+        job = SweepJob.objects.select_for_update().get(pk=job_id)
+        job.tx_hash = attempt.network_tx_id
+        job.status = (
+            "RECONCILIATION_REQUIRED"
+            if attempt.status == "RECONCILIATION_REQUIRED"
+            else "SWEEP_BROADCASTED"
+        )
+        job.save(update_fields=["status", "tx_hash"])
+        return job
+
+
+def advance_pending_sweeps(*, limit: int = 100) -> list[SweepJob]:
+    results = []
+    ids = (
+        SweepJob.objects.filter(
+            status__in=[
+                "CREATED",
+                "GAS_TOPUP_REQUIRED",
+                "GAS_TOPUP_BROADCASTED",
+                "GAS_TOPUP_CONFIRMED",
+            ]
+        )
+        .order_by("created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+    for job_id in ids:
+        try:
+            results.append(advance_sweep(job_id))
+        except Exception:
+            logger.exception("could not advance sweep %s", job_id)
+    return results

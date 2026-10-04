@@ -103,7 +103,9 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
     cfg = get_chain(user_wallet.chain_id)
     hot_address = ensure_hot_wallet(user_wallet.chain_id)
     # Bounded grant from chain config (tiny, fixed) — prevents abuse.
-    grant = cfg.gas_topup_amount or 0.0
+    grant = cfg.gas_topup_amount
+    if grant <= 0:
+        raise ValueError("positive reviewed gas top-up amount is required")
 
     intent = _intent(
         key=idempotency_key,

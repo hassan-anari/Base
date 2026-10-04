@@ -88,7 +88,7 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
         from_address=hot_address,
         to_address=user_wallet.deposit_address,
         amount=grant,
-        derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
+        derivation_path=_hot_signing_ref(user_wallet.chain_id),
         memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
     )
     _claim_intent(intent)
@@ -187,7 +187,7 @@ def admin_topup(
         from_address=hot_address,
         to_address=to_address,
         amount=amount,
-        derivation_path="<hot-wallet-path>",  # vault resolves hot wallet path
+        derivation_path=_hot_signing_ref(chain_id),
         memo=memo if is_memo_required(chain_id) else None,
     )
     _claim_intent(intent)
@@ -209,3 +209,10 @@ def admin_topup(
     )
     logger.info("admin gas topup broadcast %s -> %s (%s)", hot_address, to_address, res.tx_hash)
     return {"tx_hash": res.tx_hash, "to": to_address, "amount": amount}
+
+
+def _hot_signing_ref(chain_id: str) -> str:
+    key_ref = HotWallet.objects.get(chain_id=chain_id).signing_key_ref
+    if not key_ref:
+        raise ValueError("hot wallet signing_key_ref is not configured")
+    return key_ref

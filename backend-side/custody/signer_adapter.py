@@ -104,16 +104,16 @@ class LocalVault:
             from tronpy.keys import PrivateKey as TronPrivateKey
 
             pk = TronPrivateKey(scalar)
-            tx_id = raw.get("tx_id", b"")
+            tx_id = raw.get("txID", raw.get("tx_id", b""))
             tx_id_hex = tx_id.hex() if isinstance(tx_id, bytes) else str(tx_id)
-            return "signed:" + pk.sign_msg(tx_id_hex)
+            return "signed:" + pk.sign_msg_hash(bytes.fromhex(tx_id_hex)).hex()
         if kind is ChainKind.SOLANA:
             from solders.keypair import Keypair
 
             kp = Keypair.from_seed(scalar)
             msg = raw.get("message", b"")
             if isinstance(msg, str):
-                msg = msg.encode()
+                msg = base64.b64decode(msg)
             sig = kp.sign_message(msg)
             # solders returns a Signature object; convert to bytes
             sig_bytes = bytes(sig) if not isinstance(sig, bytes) else sig

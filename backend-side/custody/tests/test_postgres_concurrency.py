@@ -118,7 +118,9 @@ class WithdrawalConcurrencyTests(TransactionTestCase):
         )
 
     def test_two_workers_broadcast_exactly_once(self):
-        HotWallet.objects.update_or_create(chain_id="ETH", defaults={"address": "0x" + "2" * 40})
+        HotWallet.objects.update_or_create(
+            chain_id="ETH", defaults={"address": "0x" + "2" * 40, "signing_key_ref": "m/hot"}
+        )
         req = WithdrawalRequest.objects.create(
             user_id="customer",
             chain_id="ETH",

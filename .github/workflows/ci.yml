@@ -26,6 +26,7 @@ jobs:
       DJANGO_SECRET_KEY: ci-only-secret
       MPC_SIGNER_BACKEND: local_key
       CUSTODY_DEMO_MODE: "true"
+      CUSTODY_TX_MODE: stub
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-only-local-signer-passphrase
       CUSTODY_INDEXER_MODE: stub
       DATABASE_URL: postgresql://wallet_mpc:ci-only-password@127.0.0.1:5432/wallet_mpc
@@ -53,7 +54,8 @@ jobs:
           custody/migrations/0005_ledgertransaction_ledgeraccount_ledgerposting.py
           custody/migrations/0006_ledgeraccount_ledger_account_valid_shape.py
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
-          custody/indexer custody/hd_wallet.py custody/signer_adapter.py
+          custody/indexer custody/hd_wallet.py custody/signer_adapter.py custody/native_tx.py
+          custody/outbound.py custody/reconciliation.py
           ops/services.py ops/models.py ops/migrations/0004_normalize_chain_kinds.py
           custody/migrations/0007_disable_ton_deposits.py
       - run: >-
@@ -65,7 +67,8 @@ jobs:
           custody/migrations/0005_ledgertransaction_ledgeraccount_ledgerposting.py
           custody/migrations/0006_ledgeraccount_ledger_account_valid_shape.py
           custody/chain_registry.py custody/chain_adapters.py custody/chain_status.py
-          custody/indexer custody/hd_wallet.py custody/signer_adapter.py
+          custody/indexer custody/hd_wallet.py custody/signer_adapter.py custody/native_tx.py
+          custody/outbound.py custody/reconciliation.py
           ops/services.py ops/models.py ops/migrations/0004_normalize_chain_kinds.py
           custody/migrations/0007_disable_ton_deposits.py
 

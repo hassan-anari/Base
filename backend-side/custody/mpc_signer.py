@@ -128,6 +128,38 @@ class MpcSigner:
             logger.warning("rate limit hit for %s", key)
             raise
 
+    def sign(
+        self,
+        actor_id: str,
+        tx: UnsignedTx,
+        policy: SignPolicy,
+        *,
+        idempotency_key: str,
+    ) -> str:
+        """Authorize and sign prepared bytes; broadcasting belongs to the executor."""
+        self.authorize_request(actor_id, policy)
+        self.validate_transaction(tx, policy)
+        self.enforce_rate_limit(actor_id, policy)
+        adapter = self._adapter or _get_adapter()
+        derived = adapter.get_derived_address(tx.chain_id, tx.derivation_path)
+        if derived.lower() != tx.from_address.lower():
+            raise SignerError("signing key reference does not control source address")
+        write_audit_log(
+            actor_id=actor_id,
+            action=AuditAction.SIGN_REQUEST,
+            entity_type="PreparedNativeTransaction",
+            entity_id=idempotency_key,
+            metadata={
+                "chain_id": tx.chain_id,
+                "asset_key": tx.asset_key,
+                "policy": policy.value,
+                "from": tx.from_address,
+                "to": tx.to_address,
+                "amount": str(tx.amount),
+            },
+        )
+        return self._sign(tx, idempotency_key)
+
     # ---- Guard point 4 + 6/7: audit + sign + broadcast ----
     def sign_and_broadcast(
         self,

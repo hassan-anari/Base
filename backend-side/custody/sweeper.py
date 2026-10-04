@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -47,6 +48,7 @@ from .gas_station import AmbiguousBroadcastError, ensure_gas
 from .indexer.factory import get_indexer
 from .models import SweepJob, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
+from .native_tx import SafePreBroadcastRejection
 from .rate_limit import rate_limiter
 
 logger = logging.getLogger("custody.sweeper")
@@ -141,6 +143,8 @@ def trigger_sweep(
         except AmbiguousBroadcastError:
             SweepJob.objects.filter(pk=job.pk).update(status="RECONCILIATION_REQUIRED")
             raise
+        except SafePreBroadcastRejection:
+            raise
         except Exception:
             SweepJob.objects.filter(pk=job.pk).update(status="FAILED", completed_at=timezone.now())
             raise
@@ -154,6 +158,39 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
     cfg = get_chain(job.user_wallet.chain_id)
     hot = ensure_hot_wallet(job.user_wallet.chain_id)
     amount = job.balance_snapshot
+
+    if settings.CUSTODY_TX_MODE == "live":
+        from .native_tx import AmbiguousBroadcast, SafePreBroadcastRejection
+        from .outbound import create_attempt, execute_attempt
+
+        attempt = create_attempt(
+            operation_type="SWEEP",
+            operation_id=job.pk,
+            chain_id=job.user_wallet.chain_id,
+            asset_key=job.asset_key,
+            source=job.user_wallet.deposit_address,
+            destination=hot,
+            amount=amount,
+        )
+        try:
+            attempt = execute_attempt(attempt.pk, actor_id)
+        except AmbiguousBroadcast as exc:
+            job.status = "RECONCILIATION_REQUIRED"
+            job.save(update_fields=["status"])
+            raise AmbiguousBroadcastError(str(exc)) from exc
+        except SafePreBroadcastRejection:
+            job.status = "CREATED"
+            job.tx_hash = None
+            job.save(update_fields=["status", "tx_hash"])
+            raise
+        job.status = (
+            "RECONCILIATION_REQUIRED"
+            if attempt.status == "RECONCILIATION_REQUIRED"
+            else "SWEEP_BROADCASTED"
+        )
+        job.tx_hash = attempt.network_tx_id
+        job.save(update_fields=["status", "tx_hash"])
+        return
 
     # Step A: optional gas top-up of the deposit EOA.
     if cfg.kind.value in ("evm", "tron"):
@@ -202,8 +239,4 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
 
 
 def mark_confirmed(job_id: int) -> None:
-    """Called by indexer confirmation monitor once finality reached."""
-    job = SweepJob.objects.get(id=job_id)
-    job.status = "CONFIRMED"
-    job.completed_at = timezone.now()
-    job.save(update_fields=["status", "completed_at"])
+    raise RuntimeError("sweeps may only be confirmed by attempt reconciliation")

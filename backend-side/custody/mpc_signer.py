@@ -3,7 +3,7 @@ MPC Signer abstraction + policy enforcement.
 
 SECURITY BOUNDARY
 -----------------
-- A future vendor adapter must keep MPC key material outside Django and accept
+- The self-hosted coordinator adapter must keep MPC key material outside Django and accept
   only unsigned descriptors. The explicit local demo adapter is an exception:
   it derives complete private keys in-process and is not production MPC.
 - Every signing request must be (a) authorized, (b) validated, (c) rate-limited,
@@ -23,7 +23,7 @@ Guard points (stubbed but documented):
   3. enforce_rate_limit()   -> per (actor, action) token bucket (Redis stub)
   4. audit_sign_request()   -> write AdminActionLog for every signing request
   5. simulate()             -> optional pre-sign simulation hook
-  6. sign()                 -> call vendor adapter (never returns raw key)
+  6. sign()                 -> call self-hosted coordinator (never returns raw key)
   7. broadcast()            -> send signed tx to network; store tx_hash
 """
 
@@ -82,8 +82,8 @@ class SignResult:
 class MpcSigner:
     """Vendor-agnostic MPC signing adapter wrapper.
 
-    In production, ``adapter`` is a thin client to Fireblocks / Turnkey /
-    Lit / custom MPC nodes. We stub it here.
+    In production, ``adapter`` is a thin client to the separately deployed
+    self-hosted signer cluster.
     """
 
     def __init__(self, adapter=None):

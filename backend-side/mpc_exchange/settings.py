@@ -130,14 +130,16 @@ ALLOW_DEV_STUB_AUTH = config("ALLOW_DEV_STUB_AUTH", default=False, cast=bool)
 # ----------------------------------------------------------------------------
 # MPC signer backend selection
 #   local_key  -> real local signing for ETH/BSC/TRX/SOL (demo/dev)
-#   mpc_vendor -> delegate ALL signing to external MPC signer (production)
+#   self_hosted_mpc -> authenticated self-hosted coordinator (production)
 # ----------------------------------------------------------------------------
 MPC_SIGNER_BACKEND = config("MPC_SIGNER_BACKEND", default="local_key")
 CUSTODY_DEMO_MODE = config("CUSTODY_DEMO_MODE", default=False, cast=bool)
 CUSTODY_TX_MODE = config("CUSTODY_TX_MODE", default="live").strip().lower()
-# For production MPC vendor:
-MPC_VENDOR_URL = config("MPC_VENDOR_URL", default="")
-MPC_VENDOR_API_KEY = config("MPC_VENDOR_API_KEY", default="")
+MPC_COORDINATOR_URL = config("MPC_COORDINATOR_URL", default="https://mpc-coordinator:8443")
+MPC_CLIENT_CERT = config("MPC_CLIENT_CERT", default="")
+MPC_CLIENT_KEY = config("MPC_CLIENT_KEY", default="")
+MPC_CA_CERT = config("MPC_CA_CERT", default="")
+MPC_REQUEST_TIMEOUT_SECONDS = config("MPC_REQUEST_TIMEOUT_SECONDS", default=30, cast=int)
 # Local-key encryption passphrase for at-rest encrypted hot-wallet keys
 LOCAL_KEY_ENCRYPTION_PASSPHRASE = config("LOCAL_KEY_ENCRYPTION_PASSPHRASE", default="")
 

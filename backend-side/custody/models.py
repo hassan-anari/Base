@@ -101,6 +101,76 @@ class Asset(models.Model):
         return f"Asset({self.asset_key},{self.symbol})"
 
 
+class MpcKeyset(models.Model):
+    """Public MPC metadata; signer shares must never be stored here."""
+
+    ALGORITHMS = [("CGGMP24_ECDSA", "CGGMP24_ECDSA"), ("FROST_ED25519", "FROST_ED25519")]
+    STATUSES = [("CREATING", "CREATING"), ("ACTIVE", "ACTIVE"), ("RETIRED", "RETIRED")]
+    SCOPES = [(value, value) for value in ("EVM", "TRON", "SOLANA")]
+    keyset_id = models.UUIDField(unique=True)
+    algorithm = models.CharField(max_length=32, choices=ALGORITHMS)
+    curve = models.CharField(max_length=16)
+    scope = models.CharField(max_length=16, choices=SCOPES)
+    threshold = models.PositiveSmallIntegerField(default=2)
+    party_count = models.PositiveSmallIntegerField(default=3)
+    public_key = models.TextField(blank=True)
+    derivation_version = models.CharField(max_length=32)
+    dkg_execution_id = models.UUIDField(null=True, blank=True, unique=True)
+    dkg_result_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    participant_identities = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=16, choices=STATUSES, default="CREATING")
+    active_for_new_wallets = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(threshold__gte=2)
+                & models.Q(party_count__gte=models.F("threshold")),
+                name="mpc_keyset_valid_threshold",
+            ),
+            models.UniqueConstraint(
+                fields=["scope"],
+                condition=models.Q(active_for_new_wallets=True),
+                name="uq_active_mpc_keyset_per_scope",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        scope__in=["EVM", "TRON"],
+                        algorithm="CGGMP24_ECDSA",
+                        curve="secp256k1",
+                        derivation_version="cggmp_hd_v1",
+                    )
+                    | models.Q(
+                        scope="SOLANA",
+                        algorithm="FROST_ED25519",
+                        curve="ed25519",
+                        derivation_version="frost_keyset_v1",
+                    )
+                ),
+                name="mpc_keyset_scope_algorithm_shape",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        expected = {
+            "EVM": ("CGGMP24_ECDSA", "secp256k1", "cggmp_hd_v1"),
+            "TRON": ("CGGMP24_ECDSA", "secp256k1", "cggmp_hd_v1"),
+            "SOLANA": ("FROST_ED25519", "ed25519", "frost_keyset_v1"),
+        }
+        if self.scope and (self.algorithm, self.curve, self.derivation_version) != expected.get(
+            self.scope
+        ):
+            raise ValidationError("algorithm, curve, and derivation version do not match scope")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
 class UserWallet(models.Model):
     """A user's deposit EOA address for a given (chain, asset).
 
@@ -146,6 +216,10 @@ class UserWallet(models.Model):
     last_scanned_block = models.BigIntegerField(null=True, blank=True)
     # SPL ATA. The signing authority remains deposit_address.
     asset_account_address = models.CharField(max_length=128, null=True, blank=True)
+    mpc_keyset = models.ForeignKey(
+        MpcKeyset, null=True, blank=True, on_delete=models.PROTECT, related_name="user_wallets"
+    )
+    derivation_version = models.CharField(max_length=32, default="legacy_local_v1")
 
     def __str__(self) -> str:
         return f"UserWallet({self.user_id},{self.chain_id},{self.asset_key})"
@@ -225,6 +299,9 @@ class HotWallet(models.Model):
     # Opaque signer-owned identity.  Deliberately nullable for non-destructive
     # migration: legacy wallets must be repaired by an operator and fail closed.
     signing_key_ref = models.CharField(max_length=255, null=True, blank=True)
+    mpc_keyset = models.ForeignKey(
+        MpcKeyset, null=True, blank=True, on_delete=models.PROTECT, related_name="hot_wallets"
+    )
 
     def __str__(self) -> str:
         return f"HotWallet({self.chain_id},{self.address})"
@@ -383,6 +460,53 @@ class OnchainTransactionAttempt(models.Model):
             ),
         ]
         indexes = [models.Index(fields=["status", "chain_id"])]
+
+
+class MpcSigningSession(models.Model):
+    """Durable, idempotent link between a prepared attempt and one MPC execution."""
+
+    STATUSES = [
+        (value, value)
+        for value in (
+            "CREATED",
+            "STARTING",
+            "IN_PROGRESS",
+            "COMPLETED",
+            "DEFINITIVE_NO_SIGNATURE_FAILURE",
+            "RECONCILIATION_REQUIRED",
+        )
+    ]
+    attempt = models.ForeignKey(
+        OnchainTransactionAttempt, on_delete=models.PROTECT, related_name="mpc_sessions"
+    )
+    session_id = models.UUIDField(unique=True)
+    session_number = models.PositiveIntegerField(default=1)
+    keyset = models.ForeignKey(MpcKeyset, on_delete=models.PROTECT, related_name="signing_sessions")
+    algorithm = models.CharField(max_length=32)
+    message_fingerprint = models.CharField(max_length=64)
+    payload_type = models.CharField(max_length=32)
+    signing_payload = models.BinaryField()
+    crypto_execution_id = models.UUIDField(null=True, blank=True, unique=True)
+    signature_result = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=32, choices=STATUSES, default="CREATED")
+    coordinator_request_id = models.CharField(max_length=128, blank=True, default="")
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    error_message = models.CharField(max_length=512, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["attempt", "session_number"], name="uq_mpc_attempt_session_number"
+            ),
+            models.UniqueConstraint(
+                fields=["attempt"],
+                condition=models.Q(status__in=["CREATED", "STARTING", "IN_PROGRESS"]),
+                name="uq_active_mpc_session_per_attempt",
+            ),
+        ]
 
 
 class AdminActionLog(models.Model):

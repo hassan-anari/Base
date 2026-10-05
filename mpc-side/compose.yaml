@@ -1,0 +1,15 @@
+# LOCAL DEVELOPMENT ONLY — NOT A PRODUCTION TOPOLOGY. Production signers MUST
+# run on three independent hosts/failure domains with independently controlled keys.
+services:
+  coordinator:
+    build: {context: ., args: {BINARY: wallet-mpc-coordinator}}
+  signer-a: &signer
+    build: {context: ., args: {BINARY: wallet-mpc-signer}}
+    volumes: [signer-a-share:/var/lib/wallet-mpc]
+  signer-b:
+    <<: *signer
+    volumes: [signer-b-share:/var/lib/wallet-mpc]
+  signer-c:
+    <<: *signer
+    volumes: [signer-c-share:/var/lib/wallet-mpc]
+volumes: {signer-a-share: {}, signer-b-share: {}, signer-c-share: {}}

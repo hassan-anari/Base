@@ -1,0 +1,10 @@
+[package]
+name = "wallet-mpc-storage"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+anyhow.workspace = true
+aes-gcm.workspace = true
+rand_core.workspace = true
+zeroize.workspace = true

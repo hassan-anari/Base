@@ -1,0 +1,14 @@
+[package]
+name = "wallet-mpc-protocol"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+rand_core.workspace = true
+cggmp24.workspace = true
+cggmp24-keygen.workspace = true
+frost-ed25519.workspace = true

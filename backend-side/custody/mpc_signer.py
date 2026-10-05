@@ -111,10 +111,17 @@ class MpcSigner:
             get_adapter(tx.chain_id).validate_address(tx.to_address)
         except ValueError as exc:
             raise SignerError(str(exc)) from exc
-        # Dust guard: do not sweep/withdraw below a sane floor.
-        min_amount = (cfg.deposit_threshold or Decimal("0")) * Decimal("0.1")
-        if tx.amount < min_amount:
-            raise SignerError(f"amount below dust floor {min_amount}")
+        from .config import get_asset
+
+        asset = get_asset(tx.asset_key)
+        if asset.chain_id != tx.chain_id:
+            raise SignerError("signing asset does not belong to transaction chain")
+        # Native dust policy remains in native units. Tokens already passed
+        # exact positive/base-unit validation; never compare them to native units.
+        if asset.is_native:
+            min_amount = (cfg.deposit_threshold or Decimal("0")) * Decimal("0.1")
+            if tx.amount < min_amount:
+                raise SignerError(f"amount below dust floor {min_amount}")
         # Policy routing: sweeper MUST go to the chain hot wallet.
         if policy is SignPolicy.SWEEPER and tx.to_address != ensure_hot_wallet(tx.chain_id):
             raise SignerError("sweeper destination must be the hot wallet")

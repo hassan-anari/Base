@@ -12,18 +12,40 @@ from .models import Deposit
 def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
     """Persist/update one concrete indexer event and credit at finality exactly once."""
     validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
+    asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
+    if event.asset_key and event.asset_key != user_wallet.asset_key:
+        raise ValueError("deposit event asset does not match wallet asset")
+    if not event.asset_key and not asset.is_native:
+        raise ValueError("token deposit event must identify its asset")
     amount = Decimal(str(event.amount))
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("deposit amount must be positive and finite")
+    if amount != amount.quantize(Decimal(1).scaleb(-asset.decimals)):
+        raise ValueError("deposit amount exceeds asset precision")
+    if not asset.is_native:
+        from .chain_registry import get_chain_spec
+        from .token_metadata import canonical_contract
+
+        if not event.contract_address:
+            raise ValueError("token deposit is missing contract/mint evidence")
+        kind = get_chain_spec(user_wallet.chain_id).kind
+        if canonical_contract(kind, event.contract_address) != canonical_contract(
+            kind, asset.contract_address
+        ):
+            raise ValueError("token deposit came from an unreviewed contract/mint")
     threshold = get_confirmation_threshold(user_wallet.chain_id)
     with transaction.atomic():
         deposit, created = Deposit.objects.get_or_create(
             user_wallet=user_wallet,
             tx_hash=event.tx_hash,
             asset_key=user_wallet.asset_key,
+            event_index=event.event_index,
             defaults={
                 "amount": amount,
                 "block": event.block,
                 "confirmations": event.confirmations,
                 "memo": event.memo,
+                "block_hash": event.block_hash,
                 "status": "PENDING",
             },
         )
@@ -32,6 +54,8 @@ def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
         )
         if deposit.amount != amount:
             raise ValueError("deposit event amount changed")
+        if deposit.block_hash and event.block_hash and deposit.block_hash != event.block_hash:
+            raise ValueError("deposit event block identity changed")
         if deposit.status != "REVERTED":
             fields = []
             if event.confirmations > deposit.confirmations:

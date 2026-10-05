@@ -114,3 +114,11 @@ Built-in TON deposit, withdrawal and sweep capabilities are disabled by data
 migration. TON needs a later reviewed signing and authoritative-finality design.
 Tokens, real vendor MPC, fee charging/accounting, fee replacement, automated
 Celery/outbox scheduling and a reconciliation UI remain out of scope.
+
+## Asset-aware transfer boundary (Phase 5)
+
+Business orchestration now selects a transfer executor by both `chain_id` and
+`asset_key`. Native assets retain the Phase 4 family executors; verified tokens
+select their reviewed standard executor. Reconciliation uses the same selection,
+so a token attempt can never be interpreted as a native transfer. All EVM
+executors share the source-account nonce allocator.

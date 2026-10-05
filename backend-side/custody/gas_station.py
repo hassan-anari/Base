@@ -25,16 +25,37 @@ never logs secrets; every signing request is authorized + validated + audited.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from decimal import Decimal
 
 from django.conf import settings
 
 from .audit import AuditAction, write_audit_log
 from .config import ensure_hot_wallet, get_chain, is_memo_required, native_asset_key
-from .models import GasTopupIntent, HotWallet, UserWallet
+from .models import GasTopupIntent, HotWallet, OnchainTransactionAttempt, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
 logger = logging.getLogger("custody.gas")
+
+
+@contextmanager
+def _gas_execution_lock(intent_id: int):
+    """Serialize recovery/execution; PostgreSQL releases this lock on worker death."""
+    from django.db import connection
+
+    if connection.vendor != "postgresql":
+        yield True
+        return
+    lock_id = 0x4741530000000000 + int(intent_id)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [lock_id])
+        acquired = bool(cursor.fetchone()[0])
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_id])
 
 
 class AmbiguousBroadcastError(RuntimeError):
@@ -92,20 +113,30 @@ def _execute_live(intent, actor_id, source, asset_key):
             status="FAILED" if attempt.status == "FAILED" else "RECONCILIATION_REQUIRED"
         )
         raise
+    intent_status = {
+        "CONFIRMED": "CONFIRMED",
+        "FAILED": "FAILED",
+        "RECONCILIATION_REQUIRED": "RECONCILIATION_REQUIRED",
+    }.get(attempt.status, "BROADCASTED")
     GasTopupIntent.objects.filter(pk=intent.pk).update(
-        status="BROADCASTED", tx_hash=attempt.network_tx_id
+        status=intent_status, tx_hash=attempt.network_tx_id
     )
     return attempt
 
 
 def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
     """Top up gas for user_wallet deposit EOA if needed. Returns True if topped."""
-    cfg = get_chain(user_wallet.chain_id)
-    hot_address = ensure_hot_wallet(user_wallet.chain_id)
-    # Bounded grant from chain config (tiny, fixed) — prevents abuse.
-    grant = cfg.gas_topup_amount or 0.0
+    intent = get_or_create_gas_intent(user_wallet, idempotency_key=idempotency_key)
+    return execute_gas_intent(intent.pk)
 
-    intent = _intent(
+
+def get_or_create_gas_intent(user_wallet: UserWallet, *, idempotency_key: str) -> GasTopupIntent:
+    """Persist a reviewed gas grant without signing or broadcasting it."""
+    cfg = get_chain(user_wallet.chain_id)
+    grant = cfg.gas_topup_amount
+    if grant <= 0:
+        raise ValueError("positive reviewed gas top-up amount is required")
+    return _intent(
         key=idempotency_key,
         actor_id="system:gas_station",
         chain_id=user_wallet.chain_id,
@@ -113,28 +144,70 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
         amount=grant,
         memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
     )
+
+
+def execute_gas_intent(intent_id: int) -> bool:
+    """Claim and execute an already-durable gas intent, outside caller transactions."""
+    with _gas_execution_lock(intent_id) as acquired:
+        if not acquired:
+            return False
+        return _execute_gas_intent_locked(intent_id)
+
+
+def _execute_gas_intent_locked(intent_id: int) -> bool:
+    intent = GasTopupIntent.objects.get(pk=intent_id)
+    attempt = (
+        OnchainTransactionAttempt.objects.filter(operation_type="GAS_TOPUP", operation_id=intent.pk)
+        .order_by("-attempt_number")
+        .first()
+    )
+    if attempt:
+        if attempt.status == "CONFIRMED":
+            GasTopupIntent.objects.filter(pk=intent.pk).update(
+                status="CONFIRMED", tx_hash=attempt.network_tx_id
+            )
+            return True
+        if attempt.status == "FAILED":
+            GasTopupIntent.objects.filter(pk=intent.pk).update(
+                status="FAILED", tx_hash=attempt.network_tx_id
+            )
+            return False
+        if attempt.status == "BROADCASTED":
+            GasTopupIntent.objects.filter(pk=intent.pk).update(
+                status="BROADCASTED", tx_hash=attempt.network_tx_id
+            )
+            return False
+        if attempt.status == "RECONCILIATION_REQUIRED":
+            GasTopupIntent.objects.filter(pk=intent.pk).update(
+                status="RECONCILIATION_REQUIRED", tx_hash=attempt.network_tx_id
+            )
+            return False
     if intent.status == "CONFIRMED":
         return True
     if intent.status == "BROADCASTED":
         return False
-    if intent.status in {"PROCESSING", "RECONCILIATION_REQUIRED"}:
+    if intent.status == "RECONCILIATION_REQUIRED":
         raise AmbiguousBroadcastError("gas top-up requires reconciliation")
     if intent.status == "FAILED":
         raise ValueError("failed gas top-up requires a new idempotency key")
+    hot_address = ensure_hot_wallet(intent.chain_id)
     tx = UnsignedTx(
-        chain_id=user_wallet.chain_id,
-        asset_key=native_asset_key(user_wallet.chain_id),
+        chain_id=intent.chain_id,
+        asset_key=native_asset_key(intent.chain_id),
         from_address=hot_address,
-        to_address=user_wallet.deposit_address,
-        amount=grant,
-        derivation_path=_hot_signing_ref(user_wallet.chain_id),
-        memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
+        to_address=intent.to_address,
+        amount=intent.amount,
+        derivation_path=_hot_signing_ref(intent.chain_id),
+        memo=intent.memo if is_memo_required(intent.chain_id) else None,
     )
-    _claim_intent(intent)
+    # PROCESSING is recoverable when its durable attempt is absent or resumable.
+    # CREATED is claimed exactly once; a concurrent claimant observes PROCESSING.
+    if intent.status == "CREATED":
+        _claim_intent(intent)
+    elif intent.status != "PROCESSING":
+        raise ValueError(f"unsupported gas intent state {intent.status}")
     if settings.CUSTODY_TX_MODE == "live":
-        _execute_live(
-            intent, "system:gas_station", hot_address, native_asset_key(user_wallet.chain_id)
-        )
+        _execute_live(intent, "system:gas_station", hot_address, native_asset_key(intent.chain_id))
         return False
     signer = get_signer()
     try:
@@ -142,7 +215,7 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
             actor_id="system:gas_station",
             tx=tx,
             policy=SignPolicy.GAS_TOPUP,
-            idempotency_key=idempotency_key,
+            idempotency_key=intent.idempotency_key,
         )
         GasTopupIntent.objects.filter(pk=intent.pk, status="PROCESSING").update(
             status="BROADCASTED", tx_hash=res.tx_hash
@@ -151,13 +224,13 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
             "system:gas_station",
             AuditAction.GAS_TOPUP,
             "UserWallet",
-            str(user_wallet.id),
+            str(intent.id),
             {"tx": res.tx_hash},
         )
         logger.info(
             "gas topup broadcast %s -> %s (%s)",
             hot_address,
-            user_wallet.deposit_address,
+            intent.to_address,
             res.tx_hash,
         )
         return False
@@ -165,7 +238,7 @@ def ensure_gas(user_wallet: UserWallet, *, idempotency_key: str) -> bool:
         GasTopupIntent.objects.filter(pk=intent.pk, status="PROCESSING").update(
             status="RECONCILIATION_REQUIRED"
         )
-        logger.exception("gas topup failed for %s", user_wallet.id)
+        logger.exception("gas topup failed for intent %s", intent.id)
         raise AmbiguousBroadcastError("gas top-up outcome is unknown") from exc
 
 

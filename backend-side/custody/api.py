@@ -269,6 +269,7 @@ def wallet_address(
             deposit_address=existing.deposit_address,
             derivation_path=existing.derivation_path,
             memo=existing.memo,
+            asset_account_address=existing.asset_account_address,
             status=existing.status,
         )
     memo = None
@@ -278,6 +279,12 @@ def wallet_address(
     derived = derive_deposit_address(net, user_index, idx, asset_key=asset_key)
     derivation = derived.derivation_path
     address = derived.deposit_address
+    asset = get_asset(asset_key)
+    asset_account = None
+    if asset.token_standard == "SPL":
+        from .spl import derive_ata
+
+        asset_account = derive_ata(address, asset.contract_address)
     w = UserWallet.objects.create(
         user_id=subject,
         chain_id=net,
@@ -285,6 +292,7 @@ def wallet_address(
         derivation_path=derivation,
         deposit_address=address,
         memo=memo,
+        asset_account_address=asset_account,
         address_index=idx,
         status="ACTIVE",
     )
@@ -302,6 +310,7 @@ def wallet_address(
         deposit_address=address,
         derivation_path=derivation,
         memo=memo,
+        asset_account_address=asset_account,
         status="ACTIVE",
     )
 
@@ -330,12 +339,19 @@ def _ensure_deposit_address(
         memo = f"u{user_id}.{idx}"
     user_index = stable_user_index(user_id)
     derived = derive_deposit_address(net, user_index, idx, asset_key=asset_key)
+    asset = get_asset(asset_key)
+    asset_account = None
+    if asset.token_standard == "SPL":
+        from .spl import derive_ata
+
+        asset_account = derive_ata(derived.deposit_address, asset.contract_address)
     w = UserWallet.objects.create(
         user_id=user_id,
         chain_id=net,
         asset_key=asset_key,
         derivation_path=derived.derivation_path,
         deposit_address=derived.deposit_address,
+        asset_account_address=asset_account,
         memo=memo,
         address_index=idx,
         status="ACTIVE",
@@ -398,6 +414,7 @@ def create_wallet(
                     deposit_address=w.deposit_address,
                     derivation_path=w.derivation_path,
                     memo=w.memo,
+                    asset_account_address=w.asset_account_address,
                     status=w.status,
                 )
             )
@@ -434,7 +451,10 @@ def balance_check(
         raise HttpError(404, "no deposit address for network/asset")
     indexer = get_indexer(chain_id)
     bal = indexer.get_balance(
-        w.deposit_address, memo=w.memo if is_memo_required(chain_id) else None
+        w.deposit_address,
+        asset_key=asset_key,
+        after_block=w.last_scanned_block,
+        memo=w.memo if is_memo_required(chain_id) else None,
     )
     for event in bal.deposit_events:
         ingest_event(w, event)
@@ -593,7 +613,11 @@ def gas_station(
         balance_status = "UNAVAILABLE"
         if gas_addr:
             try:
-                bal = float(get_indexer(cid).get_balance(gas_addr).confirmed_balance)
+                bal = float(
+                    get_indexer(cid)
+                    .get_balance(gas_addr, asset_key=native_asset_key(cid))
+                    .confirmed_balance
+                )
                 balance_status = "AVAILABLE"
             except IndexerUnavailable:
                 pass

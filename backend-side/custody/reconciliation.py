@@ -8,6 +8,18 @@ from django.utils import timezone
 from .ledger import release_withdrawal, settle_withdrawal
 from .models import GasTopupIntent, OnchainTransactionAttempt, SweepJob, WithdrawalRequest
 from .native_tx import PreparedNativeTransaction, ReconciliationState, get_native_executor
+from .token_tx import get_transfer_executor
+
+
+def _executor(chain_id: str, asset_key: str):
+    from .models import Asset
+
+    asset = Asset.objects.get(asset_key=asset_key, chain_id=chain_id)
+    return (
+        get_native_executor(chain_id)
+        if asset.is_native
+        else get_transfer_executor(chain_id, asset_key)
+    )
 
 
 def _prepared(attempt: OnchainTransactionAttempt) -> PreparedNativeTransaction:
@@ -34,7 +46,7 @@ def reconcile_attempt(attempt_id: int):
         return snapshot
     if not snapshot.network_tx_id:
         return snapshot
-    result = get_native_executor(snapshot.chain_id).reconcile(
+    result = _executor(snapshot.chain_id, snapshot.asset_key).reconcile(
         _prepared(snapshot), snapshot.network_tx_id
     )
     if result.state not in {
@@ -42,9 +54,18 @@ def reconcile_attempt(attempt_id: int):
         ReconciliationState.FAILED,
         ReconciliationState.EXPIRED,
     }:
-        OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
-            confirmation_metadata={"state": result.state.value, **result.evidence}
-        )
+        updates = {"confirmation_metadata": {"state": result.state.value, **result.evidence}}
+        if result.state is ReconciliationState.RECONCILIATION_REQUIRED:
+            updates.update(status="RECONCILIATION_REQUIRED", error_code="TOKEN_EFFECT_MISMATCH")
+            if snapshot.operation_type == "WITHDRAWAL":
+                WithdrawalRequest.objects.filter(pk=snapshot.operation_id).update(
+                    status="RECONCILIATION_REQUIRED"
+                )
+            elif snapshot.operation_type == "SWEEP":
+                SweepJob.objects.filter(pk=snapshot.operation_id).update(
+                    status="RECONCILIATION_REQUIRED"
+                )
+        OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(**updates)
         return OnchainTransactionAttempt.objects.get(pk=attempt_id)
     with transaction.atomic():
         attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)

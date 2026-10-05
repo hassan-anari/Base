@@ -59,6 +59,7 @@ class ReconciliationState(StrEnum):
     CONFIRMED = "CONFIRMED"
     FAILED = "FAILED"
     EXPIRED = "EXPIRED"
+    RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 
 
 @dataclass(frozen=True)

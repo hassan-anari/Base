@@ -22,6 +22,18 @@ from .native_tx import (
     get_native_executor,
     to_base_units,
 )
+from .token_tx import get_transfer_executor
+
+
+def _executor(chain_id: str, asset_key: str):
+    from .models import Asset
+
+    asset = Asset.objects.get(asset_key=asset_key, chain_id=chain_id)
+    return (
+        get_native_executor(chain_id)
+        if asset.is_native
+        else get_transfer_executor(chain_id, asset_key)
+    )
 
 
 def _restore(attempt: OnchainTransactionAttempt) -> PreparedNativeTransaction:
@@ -73,9 +85,11 @@ def create_attempt(
     destination: str,
     amount: Decimal,
 ) -> OnchainTransactionAttempt:
+    from .config import validate_chain_asset
     from .models import Asset
 
-    asset = Asset.objects.get(asset_key=asset_key, chain_id=chain_id, is_native=True, enabled=True)
+    validate_chain_asset(chain_id, asset_key)
+    asset = Asset.objects.get(asset_key=asset_key, chain_id=chain_id, enabled=True)
     units = to_base_units(amount, asset.decimals)
     with transaction.atomic():
         existing = (
@@ -104,7 +118,7 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
     """Prepare/sign/broadcast once; uncertainty is always non-retryable."""
     signer = signer or get_signer()
     attempt = OnchainTransactionAttempt.objects.get(pk=attempt_id)
-    executor = get_native_executor(attempt.chain_id)
+    executor = _executor(attempt.chain_id, attempt.asset_key)
     if attempt.status == "BROADCASTING":
         OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
             status="RECONCILIATION_REQUIRED", error_code="CRASH_DURING_BROADCAST"

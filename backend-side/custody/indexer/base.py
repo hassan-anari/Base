@@ -35,6 +35,10 @@ class DepositEvent:
     block: int
     confirmations: int
     memo: Optional[str] = None
+    asset_key: str = ""
+    event_index: str = "native:0"
+    block_hash: Optional[str] = None
+    contract_address: Optional[str] = None
 
 
 @dataclass
@@ -57,12 +61,19 @@ class IndexerClient:
     # "live": real testnet RPC calls via the editable node registry.
     stub_funded_balance = Decimal("1")
 
-    def get_balance(self, address: str, memo: Optional[str] = None) -> BalanceResult:
+    def get_balance(
+        self,
+        address: str,
+        *,
+        asset_key: str | None = None,
+        after_block: Optional[int] = None,
+        memo: Optional[str] = None,
+    ) -> BalanceResult:
         # Base STUB: returns a fixed "funded" balance (above typical thresholds)
         # so the gas-station + auto-sweep path can be demonstrated. Subclasses
         # that wire a real indexer override get_balance and only fall back to
         # this stub when stub mode is enabled.
-        return self._stub_balance(memo)
+        return self._stub_balance(asset_key=asset_key, memo=memo)
 
     @staticmethod
     def _stub_enabled() -> bool:
@@ -78,10 +89,15 @@ class IndexerClient:
         mode = os.environ.get("CUSTODY_INDEXER_MODE", "live").strip().lower()
         return mode == "stub"
 
-    def _stub_balance(self, memo: Optional[str] = None) -> BalanceResult:
+    def _stub_balance(
+        self, asset_key: str | None = None, memo: Optional[str] = None
+    ) -> BalanceResult:
         from custody.chain_registry import get_chain_spec
+        from custody.models import Asset
 
         confirmations = get_chain_spec(self.chain_id).confirmations
+        resolved_key = asset_key or get_chain_spec(self.chain_id).native_asset_key
+        asset = Asset.objects.get(asset_key=resolved_key, chain_id=self.chain_id)
         return BalanceResult(
             confirmed_balance=self.stub_funded_balance,
             pending_balance=Decimal("0"),
@@ -93,6 +109,9 @@ class IndexerClient:
                     block=999_999,
                     confirmations=confirmations,
                     memo=memo,
+                    asset_key=resolved_key,
+                    event_index="stub:0",
+                    contract_address=asset.contract_address if not asset.is_native else None,
                 )
             ],
         )

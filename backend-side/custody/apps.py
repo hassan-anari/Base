@@ -24,7 +24,8 @@ class CustodyConfig(AppConfig):
                         "chain_id": a.chain_id,
                         "symbol": a.symbol,
                         "is_native": a.is_native,
-                        "contract_address": a.contract_address or "",
+                        "contract_address": a.contract_address,
+                        "token_standard": a.token_standard,
                         "decimals": a.decimals,
                         "deposit_threshold": (
                             a.deposit_threshold

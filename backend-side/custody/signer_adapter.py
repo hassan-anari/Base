@@ -9,9 +9,7 @@ flow (including memo attribution) can be demonstrated end-to-end on testnets;
 production TON signing should be delegated to a vendor (see `VendorSignerAdapter`)
 because TON key custody is typically outsourced.
 
-SWAP POINT: to go to production, set MPC_SIGNER_BACKEND=mpc_vendor and implement
-`VendorSignerAdapter` against Fireblocks/Turnkey/Lit. No business logic in
-mpc_signer.py / sweeper.py / withdrawals.py changes.
+Production uses the separately deployed self-hosted MPC coordinator.
 """
 
 from __future__ import annotations
@@ -134,30 +132,49 @@ class LocalVault:
         return "0x" + hashlib.sha256(signed_ref.encode()).hexdigest()[:40]
 
 
-class VendorSignerAdapter:
-    """Production stub. Wire to Fireblocks/Turnkey/Lit here.
+class SelfHostedMpcAdapter:
+    """Client for our mTLS-only coordinator; it never handles private material."""
 
-    The interface mirrors LocalVault so MpcSigner is agnostic:
-        get_derived_address(network, path) -> EOA string
-        sign(network, raw, path, idempotency_key) -> signed payload ref
-        broadcast(network, signed_ref) -> tx_hash
-    """
+    def _request(self, method: str, path: str, **kwargs):
+        import requests
+        from django.conf import settings
+
+        response = requests.request(
+            method,
+            settings.MPC_COORDINATOR_URL.rstrip("/") + path,
+            cert=(settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY),
+            verify=settings.MPC_CA_CERT,
+            timeout=settings.MPC_REQUEST_TIMEOUT_SECONDS,
+            **kwargs,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def get_derived_address(self, network: str, path: str) -> str:
-        raise NotImplementedError("Vendor MPC get_derived_address not configured")
+        data = self._request("GET", "/v1/derive", params={"chain": network, "path": path})
+        return data["address"]
 
     def sign(self, network: str, raw: dict, path: str, idempotency_key: str) -> str:
-        raise NotImplementedError("Vendor MPC sign not configured")
+        # idempotency_key is a cryptographically random, durable MPC session UUID.
+        data = self._request(
+            "POST",
+            "/v1/sign-sessions",
+            json={"session_id": idempotency_key, "chain": network, "path": path, "payload": raw},
+        )
+        if data["status"] != "COMPLETED":
+            raise RuntimeError(f"MPC session is not complete: {data['status']}")
+        return "signed:" + data["signature"]
 
     def broadcast(self, network: str, signed_ref: str) -> str:
-        raise NotImplementedError("Vendor MPC broadcast not configured")
+        del network, signed_ref
+        raise RuntimeError("MPC coordinator never broadcasts transactions")
 
 
 _ADAPTER: Optional[Any] = None
 
 
 def get_adapter():
-    """Returns the active signer adapter (LocalVault in dev, Vendor in prod)."""
+    """Returns the active signer adapter (LocalVault in demo, self-hosted MPC in production)."""
     global _ADAPTER
     if _ADAPTER is None:
         # Read from Django settings (single source of truth for config).
@@ -167,8 +184,9 @@ def get_adapter():
             backend = getattr(settings, "MPC_SIGNER_BACKEND", "")
         except Exception:
             backend = ""
-        if backend == "mpc_vendor":
-            raise RuntimeError("mpc_vendor adapter is not implemented")
+        if backend == "self_hosted_mpc":
+            _ADAPTER = SelfHostedMpcAdapter()
+            return _ADAPTER
         if backend != "local_key":
             raise RuntimeError(f"unsupported signer backend: {backend!r}")
         if not settings.CUSTODY_DEMO_MODE:

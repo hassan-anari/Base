@@ -4,11 +4,11 @@ Cryptographic helpers for the local "MPC stand-in" vault.
 SECURITY BOUNDARY NOTE
 ----------------------
 In production the master seed and all key material live INSIDE the external
-MPC signer (Fireblocks / Turnkey / Lit / self-hosted MPC nodes). Django core
+separately deployed self-hosted MPC signer nodes. Django core
 never imports or touches this module. `LocalVault` below is a *dev/demo*
-implementation of that trust boundary: it stands in for the vendor so the
+implementation of that trust boundary: it stands in for the signer cluster so the
 whole flow runs end-to-end on public testnets. To go to production you swap
-`signer_adapter.get_adapter()` to `VendorSignerAdapter` (or your own) without
+`signer_adapter.get_adapter()` to the self-hosted adapter without
 changing any business logic.
 
 Deterministic derivation:
@@ -17,6 +17,7 @@ Deterministic derivation:
 This is deterministic and *stateless* (no key blobs stored in the DB), which
 keeps the demo simple while still producing real, controllable EOAs.
 """
+
 from __future__ import annotations
 
 import base64

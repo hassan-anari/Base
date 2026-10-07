@@ -17,10 +17,24 @@ from .models import (
     LedgerAccount,
     LedgerPosting,
     LedgerTransaction,
+    MpcKeyset,
+    MpcSigningSession,
     SweepJob,
     UserWallet,
     WithdrawalRequest,
 )
+
+
+@admin.register(MpcKeyset)
+class MpcKeysetAdmin(admin.ModelAdmin):
+    list_display = ("keyset_id", "algorithm", "threshold", "party_count", "status")
+    readonly_fields = ("keyset_id", "public_key", "created_at")
+
+
+@admin.register(MpcSigningSession)
+class MpcSigningSessionAdmin(admin.ModelAdmin):
+    list_display = ("session_id", "attempt", "algorithm", "status", "created_at")
+    readonly_fields = tuple(field.name for field in MpcSigningSession._meta.fields)
 
 
 @admin.register(Asset)

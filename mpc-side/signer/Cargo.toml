@@ -1,0 +1,15 @@
+[package]
+name="wallet-mpc-signer"
+version="0.1.0"
+edition="2021"
+publish=false
+[dependencies]
+axum.workspace=true
+tokio.workspace=true
+serde.workspace=true
+serde_json.workspace=true
+uuid.workspace=true
+sha2.workspace=true
+anyhow.workspace=true
+wallet-mpc-protocol={path="../protocol"}
+wallet-mpc-storage={path="../storage"}

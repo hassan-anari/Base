@@ -1,0 +1,18 @@
+[package]
+name = "wallet-mpc-coordinator"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+wallet-mpc-protocol = { path = "../protocol" }
+
+[dev-dependencies]
+tower = { version = "=0.5.3", features = ["util"] }

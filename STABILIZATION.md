@@ -29,3 +29,8 @@ automated reconciliation remain future integration work.
 * Resolve the currently reported frontend dependency audit findings (the local
   baseline reports one moderate and seven high findings) in a separate,
   dependency-focused change with UI regression testing.
+
+## Phase 6 production signer
+
+Production custody signing uses the separately deployed, self-hosted 2-of-3 MPC subsystem with
+CGGMP24 secp256k1 and FROST Ed25519. `local_key` is demo-only; there is no SaaS signer fallback.

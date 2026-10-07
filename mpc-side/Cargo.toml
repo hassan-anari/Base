@@ -1,0 +1,23 @@
+[workspace]
+members = ["protocol", "storage", "coordinator", "signer"]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "=1.0.103"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+uuid = { version = "=1.18.1", features = ["v4", "serde"] }
+zeroize = { version = "=1.8.2", features = ["derive"] }
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+sha2 = "=0.10.9"
+aes-gcm = "=0.10.3"
+axum = "=0.8.6"
+tokio = { version = "=1.47.1", features = ["full"] }
+tracing = "=0.1.41"
+# Reviewed upstream protocol implementations; never replace these with handwritten MPC.
+cggmp24 = { version = "=0.7.0-alpha.3", default-features = false, features = ["std", "backend-num-bigint", "curve-secp256k1", "hd-slip10"] }
+cggmp24-keygen = { version = "=0.7.0-alpha.3", default-features = false, features = ["std"] }
+frost-ed25519 = { version = "=3.0.0", features = ["serialization"] }
+
+[profile.test]
+opt-level = 2

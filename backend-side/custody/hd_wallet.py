@@ -122,13 +122,13 @@ def stable_user_index(user_id: str) -> int:
 def _resolve_eoa(chain_id: str, path: str, mpc_adapter=None) -> str:
     """Ask the MPC vault for the EOA address at ``path``.
 
-    In production this calls the vendor adapter (Fireblocks/Turnkey/Lit/...)
+    In production this calls the self-hosted MPC public-derivation API.
     which holds the root key and returns a *standard* single-signer EOA for
     that path. We never handle raw key material here.
 
     If no adapter is injected we lazily load the configured one
-    (LocalVault in dev / VendorSignerAdapter in prod). TON derivation is
-    vendor-side and raises NotImplementedError until a vendor is wired.
+    (LocalVault in demo / self-hosted MPC in production). TON production
+    derivation is not enabled in Phase 6.
     """
     if mpc_adapter is None:
         from .signer_adapter import get_adapter

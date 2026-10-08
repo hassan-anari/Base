@@ -16,6 +16,8 @@ use wallet_mpc_storage::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+pub mod cggmp;
+mod cggmp_delivery;
 pub mod dkg;
 pub mod sign;
 

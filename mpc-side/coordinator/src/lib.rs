@@ -36,6 +36,7 @@ pub enum SessionStatus {
     Starting,
     InProgress,
     Completed,
+    KeygenCompleted,
     DefinitiveNoSignatureFailure,
     ReconciliationRequired,
 }
@@ -55,6 +56,7 @@ pub struct SignSession {
 pub use wallet_mpc_protocol::dkg::DkgRequest;
 use wallet_mpc_protocol::dkg::{DkgReport, PARTIES};
 
+mod cggmp;
 mod dkg;
 mod sign;
 
@@ -157,6 +159,16 @@ impl DurableStore {
                     .context("completed signature missing keyset")?;
                 sign::validate_completed(session, dkg)
                     .context("invalid completed signing result")?;
+            }
+        }
+        for session in data.dkg.values() {
+            if session.status == SessionStatus::KeygenCompleted {
+                wallet_mpc_protocol::cggmp::verify_keygen_receipts(&session.request, &session.participant_agreement)?;
+                ensure!(session.group_public_key == session.participant_agreement[0].group_public_key,
+                    "stored CGGMP group mismatch");
+                ensure!(session.result_fingerprint.as_deref() == Some(format!("{:x}", Sha256::digest(
+                    serde_json::to_vec(&(&session.request, &session.participant_agreement))?)).as_str()),
+                    "stored CGGMP result mismatch");
             }
         }
         for session in data.dkg.values_mut() {
@@ -312,6 +324,7 @@ impl DurableStore {
         if !topology_valid
             || !algorithm_valid
             || (request.algorithm == "FROST_ED25519" && !request.is_frost())
+            || (request.algorithm == "CGGMP24_ECDSA" && !request.is_cggmp())
         {
             return Err(StoreError::Invalid);
         }

@@ -36,7 +36,7 @@ async fn main() {
         "configured signer identity mismatch"
     );
     let algorithms = config.supported_algorithms.clone();
-    let store = SignerStore::open(config).expect("signer share store configuration is invalid");
+    let store = SignerStore::open(config.clone()).expect("signer share store configuration is invalid");
     let executions = ExecutionTombstones::open(storage_directory.join("executions"))
         .expect("signer execution tombstones unavailable");
     let metadata = Capabilities {
@@ -70,8 +70,10 @@ async fn main() {
         ));
         let peers =
             SignerClient::from_env_for(&tls, &party_id).expect("DKG peer destinations required");
-        let dkg = wallet_mpc_signer::dkg::DkgService::open(store, executions.clone(), peers)
+        let dkg = wallet_mpc_signer::dkg::DkgService::open(store, executions.clone(), peers.clone())
             .expect("DKG recovery failed");
+        let cggmp = wallet_mpc_signer::cggmp::CggmpService::open(config, executions.clone(), peers)
+            .expect("CGGMP keygen recovery failed");
         let signing = wallet_mpc_signer::sign::SigningService::open(
             dkg.clone(),
             executions,
@@ -81,7 +83,8 @@ async fn main() {
         .expect("signing recovery failed");
         let app = app
             .merge(wallet_mpc_signer::dkg::router(dkg))
-            .merge(wallet_mpc_signer::sign::router(signing));
+            .merge(wallet_mpc_signer::sign::router(signing))
+            .merge(wallet_mpc_signer::cggmp::router(cggmp));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");

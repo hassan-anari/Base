@@ -17,3 +17,5 @@ rand_core.workspace=true
 wallet-mpc-protocol={path="../protocol"}
 wallet-mpc-storage={path="../storage"}
 wallet-mpc-transport={path="../transport"}
+cggmp24.workspace=true
+futures-util = { version = "=0.3.34", default-features = false, features = ["std", "sink"] }

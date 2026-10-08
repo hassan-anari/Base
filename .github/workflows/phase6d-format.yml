@@ -1,0 +1,17 @@
+name: Temporary Phase 6D formatting recovery
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: rustfmt
+      - run: cargo fmt --manifest-path mpc-side/Cargo.toml --all
+      - run: git diff --no-color --binary

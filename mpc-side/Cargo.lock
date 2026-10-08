@@ -2141,6 +2141,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "cggmp24",
+ "futures-util",
  "frost-ed25519",
  "rand_core",
  "serde",

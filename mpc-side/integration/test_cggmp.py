@@ -398,3 +398,29 @@ def test_coordinator_rejects_tampered_public_completion_on_restart(cggmp_network
     path.write_text(json.dumps(data))
     with pytest.raises(RuntimeError, match="stored CGGMP result mismatch"):
         net.start("coordinator")
+
+
+def test_coordinator_restart_preserves_ambiguous_execution(cggmp_network):
+    import os
+    import signal
+
+    net = cggmp_network
+    context = binding()
+    assert create(net, context)[0] == 200
+    pid = net.running["signer-c"].pid
+    os.kill(pid, signal.SIGSTOP)
+    try:
+        assert advance(net, context)[0] == 200
+        net.stop("coordinator")
+    finally:
+        os.kill(pid, signal.SIGCONT)
+    net.start("coordinator")
+    status, state = request(
+        net, "coordinator", "custody", f"/v1/dkg-sessions/{context['session_id']}", method="GET"
+    )
+    assert status == 200 and state["status"] == "RECONCILIATION_REQUIRED"
+    assert state["execution_id"] == context["execution_id"]
+    assert state["session_id"] == context["session_id"]
+    assert state["group_public_key"] is None
+    assert advance(net, context)[0] == 409
+    assert advance(net, context, "reconcile")[0] == 409

@@ -10,6 +10,10 @@ Phase 6C.2 adds real two-signer FROST signing, public aggregation material,
 single-use nonces and durable result recovery over that transport. See
 [SIGNING.md](mpc-side/SIGNING.md) for the authenticated service API and acceptance gate.
 
+Phase 6D work in progress adds direct distributed CGGMP key generation and encrypted
+core shares for EVM/TRON. Auxiliary generation and service ECDSA signing remain
+incomplete; see [CGGMP.md](mpc-side/CGGMP.md).
+
 **Production MPC signing remains disabled.** `custody.E011` and the runtime guard
 remain unchanged. This milestone adds no wallet provisioning, chain
 transaction assembly or production cutover. The Phase 6A sections below describe

@@ -12,12 +12,12 @@ use http_body_util::{BodyExt, Empty, Limited};
 use hyper::body::Bytes;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName},
     server::WebPkiClientVerifier,
     ClientConfig, RootCertStore, ServerConfig,
 };
 use serde::{Deserialize, Serialize};
-use std::{fs::File, io::BufReader, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Semaphore, time::timeout};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x509_parser::{extensions::GeneralName, prelude::*};
@@ -63,8 +63,7 @@ pub fn certificate_identity(cert: &CertificateDer<'_>) -> Result<PeerIdentity> {
 }
 
 fn certificates(path: &str) -> Result<Vec<CertificateDer<'static>>> {
-    let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(path)?))
-        .collect::<std::io::Result<Vec<_>>>()?;
+    let certs = CertificateDer::pem_file_iter(path)?.collect::<Result<Vec<_>, _>>()?;
     ensure!(!certs.is_empty(), "certificate file is empty");
     Ok(certs)
 }
@@ -106,8 +105,7 @@ impl TlsConfig {
             certificate_identity(&certs[0])?.role() == role,
             "local certificate role mismatch"
         );
-        let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(&self.key)?))?
-            .context("private key missing")?;
+        let key = PrivateKeyDer::from_pem_file(&self.key)?;
         Ok((roots, certs, key))
     }
 

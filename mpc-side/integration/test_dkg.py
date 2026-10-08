@@ -123,8 +123,11 @@ def assert_completed(net, binding, session):
             "status": "COMPLETED",
             "share_format_version": 1,
             "group_public_key": public,
+            "public_key_package": report["public_key_package"],
+            "verification_share": report["verification_share"],
             "durable": True,
         }
+        assert report["public_key_package"] and report["verification_share"]
         reports.append(report)
     assert session["participant_agreement"] == reports
     return public

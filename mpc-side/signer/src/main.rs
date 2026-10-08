@@ -70,9 +70,18 @@ async fn main() {
         ));
         let peers =
             SignerClient::from_env_for(&tls, &party_id).expect("DKG peer destinations required");
-        let dkg = wallet_mpc_signer::dkg::DkgService::open(store, executions, peers)
+        let dkg = wallet_mpc_signer::dkg::DkgService::open(store, executions.clone(), peers)
             .expect("DKG recovery failed");
-        let app = app.merge(wallet_mpc_signer::dkg::router(dkg));
+        let signing = wallet_mpc_signer::sign::SigningService::open(
+            dkg.clone(),
+            executions,
+            storage_directory,
+            party_id.clone(),
+        )
+        .expect("signing recovery failed");
+        let app = app
+            .merge(wallet_mpc_signer::dkg::router(dkg))
+            .merge(wallet_mpc_signer::sign::router(signing));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");

@@ -40,22 +40,7 @@ pub enum SessionStatus {
     ReconciliationRequired,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SignRequest {
-    pub session_id: Uuid,
-    pub attempt_id: u64,
-    pub keyset_id: Uuid,
-    pub algorithm: String,
-    pub payload_type: String,
-    pub payload_hex: String,
-    pub message_fingerprint: String,
-    pub operation_type: String,
-    pub chain: String,
-    pub asset: String,
-    pub expected_source: String,
-    pub derivation_reference: Option<String>,
-}
-
+pub use wallet_mpc_protocol::sign::SignRequest;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignSession {
     #[serde(flatten)]
@@ -71,6 +56,7 @@ pub use wallet_mpc_protocol::dkg::DkgRequest;
 use wallet_mpc_protocol::dkg::{DkgReport, PARTIES};
 
 mod dkg;
+mod sign;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DkgSession {
@@ -152,6 +138,27 @@ impl DurableStore {
             Database::default()
         };
         let mut recovered = false;
+        for session in data.signing.values_mut() {
+            if matches!(
+                session.status,
+                SessionStatus::Starting | SessionStatus::InProgress
+            ) {
+                session.status = SessionStatus::ReconciliationRequired;
+                session.error_code = Some("COORDINATOR_RESTART".into());
+                recovered = true;
+            }
+        }
+        for session in data.signing.values() {
+            if session.status == SessionStatus::Completed {
+                let dkg = data
+                    .dkg
+                    .values()
+                    .find(|d| d.request.keyset_id == session.request.keyset_id)
+                    .context("completed signature missing keyset")?;
+                sign::validate_completed(session, dkg)
+                    .context("invalid completed signing result")?;
+            }
+        }
         for session in data.dkg.values_mut() {
             if matches!(
                 session.status,
@@ -218,6 +225,9 @@ impl DurableStore {
     }
     pub async fn create_sign(&self, request: SignRequest) -> Result<SignSession, StoreError> {
         validate_sign_request(&request)?;
+        if request.algorithm == "FROST_ED25519" {
+            self.signing_evidence(&request).await?;
+        }
         let mut data = self.data.lock().await;
         if let Some(existing) = data.signing.get(&request.session_id) {
             if self
@@ -402,7 +412,7 @@ fn validate_sign_request(request: &SignRequest) -> Result<(), StoreError> {
     Ok(())
 }
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
+    if !value.len().is_multiple_of(2) || !value.is_ascii() {
         return None;
     }
     (0..value.len())
@@ -509,7 +519,8 @@ pub fn network_app(
     signers: wallet_mpc_transport::SignerClient,
 ) -> Router {
     let dkg_app = dkg::router(store.clone(), signers.clone());
-    base_app(store).merge(dkg_app).route("/v1/health/quorum", get(move || {
+    let signing_app = sign::router(store.clone(), signers.clone());
+    base_app(store).merge(dkg_app).merge(signing_app).route("/v1/health/quorum", get(move || {
         let signers = signers.clone();
         async move {
             match signers.capabilities().await {

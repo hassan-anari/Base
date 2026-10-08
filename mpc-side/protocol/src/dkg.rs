@@ -43,6 +43,10 @@ pub struct DkgReport {
     pub status: String,
     pub share_format_version: u16,
     pub group_public_key: Option<String>,
+    #[serde(default)]
+    pub public_key_package: Option<Vec<u8>>,
+    #[serde(default)]
+    pub verification_share: Option<Vec<u8>>,
     pub durable: bool,
 }
 

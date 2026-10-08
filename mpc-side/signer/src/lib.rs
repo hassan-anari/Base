@@ -17,6 +17,7 @@ use wallet_mpc_storage::{
 use zeroize::{Zeroize, Zeroizing};
 
 pub mod dkg;
+pub mod sign;
 
 pub const PROTOCOL_VERSION: &str = "phase6-v1";
 pub const SHARE_FORMAT_VERSION: u16 = 1;
@@ -326,6 +327,7 @@ impl EnvelopeGuard {
 
 /// Non-secret execution tombstones prevent a restarted signer from accepting
 /// messages for an execution whose ephemeral nonce state was lost.
+#[derive(Clone)]
 pub struct ExecutionTombstones {
     directory: PathBuf,
 }

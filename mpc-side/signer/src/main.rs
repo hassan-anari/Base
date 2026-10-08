@@ -1,12 +1,12 @@
 //! One process identity, one encrypted party share. Startup is fail-closed:
 //! an unconfigured process never binds a network socket.
-use axum::{routing::get, Json, Router};
+use axum::{middleware, routing::get, Json, Router};
 use std::path::PathBuf;
 use wallet_mpc_signer::{
     phase6a_insecure_local_listener, ExecutionTombstones, SignerConfig, SignerStore,
     PROTOCOL_VERSION,
 };
-use wallet_mpc_transport::{serve, Capabilities, TlsConfig};
+use wallet_mpc_transport::{serve_roles, Capabilities, PeerIdentity, SignerClient, TlsConfig};
 
 #[tokio::main]
 async fn main() {
@@ -36,8 +36,8 @@ async fn main() {
         "configured signer identity mismatch"
     );
     let algorithms = config.supported_algorithms.clone();
-    let _store = SignerStore::open(config).expect("signer share store configuration is invalid");
-    let _executions = ExecutionTombstones::open(storage_directory.join("executions"))
+    let store = SignerStore::open(config).expect("signer share store configuration is invalid");
+    let executions = ExecutionTombstones::open(storage_directory.join("executions"))
         .expect("signer execution tombstones unavailable");
     let metadata = Capabilities {
         signer_identity: party_id.clone(),
@@ -58,12 +58,34 @@ async fn main() {
         axum::serve(listener, app).await.unwrap();
     } else {
         let tls = TlsConfig::from_env().expect("mTLS configuration required");
+        let app = app.route_layer(middleware::from_fn(
+            |axum::Extension(peer): axum::Extension<PeerIdentity>,
+             request: axum::extract::Request,
+             next: middleware::Next| async move {
+                if peer.role() != "coordinator" {
+                    return Err(axum::http::StatusCode::FORBIDDEN);
+                }
+                Ok(next.run(request).await)
+            },
+        ));
+        let peers =
+            SignerClient::from_env_for(&tls, &party_id).expect("DKG peer destinations required");
+        let dkg = wallet_mpc_signer::dkg::DkgService::open(store, executions, peers)
+            .expect("DKG recovery failed");
+        let app = app.merge(wallet_mpc_signer::dkg::router(dkg));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");
         let bind = required("MPC_BIND_ADDR")
             .parse()
             .expect("invalid bind address");
-        serve(bind, server, app, "coordinator").await.unwrap();
+        serve_roles(
+            bind,
+            server,
+            app,
+            &["coordinator", "signer-a", "signer-b", "signer-c"],
+        )
+        .await
+        .unwrap();
     }
 }

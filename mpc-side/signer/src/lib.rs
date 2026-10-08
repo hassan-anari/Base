@@ -16,6 +16,8 @@ use wallet_mpc_storage::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+pub mod dkg;
+
 pub const PROTOCOL_VERSION: &str = "phase6-v1";
 pub const SHARE_FORMAT_VERSION: u16 = 1;
 
@@ -174,7 +176,7 @@ impl SignerStore {
         if self.path(share.keyset_id).exists() {
             let existing = self.load(share.keyset_id, &share.algorithm)?;
             ensure!(existing == *share, "keyset share conflict");
-            return Ok(());
+            return confirm_parent_durability(&self.path(share.keyset_id)).map_err(Into::into);
         }
         let plaintext = Zeroizing::new(serde_json::to_vec(share)?);
         let encrypted = self.wrapper.wrap(
@@ -197,7 +199,7 @@ impl SignerStore {
                 // Concurrent exact replay may lose the create-once race.
                 let existing = self.load(share.keyset_id, &share.algorithm)?;
                 ensure!(existing == *share, "keyset share conflict");
-                Ok(())
+                confirm_parent_durability(&self.path(share.keyset_id)).map_err(Into::into)
             }
             Err(error) => Err(error.into()),
         }
@@ -237,7 +239,8 @@ impl SignerStore {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProtocolEnvelope {
     pub logical_session_id: Uuid,
     pub crypto_execution_id: Uuid,
@@ -331,6 +334,7 @@ impl ExecutionTombstones {
     pub fn open(directory: PathBuf) -> Result<Self> {
         let tombstones = Self { directory };
         fs::create_dir_all(&tombstones.directory)?;
+        confirm_parent_durability(&tombstones.directory)?;
         for entry in fs::read_dir(&tombstones.directory)? {
             let path = entry?.path();
             if path.extension().and_then(|value| value.to_str()) == Some("state")
@@ -363,6 +367,11 @@ impl ExecutionTombstones {
             "crypto execution is stale"
         );
         Ok(())
+    }
+
+    pub fn complete(&self, execution_id: Uuid) -> Result<()> {
+        self.require_active(execution_id)?;
+        atomic_replace_state(&self.path(execution_id), b"COMPLETED").map_err(Into::into)
     }
 
     pub fn abort(&self, execution_id: Uuid) -> Result<()> {

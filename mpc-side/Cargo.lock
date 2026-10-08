@@ -2098,6 +2098,7 @@ dependencies = [
  "tower",
  "uuid",
  "wallet-mpc-protocol",
+ "wallet-mpc-storage",
  "wallet-mpc-transport",
 ]
 
@@ -2122,6 +2123,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "frost-ed25519",
+ "rand_core",
  "serde",
  "serde_json",
  "sha2",

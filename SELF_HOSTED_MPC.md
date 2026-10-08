@@ -1,5 +1,11 @@
 # Self-hosted MPC — Phase 6A Foundation Baseline Only
 
+Phase 6B adds verified TLS 1.3 mTLS transport and non-secret signer capability
+requests on top of this merged foundation. See [the transport guide](mpc-side/TRANSPORT.md)
+for the current listeners, certificate authorization, real-process tests and
+development topology. The Phase 6A descriptions below are historical foundation
+scope; operational MPC signing is still disabled.
+
 > **PRODUCTION MPC SIGNING IS INTENTIONALLY DISABLED.** Phase 6A is a non-operational foundation,
 > not a production custody deployment. Django rejects `MPC_SIGNER_BACKEND=self_hosted_mpc`, and
 > the Rust binaries reject startup unless explicit loopback-only insecure development mode is set.

@@ -11,7 +11,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: {toolchain: 1.90.0, components: rustfmt}
       - run: cargo fmt --all --manifest-path mpc-side/Cargo.toml
+      - run: pip install ruff==0.14.0
+      - run: ruff format mpc-side/integration/test_cggmp_aux.py
       - run: git diff --no-color --binary
       - uses: Swatinem/rust-cache@v2
         with: {workspaces: mpc-side}
-      - run: cargo check --locked --manifest-path mpc-side/Cargo.toml --workspace --all-targets
+      - run: cargo check --manifest-path mpc-side/Cargo.toml --workspace --all-targets
+      - run: cargo clippy --manifest-path mpc-side/Cargo.toml --workspace --all-targets -- -D warnings
+      - if: always()
+        run: git diff --no-color --binary mpc-side/Cargo.lock

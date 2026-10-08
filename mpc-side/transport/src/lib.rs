@@ -329,7 +329,12 @@ impl SignerClient {
         // Auxiliary/signing proofs need more space than keygen controls. These RPCs
         // enqueue bounded messages; expensive crypto runs in asynchronous workers.
         let limit = if path.starts_with("/internal/v1/cggmp/aux/")
-            || path.starts_with("/internal/v1/cggmp/sign/") { 1024 * 1024 } else { 64 * 1024 };
+            || path.starts_with("/internal/v1/cggmp/sign/")
+        {
+            1024 * 1024
+        } else {
+            64 * 1024
+        };
         ensure!(body.len() <= limit, "protocol request too large");
         let socket = tokio::net::TcpStream::connect(addr).await?;
         let stream = TlsConnector::from(self.tls.clone())

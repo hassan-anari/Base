@@ -5,8 +5,8 @@ use futures_util::{sink, stream, Sink, Stream, StreamExt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 use tokio::sync::mpsc;
-use wallet_mpc_protocol::dkg::DkgRequest;
 use uuid::Uuid;
+use wallet_mpc_protocol::dkg::DkgRequest;
 
 #[derive(Clone)]
 pub(super) struct DeliveryContext {
@@ -23,20 +23,25 @@ use wallet_mpc_transport::SignerClient;
 use zeroize::Zeroizing;
 
 pub(super) fn delivery<M>(
-    request: DkgRequest, own: String, peers: SignerClient,
+    request: DkgRequest,
+    own: String,
+    peers: SignerClient,
     inbox: mpsc::Receiver<ProtocolEnvelope>,
 ) -> (
     impl Stream<Item = Result<Incoming<M>, io::Error>> + Unpin,
     impl Sink<Outgoing<M>, Error = io::Error> + Unpin,
 )
-where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
+where
+    M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
 {
     let context = DeliveryContext {
         logical_session_id: request.session_id,
         execution_id: request.execution_id,
         keyset_id: request.keyset_id,
         participants: request.participants.clone(),
-        transcript: request.cggmp_transcript().expect("validated keygen request"),
+        transcript: request
+            .cggmp_transcript()
+            .expect("validated keygen request"),
         message_path: "/internal/v1/cggmp/keygen/message".into(),
         message_budget: 64,
     };
@@ -44,13 +49,16 @@ where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
 }
 
 pub(super) fn protocol_delivery<M>(
-    request: DeliveryContext, own: String, peers: SignerClient,
+    request: DeliveryContext,
+    own: String,
+    peers: SignerClient,
     inbox: mpsc::Receiver<ProtocolEnvelope>,
 ) -> (
     impl Stream<Item = Result<Incoming<M>, io::Error>> + Unpin,
     impl Sink<Outgoing<M>, Error = io::Error> + Unpin,
 )
-where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
+where
+    M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
 {
     let participants = request.participants.clone();
     let incoming = Box::pin(
@@ -123,12 +131,7 @@ where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
                 use zeroize::Zeroize;
                 wire.payload.zeroize();
                 peers
-                    .request(
-                        &recipient,
-                        "POST",
-                        &request.message_path,
-                        body,
-                    )
+                    .request(&recipient, "POST", &request.message_path, body)
                     .await
                     .map_err(|_| io::Error::other("CGGMP peer delivery failed"))?;
             }

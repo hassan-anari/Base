@@ -58,6 +58,7 @@ use wallet_mpc_protocol::dkg::{DkgReport, PARTIES};
 
 mod cggmp;
 mod cggmp_aux;
+mod cggmp_sign;
 mod dkg;
 mod sign;
 

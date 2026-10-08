@@ -190,3 +190,207 @@ def test_incomplete_auxiliary_receipts_never_create_false_readiness(auxiliary_ne
         net.stop("coordinator")
         path.write_bytes(saved)
         net.start("coordinator")
+
+
+def signing_request(net, payload_type="EVM_LEGACY_DIGEST", digest=None):
+    from coincurve import PublicKey
+    from eth_utils import keccak
+
+    group = net.aux_state["group_public_key"]
+    address = "0x" + keccak(PublicKey(bytes.fromhex(group)).format(compressed=False)[1:])[-20:].hex()
+    digest = digest or bytes(range(32))
+    return {
+        "session_id": str(uuid.uuid4()),
+        "attempt_id": 1,
+        "keyset_id": net.aux_context["keyset_id"],
+        "algorithm": "CGGMP24_ECDSA",
+        "payload_type": payload_type,
+        "payload_hex": digest.hex(),
+        "message_fingerprint": hashlib.sha256(digest).hexdigest(),
+        "operation_type": "WITHDRAWAL",
+        "chain": "ETH",
+        "asset": "ETH",
+        "expected_source": address,
+        "derivation_reference": None,
+    }
+
+
+def sign_control(net, party, action, execution, role="coordinator"):
+    return request(net, party, role, f"/internal/v1/cggmp/sign/{action}", execution)
+
+
+def sign_state(net, context):
+    return request(
+        net, "coordinator", "custody", f"/v1/sign-sessions/{context['session_id']}", method="GET"
+    )[1]
+
+
+def advance_sign(net, context, action="execute"):
+    return request(net, "coordinator", "custody", f"/v1/sign-sessions/{context['session_id']}/{action}")
+
+
+def wait_sign(net, context):
+    deadline = time.monotonic() + 205
+    while time.monotonic() < deadline:
+        state = sign_state(net, context)
+        if state["status"] not in ("STARTING", "IN_PROGRESS"):
+            return state
+        time.sleep(0.1)
+    pytest.fail("interactive signing exceeded bounded deadline")
+
+
+def verify_independently(net, context, state):
+    from coincurve import PublicKey, ecdsa
+
+    signature = state["signature"]
+    assert signature["verified"] and signature["selected_signers"] == state["selected_signers"]
+    assert signature["crypto_execution_id"] == state["crypto_execution_id"]
+    assert signature["logical_session_id"] == context["session_id"]
+    assert signature["keyset_id"] == context["keyset_id"]
+    assert signature["payload_fingerprint"] == context["message_fingerprint"]
+    compact = bytes.fromhex(signature["signature_hex"])
+    assert compact[:32].hex() == signature["r"] and compact[32:].hex() == signature["s"]
+    assert 0 < int(signature["s"], 16) <= int(
+        "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", 16
+    )
+    assert signature["recovery_id"] == signature["y_parity"] in (0, 1)
+    digest = bytes.fromhex(context["payload_hex"])
+    group = PublicKey(bytes.fromhex(net.aux_state["group_public_key"]))
+    der = ecdsa.cdata_to_der(ecdsa.deserialize_compact(compact))
+    assert group.verify(der, digest, hasher=None)
+    assert not group.verify(der, hashlib.sha256(digest).digest(), hasher=None)
+    recovered = PublicKey.from_signature_and_message(
+        compact + bytes([signature["recovery_id"]]), digest, hasher=None
+    )
+    assert recovered.format() == group.format()
+    return signature
+
+
+@pytest.mark.parametrize("pair", [("signer-a", "signer-b"), ("signer-a", "signer-c"), ("signer-b", "signer-c")])
+@pytest.mark.parametrize("payload_type", ["EVM_LEGACY_DIGEST", "EVM_EIP1559_DIGEST"])
+def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, pair, payload_type):
+    net = auxiliary_network
+    # Fresh payloads per session; this acceptance boundary only receives custody digests.
+    context = signing_request(net, payload_type, hashlib.sha256(uuid.uuid4().bytes).digest())
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    offline = next(p for p in PARTIES if p not in pair)
+    net.stop(offline)
+    try:
+        assert advance_sign(net, context)[0] == 200
+        state = wait_sign(net, context)
+        assert state["status"] == "COMPLETED", state
+        assert state["selected_signers"] == list(pair)
+        verify_independently(net, context, state)
+        net.stop("coordinator")
+        net.start("coordinator")
+        assert advance_sign(net, context) == (200, state)
+        for party in pair:
+            net.stop(party)
+            net.start(party)
+        assert advance_sign(net, context) == (200, state)
+        execution = {
+            "request": context,
+            "crypto_execution_id": state["crypto_execution_id"],
+            "selected_signers": list(pair),
+            "auxiliary": net.aux_state["auxiliary"]["request"],
+        }
+        for party in pair:
+            assert sign_control(net, party, "report", execution)[1]["signature"] == state["signature"]
+            assert sign_control(net, party, "start", execution)[0] == 409
+            assert sign_control(net, party, "prepare", execution)[0] == 409
+    finally:
+        net.start(offline)
+
+
+def test_duplicate_concurrent_calls_and_distinct_sessions(auxiliary_network):
+    net = auxiliary_network
+    contexts = [signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest()) for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        creates = list(pool.map(lambda _: request(net, "coordinator", "custody", "/v1/sign-sessions", contexts[0]), range(8)))
+        starts = list(pool.map(lambda _: advance_sign(net, contexts[0]), range(8)))
+    assert all(code == 200 for code, _ in creates + starts)
+    assert len({state["crypto_execution_id"] for _, state in creates + starts}) == 1
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", contexts[1])[0] == 200
+    assert advance_sign(net, contexts[1])[0] == 200
+    for context in contexts:
+        state = wait_sign(net, context)
+        assert state["status"] == "COMPLETED", state
+        verify_independently(net, context, state)
+        for party in state["selected_signers"]:
+            consumed = net.root / party / "storage" / "cggmp-signing" / f"{state['crypto_execution_id']}.consumed"
+            assert json.loads(consumed.read_text())["request"] == context
+
+
+def test_single_available_signer_never_starts_nonce_generation(auxiliary_network):
+    net = auxiliary_network
+    context = signing_request(net)
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    net.stop("signer-b")
+    net.stop("signer-c")
+    try:
+        assert advance_sign(net, context)[0] == 200
+        state = wait_sign(net, context)
+        assert state["status"] == "RECONCILIATION_REQUIRED" and state["signature"] is None
+        assert not (net.root / "signer-a" / "storage" / "cggmp-signing" / f"{context['session_id']}.json").exists()
+        assert advance_sign(net, context)[0] == 409
+    finally:
+        net.start("signer-b")
+        net.start("signer-c")
+
+
+@pytest.mark.parametrize("change", [
+    {"payload_hex": "00" * 31},
+    {"payload_hex": "FF" * 32},
+    {"message_fingerprint": "00" * 32},
+    {"payload_type": "TRON_TXID"},
+    {"payload_type": "SOLANA_MESSAGE"},
+    {"chain": "TRON"},
+    {"operation_type": "ARBITRARY_ORACLE"},
+    {"expected_source": "0x" + "00" * 20},
+    {"derivation_reference": "m/0"},
+    {"attempt_id": 0},
+])
+def test_invalid_custody_digest_context_rejected(auxiliary_network, change):
+    net = auxiliary_network
+    context = signing_request(net) | change
+    status, _ = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    if status == 200:
+        assert advance_sign(net, context)[0] == 400
+        assert sign_state(net, context)["signature"] is None
+    else:
+        assert status == 400
+
+
+def test_consumed_execution_crash_and_binding_replays_fail_closed(auxiliary_network):
+    net = auxiliary_network
+    context = signing_request(net)
+    status, state = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200
+    execution = {
+        "request": context,
+        "crypto_execution_id": state["crypto_execution_id"],
+        "selected_signers": ["signer-a", "signer-b"],
+        "auxiliary": net.aux_state["auxiliary"]["request"],
+    }
+    for party in execution["selected_signers"]:
+        assert sign_control(net, party, "prepare", execution)[0] == 200
+    assert sign_control(net, "signer-a", "start", execution)[0] == 200
+    consumed = net.root / "signer-a" / "storage" / "cggmp-signing" / f"{state['crypto_execution_id']}.consumed"
+    assert json.loads(consumed.read_text()) == execution
+    time.sleep(0.1)
+    net.stop("signer-a")
+    net.start("signer-a")
+    assert sign_control(net, "signer-a", "report", execution)[1]["status"] == "RECONCILIATION_REQUIRED"
+    assert sign_control(net, "signer-a", "start", execution)[0] == 409
+    assert sign_control(net, "signer-a", "prepare", execution)[0] == 409
+    assert sign_control(net, "signer-a", "prepare", execution | {"crypto_execution_id": str(uuid.uuid4())})[0] == 409
+    for mutation in (
+        {"crypto_execution_id": str(uuid.uuid4())},
+        {"selected_signers": ["signer-a"]},
+        {"selected_signers": ["signer-a", "signer-c"]},
+        {"request": context | {"session_id": str(uuid.uuid4())}},
+        {"request": context | {"payload_hex": "ab" * 32, "message_fingerprint": hashlib.sha256(bytes.fromhex("ab" * 32)).hexdigest()}},
+    ):
+        assert sign_control(net, "signer-a", "report", execution | mutation)[0] == 409
+    assert sign_control(net, "signer-b", "abort", execution)[0] == 200
+    assert sign_control(net, "signer-a", "report", execution, "signer-b")[0] == 403

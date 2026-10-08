@@ -203,7 +203,13 @@ impl Driver {
     async fn execute(&self, id: Uuid, reconcile: bool) -> Result<SignSession, StoreError> {
         let session = self.store.get_sign(id).await?.ok_or(StoreError::Invalid)?;
         if session.request.algorithm == wallet_mpc_protocol::cggmp::ALGORITHM {
-            return super::cggmp_sign::execute(self.store.clone(), self.peers.clone(), session, reconcile).await;
+            return super::cggmp_sign::execute(
+                self.store.clone(),
+                self.peers.clone(),
+                session,
+                reconcile,
+            )
+            .await;
         }
         if session.status == SessionStatus::Completed {
             return Ok(session);

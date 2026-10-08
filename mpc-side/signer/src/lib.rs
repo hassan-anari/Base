@@ -18,8 +18,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub mod cggmp;
 pub mod cggmp_aux;
-pub mod cggmp_sign;
 mod cggmp_delivery;
+pub mod cggmp_sign;
 pub mod dkg;
 pub mod sign;
 

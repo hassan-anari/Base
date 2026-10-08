@@ -215,7 +215,7 @@ pub async fn serve_roles(
                 .header_read_timeout(Duration::from_secs(5));
             // Bound idle/body connections as well as handshake resource use.
             let _ = timeout(
-                Duration::from_secs(15),
+                Duration::from_secs(45),
                 http.serve_connection(TokioIo::new(stream), TowerToHyperService::new(app)),
             )
             .await;
@@ -289,7 +289,7 @@ impl SignerClient {
             .find(|(r, _, _)| r == role)
             .context("unconfigured signer destination")?;
         timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(if path.starts_with("/internal/v1/cggmp/aux/") || path.starts_with("/internal/v1/cggmp/sign/") { 30 } else { 5 }),
             self.exchange(role, *addr, name, method, path, body),
         )
         .await?

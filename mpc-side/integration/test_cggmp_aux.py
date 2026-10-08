@@ -20,7 +20,10 @@ def aux_control(net, party, action, context, role="coordinator"):
 
 def advance_aux(net, context, action="execute"):
     return request(
-        net, "coordinator", "custody", f"/v1/dkg-sessions/{context['session_id']}/auxiliary/{action}"
+        net,
+        "coordinator",
+        "custody",
+        f"/v1/dkg-sessions/{context['session_id']}/auxiliary/{action}",
     )
 
 
@@ -59,10 +62,17 @@ def auxiliary_network(tmp_path_factory):
             time.sleep(1)
         else:
             pytest.fail("fresh-prime auxiliary protocol exceeded bounded deadline")
+        if auxiliary["status"] != "AUXILIARY_COMPLETED":
+            for party in PARTIES:
+                print(party, (net.root / party / "service.log").read_text())
         assert auxiliary["status"] == "AUXILIARY_COMPLETED", auxiliary
         assert auxiliary["internally_signable"]
-        costs = {r["party_id"]: r["prime_generation_ms"] for r in auxiliary["participant_agreement"]}
-        print(f"Fresh prime generation milliseconds: {costs}; total {time.monotonic() - started:.3f}s")
+        costs = {
+            r["party_id"]: r["prime_generation_ms"] for r in auxiliary["participant_agreement"]
+        }
+        print(
+            f"Fresh prime generation milliseconds: {costs}; total {time.monotonic() - started:.3f}s"
+        )
         net.aux_context = context
         net.aux_state = state
         net.aux_cores = cores
@@ -125,7 +135,9 @@ def test_auxiliary_artifacts_are_separate_create_once_and_reload(auxiliary_netwo
             net.start(party)
 
 
-@pytest.mark.parametrize("field", ["execution_id", "group_public_key", "keyset_id", "core_execution", "scope"])
+@pytest.mark.parametrize(
+    "field", ["execution_id", "group_public_key", "keyset_id", "core_execution", "scope"]
+)
 def test_auxiliary_artifact_binding_cannot_change(auxiliary_network, field):
     net = auxiliary_network
     context = copy.deepcopy(net.aux_state["auxiliary"]["request"])
@@ -146,13 +158,22 @@ def test_auxiliary_artifact_binding_cannot_change(auxiliary_network, field):
 @pytest.mark.parametrize("role", ["custody", "signer-a", "signer-b", "signer-c"])
 def test_auxiliary_controls_require_coordinator_certificate(auxiliary_network, role):
     net = auxiliary_network
-    assert aux_control(net, "signer-a", "report", net.aux_state["auxiliary"]["request"], role)[0] == 403
+    assert (
+        aux_control(net, "signer-a", "report", net.aux_state["auxiliary"]["request"], role)[0]
+        == 403
+    )
 
 
 @pytest.mark.parametrize("fault", ["ciphertext", "transplant", "wrapping-key"])
 def test_corrupt_auxiliary_material_rejected_on_restart(auxiliary_network, fault):
     net = auxiliary_network
-    path = net.root / "signer-a" / "storage" / "cggmp-aux" / f"{net.aux_context['keyset_id']}.share.enc"
+    path = (
+        net.root
+        / "signer-a"
+        / "storage"
+        / "cggmp-aux"
+        / f"{net.aux_context['keyset_id']}.share.enc"
+    )
     wrap = net.root / "signer-a" / "identity" / "wrapping.key"
     saved, saved_wrap = path.read_bytes(), wrap.read_bytes()
     net.stop("signer-a")
@@ -197,7 +218,9 @@ def signing_request(net, payload_type="EVM_LEGACY_DIGEST", digest=None):
     from eth_utils import keccak
 
     group = net.aux_state["group_public_key"]
-    address = "0x" + keccak(PublicKey(bytes.fromhex(group)).format(compressed=False)[1:])[-20:].hex()
+    address = (
+        "0x" + keccak(PublicKey(bytes.fromhex(group)).format(compressed=False)[1:])[-20:].hex()
+    )
     digest = digest or bytes(range(32))
     return {
         "session_id": str(uuid.uuid4()),
@@ -226,7 +249,9 @@ def sign_state(net, context):
 
 
 def advance_sign(net, context, action="execute"):
-    return request(net, "coordinator", "custody", f"/v1/sign-sessions/{context['session_id']}/{action}")
+    return request(
+        net, "coordinator", "custody", f"/v1/sign-sessions/{context['session_id']}/{action}"
+    )
 
 
 def wait_sign(net, context):
@@ -250,8 +275,10 @@ def verify_independently(net, context, state):
     assert signature["payload_fingerprint"] == context["message_fingerprint"]
     compact = bytes.fromhex(signature["signature_hex"])
     assert compact[:32].hex() == signature["r"] and compact[32:].hex() == signature["s"]
-    assert 0 < int(signature["s"], 16) <= int(
-        "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", 16
+    assert (
+        0
+        < int(signature["s"], 16)
+        <= int("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", 16)
     )
     assert signature["recovery_id"] == signature["y_parity"] in (0, 1)
     digest = bytes.fromhex(context["payload_hex"])
@@ -266,7 +293,9 @@ def verify_independently(net, context, state):
     return signature
 
 
-@pytest.mark.parametrize("pair", [("signer-a", "signer-b"), ("signer-a", "signer-c"), ("signer-b", "signer-c")])
+@pytest.mark.parametrize(
+    "pair", [("signer-a", "signer-b"), ("signer-a", "signer-c"), ("signer-b", "signer-c")]
+)
 @pytest.mark.parametrize("payload_type", ["EVM_LEGACY_DIGEST", "EVM_EIP1559_DIGEST"])
 def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, pair, payload_type):
     net = auxiliary_network
@@ -295,7 +324,9 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
             "auxiliary": net.aux_state["auxiliary"]["request"],
         }
         for party in pair:
-            assert sign_control(net, party, "report", execution)[1]["signature"] == state["signature"]
+            assert (
+                sign_control(net, party, "report", execution)[1]["signature"] == state["signature"]
+            )
             assert sign_control(net, party, "start", execution)[0] == 409
             assert sign_control(net, party, "prepare", execution)[0] == 409
     finally:
@@ -304,9 +335,16 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
 
 def test_duplicate_concurrent_calls_and_distinct_sessions(auxiliary_network):
     net = auxiliary_network
-    contexts = [signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest()) for _ in range(2)]
+    contexts = [
+        signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest()) for _ in range(2)
+    ]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        creates = list(pool.map(lambda _: request(net, "coordinator", "custody", "/v1/sign-sessions", contexts[0]), range(8)))
+        creates = list(
+            pool.map(
+                lambda _: request(net, "coordinator", "custody", "/v1/sign-sessions", contexts[0]),
+                range(8),
+            )
+        )
         starts = list(pool.map(lambda _: advance_sign(net, contexts[0]), range(8)))
     assert all(code == 200 for code, _ in creates + starts)
     assert len({state["crypto_execution_id"] for _, state in creates + starts}) == 1
@@ -317,7 +355,13 @@ def test_duplicate_concurrent_calls_and_distinct_sessions(auxiliary_network):
         assert state["status"] == "COMPLETED", state
         verify_independently(net, context, state)
         for party in state["selected_signers"]:
-            consumed = net.root / party / "storage" / "cggmp-signing" / f"{state['crypto_execution_id']}.consumed"
+            consumed = (
+                net.root
+                / party
+                / "storage"
+                / "cggmp-signing"
+                / f"{state['crypto_execution_id']}.consumed"
+            )
             assert json.loads(consumed.read_text())["request"] == context
 
 
@@ -331,25 +375,30 @@ def test_single_available_signer_never_starts_nonce_generation(auxiliary_network
         assert advance_sign(net, context)[0] == 200
         state = wait_sign(net, context)
         assert state["status"] == "RECONCILIATION_REQUIRED" and state["signature"] is None
-        assert not (net.root / "signer-a" / "storage" / "cggmp-signing" / f"{context['session_id']}.json").exists()
+        assert not (
+            net.root / "signer-a" / "storage" / "cggmp-signing" / f"{context['session_id']}.json"
+        ).exists()
         assert advance_sign(net, context)[0] == 409
     finally:
         net.start("signer-b")
         net.start("signer-c")
 
 
-@pytest.mark.parametrize("change", [
-    {"payload_hex": "00" * 31},
-    {"payload_hex": "FF" * 32},
-    {"message_fingerprint": "00" * 32},
-    {"payload_type": "TRON_TXID"},
-    {"payload_type": "SOLANA_MESSAGE"},
-    {"chain": "TRON"},
-    {"operation_type": "ARBITRARY_ORACLE"},
-    {"expected_source": "0x" + "00" * 20},
-    {"derivation_reference": "m/0"},
-    {"attempt_id": 0},
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"payload_hex": "00" * 31},
+        {"payload_hex": "FF" * 32},
+        {"message_fingerprint": "00" * 32},
+        {"payload_type": "TRON_TXID"},
+        {"payload_type": "SOLANA_MESSAGE"},
+        {"chain": "TRON"},
+        {"operation_type": "ARBITRARY_ORACLE"},
+        {"expected_source": "0x" + "00" * 20},
+        {"derivation_reference": "m/0"},
+        {"attempt_id": 0},
+    ],
+)
 def test_invalid_custody_digest_context_rejected(auxiliary_network, change):
     net = auxiliary_network
     context = signing_request(net) | change
@@ -375,22 +424,96 @@ def test_consumed_execution_crash_and_binding_replays_fail_closed(auxiliary_netw
     for party in execution["selected_signers"]:
         assert sign_control(net, party, "prepare", execution)[0] == 200
     assert sign_control(net, "signer-a", "start", execution)[0] == 200
-    consumed = net.root / "signer-a" / "storage" / "cggmp-signing" / f"{state['crypto_execution_id']}.consumed"
+    consumed = (
+        net.root
+        / "signer-a"
+        / "storage"
+        / "cggmp-signing"
+        / f"{state['crypto_execution_id']}.consumed"
+    )
     assert json.loads(consumed.read_text()) == execution
     time.sleep(0.1)
     net.stop("signer-a")
     net.start("signer-a")
-    assert sign_control(net, "signer-a", "report", execution)[1]["status"] == "RECONCILIATION_REQUIRED"
+    assert (
+        sign_control(net, "signer-a", "report", execution)[1]["status"] == "RECONCILIATION_REQUIRED"
+    )
     assert sign_control(net, "signer-a", "start", execution)[0] == 409
     assert sign_control(net, "signer-a", "prepare", execution)[0] == 409
-    assert sign_control(net, "signer-a", "prepare", execution | {"crypto_execution_id": str(uuid.uuid4())})[0] == 409
+    assert (
+        sign_control(
+            net, "signer-a", "prepare", execution | {"crypto_execution_id": str(uuid.uuid4())}
+        )[0]
+        == 409
+    )
     for mutation in (
         {"crypto_execution_id": str(uuid.uuid4())},
         {"selected_signers": ["signer-a"]},
         {"selected_signers": ["signer-a", "signer-c"]},
         {"request": context | {"session_id": str(uuid.uuid4())}},
-        {"request": context | {"payload_hex": "ab" * 32, "message_fingerprint": hashlib.sha256(bytes.fromhex("ab" * 32)).hexdigest()}},
+        {
+            "request": context
+            | {
+                "payload_hex": "ab" * 32,
+                "message_fingerprint": hashlib.sha256(bytes.fromhex("ab" * 32)).hexdigest(),
+            }
+        },
     ):
         assert sign_control(net, "signer-a", "report", execution | mutation)[0] == 409
     assert sign_control(net, "signer-b", "abort", execution)[0] == 200
     assert sign_control(net, "signer-a", "report", execution, "signer-b")[0] == 403
+
+
+def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(auxiliary_network):
+    import subprocess
+
+    from test_cggmp import bind_wire
+
+    net = auxiliary_network
+    context = binding()
+    result = execute(net, context)
+    auxiliary = {
+        "dkg": context,
+        "execution_id": str(uuid.uuid4()),
+        "group_public_key": result["group_public_key"],
+        "public_key_package": result["participant_agreement"][0]["public_key_package"],
+    }
+    assert aux_control(net, "signer-a", "prepare", auxiliary)[0] == 200
+    transcript = hashlib.sha256(json.dumps(auxiliary, separators=(",", ":")).encode()).hexdigest()
+
+    def wire(byte, sequence):
+        fixture = json.loads(subprocess.check_output([str(net.bin / "examples" / "cggmp_aux_message_fixture"), str(byte)]))
+        return bind_wire({
+            "logical_session_id": context["session_id"],
+            "crypto_execution_id": auxiliary["execution_id"],
+            "keyset_id": context["keyset_id"],
+            "protocol": f"CGGMP24_AUX:{transcript}/broadcast",
+            "sender": "signer-b",
+            "recipient": "signer-a",
+            "round": fixture["round"],
+            "sequence": sequence,
+            "payload": list(json.dumps(fixture["msg"], separators=(",", ":")).encode()),
+            "payload_digest": "",
+        })
+
+    def inject(role, message):
+        return request(net, "signer-a", role, "/internal/v1/cggmp/aux/message", message)[0]
+
+    assert inject("signer-b", wire(42, 0)) == 200
+    assert inject("signer-b", wire(42, 0)) == 409
+    assert inject("signer-b", wire(43, 0)) == 409
+    assert inject("signer-b", wire(42, 1)) == 409
+    assert inject("signer-b", wire(43, 1)) == 200
+    for mutation in (
+        {"sender": "signer-c"}, {"recipient": "signer-c"}, {"round": 99}, {"sequence": 256},
+        {"crypto_execution_id": str(uuid.uuid4())}, {"logical_session_id": str(uuid.uuid4())},
+        {"keyset_id": str(uuid.uuid4())}, {"protocol": "CGGMP24_AUX:wrong/broadcast"},
+    ):
+        assert inject("signer-b", bind_wire(wire(44, 2) | mutation)) == 409
+    assert inject("coordinator", wire(44, 2)) == 403
+    assert inject("signer-b", wire(44, 2) | {"payload_digest": "00" * 32}) == 409
+    net.stop("signer-a")
+    net.start("signer-a")
+    assert inject("signer-b", wire(44, 2)) == 409
+    assert aux_control(net, "signer-a", "start", auxiliary)[0] == 409
+    assert aux_control(net, "signer-a", "prepare", auxiliary | {"execution_id": str(uuid.uuid4())})[0] == 409

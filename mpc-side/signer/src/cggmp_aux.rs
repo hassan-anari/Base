@@ -62,6 +62,7 @@ struct Active {
     sender: mpsc::Sender<ProtocolEnvelope>,
     receiver: Option<mpsc::Receiver<ProtocolEnvelope>>,
     seen: BTreeSet<(String, u64)>,
+    seen_payload: BTreeSet<(String, u16, String)>,
     task: Option<JoinHandle<()>>,
     prime_permit: Option<OwnedSemaphorePermit>,
 }
@@ -301,6 +302,7 @@ impl AuxService {
                     sender,
                     receiver: Some(receiver),
                     seen: BTreeSet::new(),
+                    seen_payload: BTreeSet::new(),
                     task: None,
                     prime_permit: Some(prime_permit),
                 },
@@ -378,16 +380,21 @@ impl AuxService {
         let result = tokio::time::timeout(TIMEOUT, async {
             // No fixtures, cached primes or other signers' primes enter the service.
             let started = Instant::now();
-            let primes = tokio::task::spawn_blocking(move || {
+            let (primes, prime_permit) = tokio::task::spawn_blocking(move || {
                 // Aborting the async task cannot kill a blocking prime calculation.
                 // Its capacity permit stays here until the calculation actually ends.
-                let _permit = prime_permit;
-                PregeneratedPrimes::<cggmp24::security_level::SecurityLevel128>::generate(
-                    &mut rand_core::OsRng,
-                )
+                let primes = PregeneratedPrimes::<cggmp24::security_level::SecurityLevel128>::generate(&mut rand_core::OsRng);
+                (primes, prime_permit)
             })
             .await?;
             let prime_generation_ms = u64::try_from(started.elapsed().as_millis())?;
+            {
+                let mut local = self.local.lock().await;
+                let mut report = local.reports.get(&request.dkg.keyset_id).context("lost auxiliary report")?.clone();
+                report.prime_generation_ms = Some(prime_generation_ms);
+                local.save(&report)?; local.reports.insert(request.dkg.keyset_id, report);
+            }
+            eprintln!("CGGMP auxiliary fresh primes generated: milliseconds={prime_generation_ms}");
             let index = PARTIES
                 .iter()
                 .position(|p| *p == party)
@@ -402,7 +409,13 @@ impl AuxService {
                 message_path: "/internal/v1/cggmp/aux/message".into(),
                 message_budget: 256,
             };
-            let aux = cggmp24::aux_info_gen(
+            let peers = self.peers.clone();
+            let worker_party = party.clone();
+            let aux = tokio::task::spawn_blocking(move || {
+                let _permit = prime_permit;
+                tokio::runtime::Handle::current().block_on(async move {
+                    tokio::time::timeout(TIMEOUT, async move {
+                    cggmp24::aux_info_gen(
                 cggmp24::ExecutionId::new(transcript.as_bytes()),
                 index,
                 3,
@@ -412,12 +425,15 @@ impl AuxService {
                 &mut rand_core::OsRng,
                 MpcParty::connected(protocol_delivery::<Msg>(
                     context,
-                    party.clone(),
-                    self.peers.clone(),
+                    worker_party,
+                    peers,
                     inbox,
                 )),
             )
-            .await?;
+            .await
+                    }).await.context("auxiliary proof timeout")?.map_err(anyhow::Error::from)
+                })
+            }).await??;
             let _public_fingerprint = fingerprint(&aux)?;
             let blob = AuxBlob {
                 format_version: 1,
@@ -508,8 +524,9 @@ impl AuxService {
             .context("lost auxiliary inbox")?;
         // Upstream may send distinct messages in the SAME round. Sequence, not round,
         // is the unique delivery identity; both exact and conflicting duplicates fail.
+        let payload_identity = (peer.into(), wire.round, hex(&Sha256::digest(&wire.payload)));
         ensure!(
-            !active.seen.contains(&(peer.into(), wire.sequence)),
+            !active.seen.contains(&(peer.into(), wire.sequence)) && !active.seen_payload.contains(&payload_identity),
             "duplicate auxiliary message"
         );
         active
@@ -517,6 +534,7 @@ impl AuxService {
             .try_send(wire.clone())
             .context("full auxiliary inbox")?;
         active.seen.insert((peer.into(), wire.sequence));
+        active.seen_payload.insert(payload_identity);
         Ok(())
     }
 }

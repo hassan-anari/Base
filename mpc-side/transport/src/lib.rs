@@ -8,7 +8,7 @@ use axum::{
     response::Response,
     Router,
 };
-use http_body_util::{BodyExt, Empty, Limited};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use rustls::{
@@ -144,13 +144,13 @@ impl TlsConfig {
 async fn authorize(
     request: Request,
     next: Next,
-    allowed: &'static str,
+    allowed: &'static [&'static str],
 ) -> Result<Response, StatusCode> {
-    if request
+    if !request
         .extensions()
         .get::<PeerIdentity>()
         .map(PeerIdentity::role)
-        != Some(allowed)
+        .is_some_and(|role| allowed.contains(&role))
     {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -163,6 +163,20 @@ pub async fn serve(
     config: Arc<ServerConfig>,
     app: Router,
     allowed: &'static str,
+) -> Result<()> {
+    let roles: &'static [&'static str] = match allowed {
+        "custody" => &["custody"],
+        "coordinator" => &["coordinator"],
+        _ => anyhow::bail!("unknown listener authorization"),
+    };
+    serve_roles(bind, config, app, roles).await
+}
+
+pub async fn serve_roles(
+    bind: SocketAddr,
+    config: Arc<ServerConfig>,
+    app: Router,
+    allowed: &'static [&'static str],
 ) -> Result<()> {
     let listener = TcpListener::bind(bind).await?;
     let acceptor = TlsAcceptor::from(config);
@@ -235,6 +249,11 @@ impl Drop for AbortOnDrop {
 
 impl SignerClient {
     pub fn from_env(tls: &TlsConfig) -> Result<Self> {
+        Self::from_env_for(tls, "coordinator")
+    }
+
+    pub fn from_env_for(tls: &TlsConfig, local_role: &str) -> Result<Self> {
+        ensure!(ROLES.contains(&local_role), "unknown local role");
         let mut targets = Vec::new();
         for (role, suffix) in [("signer-a", "A"), ("signer-b", "B"), ("signer-c", "C")] {
             targets.push((
@@ -244,7 +263,7 @@ impl SignerClient {
             ));
         }
         Ok(Self {
-            tls: tls.client("coordinator")?,
+            tls: tls.client(local_role)?,
             targets,
         })
     }
@@ -257,7 +276,57 @@ impl SignerClient {
         Ok(output)
     }
 
-    async fn fetch(&self, role: &str, addr: SocketAddr, name: &str) -> Result<Capabilities> {
+    pub async fn request(
+        &self,
+        role: &str,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>> {
+        let (_, addr, name) = self
+            .targets
+            .iter()
+            .find(|(r, _, _)| r == role)
+            .context("unconfigured signer destination")?;
+        timeout(
+            Duration::from_secs(5),
+            self.exchange(role, *addr, name, method, path, body),
+        )
+        .await?
+    }
+
+    async fn fetch(&self, role: &str, _addr: SocketAddr, _name: &str) -> Result<Capabilities> {
+        let body = self
+            .request(role, "GET", "/internal/v1/capabilities", vec![])
+            .await?;
+        let metadata: Capabilities = serde_json::from_slice(&body)?;
+        ensure!(
+            metadata.signer_identity == role
+                && metadata.protocol_version == PROTOCOL_VERSION
+                && metadata.service_ready,
+            "signer capability contract mismatch"
+        );
+        ensure!(
+            !metadata.supported_algorithms.is_empty()
+                && metadata
+                    .supported_algorithms
+                    .iter()
+                    .all(|a| matches!(a.as_str(), "CGGMP24_ECDSA" | "FROST_ED25519")),
+            "invalid capability algorithms"
+        );
+        Ok(metadata)
+    }
+
+    async fn exchange(
+        &self,
+        role: &str,
+        addr: SocketAddr,
+        name: &str,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>> {
+        ensure!(body.len() <= 64 * 1024, "protocol request too large");
         let socket = tokio::net::TcpStream::connect(addr).await?;
         let stream = TlsConnector::from(self.tls.clone())
             .connect(ServerName::try_from(name.to_owned())?, socket)
@@ -278,39 +347,22 @@ impl SignerClient {
             let _ = connection.await;
         }));
         // Abort the HTTP driver even when a response or bounded body read fails.
-        let result = async {
-            let request = hyper::Request::builder()
-                .uri("/internal/v1/capabilities")
-                .header("Host", name)
-                .body(Empty::<Bytes>::new())?;
-            let response = sender.send_request(request).await?;
-            ensure!(
-                response.status() == StatusCode::OK,
-                "signer capability request rejected"
-            );
-            let body = Limited::new(response.into_body(), 16 * 1024)
-                .collect()
-                .await
-                .map_err(|error| anyhow::anyhow!("{error}"))?
-                .to_bytes();
-            let metadata: Capabilities = serde_json::from_slice(&body)?;
-            ensure!(
-                metadata.signer_identity == role
-                    && metadata.protocol_version == PROTOCOL_VERSION
-                    && metadata.service_ready,
-                "signer capability contract mismatch"
-            );
-            ensure!(
-                !metadata.supported_algorithms.is_empty()
-                    && metadata
-                        .supported_algorithms
-                        .iter()
-                        .all(|a| matches!(a.as_str(), "CGGMP24_ECDSA" | "FROST_ED25519")),
-                "invalid capability algorithms"
-            );
-            Ok(metadata)
-        }
-        .await;
-        result
+        let request = hyper::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Host", name)
+            .header("Content-Type", "application/json")
+            .body(Full::new(Bytes::from(body)))?;
+        let response = sender.send_request(request).await?;
+        ensure!(
+            response.status() == StatusCode::OK,
+            "signer request rejected"
+        );
+        let body = Limited::new(response.into_body(), 64 * 1024)
+            .collect()
+            .await
+            .map_err(|_| anyhow::anyhow!("invalid signer response"))?
+            .to_bytes();
+        Ok(body.to_vec())
     }
 }

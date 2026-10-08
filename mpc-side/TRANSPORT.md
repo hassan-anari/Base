@@ -1,10 +1,11 @@
-# Phase 6B secure transport
+# Secure transport (Phase 6B, extended for Phase 6C.1)
 
-Transport only. Operational MPC signing remains disabled (`custody.E011` and the
-runtime guard remain intact). CREATED is durable metadata, not a signature or a
-distributed protocol execution. `signable` stays false, including when all three
-signers are reachable. No DKG, share exchange, wallet provisioning, blockchain
-assembly, CGGMP or FROST network execution is added here.
+Operational MPC signing remains disabled (`custody.E011` and the runtime guard
+remain intact). Signing CREATED is durable metadata; `signable` stays false.
+Phase 6C.1 adds direct signer FROST DKG and encrypted local key packages using
+this transport. See [the distributed DKG guide](DKG.md) for its API, recovery
+rules and real-process acceptance gate. Wallet provisioning, blockchain assembly,
+CGGMP network execution and FROST signing remain outside this milestone.
 
 ## Authentication boundary
 
@@ -24,17 +25,17 @@ authorization inspect the leaf certificate. Exactly one URI SAN is required:
 | Certificate URI SAN | Authorized role |
 | --- | --- |
 | `spiffe://wallet-mpc/custody` | Coordinator custody API, including health |
-| `spiffe://wallet-mpc/coordinator` | Signer internal capabilities |
-| `spiffe://wallet-mpc/signer-a` | Signer A identity; no custody/internal API access |
-| `spiffe://wallet-mpc/signer-b` | Signer B identity; no custody/internal API access |
-| `spiffe://wallet-mpc/signer-c` | Signer C identity; no custody/internal API access |
+| `spiffe://wallet-mpc/coordinator` | Signer capabilities and public DKG controls |
+| `spiffe://wallet-mpc/signer-a` | Signer A: directed DKG messages only |
+| `spiffe://wallet-mpc/signer-b` | Signer B: directed DKG messages only |
+| `spiffe://wallet-mpc/signer-c` | Signer C: directed DKG messages only |
 
 Unknown or ambiguous URI identities fail closed. CN, JSON and HTTP headers do
 not authorize a caller. Every server route and fallback is role protected.
 Startup compares the local certificate identity to the configured service role;
 Signer A cannot be configured as B using A's certificate. The coordinator checks
 each destination's URI identity against its configured signer, independently of
-DNS verification, before sending the capability request. Django verifies both
+DNS verification, before sending any request. Django verifies both
 the coordinator hostname and its URI SAN before sending an HTTP request.
 
 Django uses Python's standard verified HTTPSConnection with TLS 1.3 bounds,
@@ -44,7 +45,7 @@ the guarded production adapter factory still rejects `self_hosted_mpc`.
 
 TLS session resumption is disabled, so each connection authenticates its peer
 afresh. Rust connections have handshake/header/body lifetime and concurrency
-bounds, and signer responses have a 16 KiB limit. Configuration is loaded at
+bounds, and protocol requests/responses have a 64 KiB limit. Configuration is loaded at
 startup; restart services after replacing CA/certificate files. Issuance and
 rotation are operator responsibilities; automated PKI/CRL distribution is outside
 this transport milestone. No service receives the CA private key.
@@ -71,11 +72,11 @@ UUID idempotency are unchanged.
 ## Configuration
 
 Both Rust services require `MPC_BIND_ADDR`, `MPC_TLS_CA`, `MPC_TLS_CERT`,
-`MPC_TLS_KEY`. The coordinator also requires `MPC_SIGNER_{A,B,C}_ADDR` (numeric
+`MPC_TLS_KEY`. The coordinator and each signer also require `MPC_SIGNER_{A,B,C}_ADDR` (numeric
 IP:port) and `MPC_SIGNER_{A,B,C}_SERVER_NAME` (certificate DNS name), plus private
-`MPC_COORDINATOR_STATE`. Signers retain Phase 6A's party, trusted-peer, storage,
-algorithm and wrapping-key settings. The fixed transport URI mapping does not
-use the foundation's trusted-peer configuration to grant alternate API roles.
+`MPC_COORDINATOR_STATE` on the coordinator. Signers retain Phase 6A's party, trusted-peer, storage,
+algorithm and wrapping-key settings. DKG additionally requires exact trusted-peer mappings for the coordinator and all
+three signers. The fixed URI mapping never grants alternate API roles.
 
 The explicit `MPC_INSECURE_LOCAL_DEV=true` option still binds only 127.0.0.1:8080.
 TLS configuration failure never enters that branch. The integration environment
@@ -89,8 +90,8 @@ From the repository root, in a Python virtual environment:
 pip install -r backend-side/requirements.txt
 export MPC_SIGNER_BACKEND=local_key CUSTODY_DEMO_MODE=true CUSTODY_TX_MODE=stub
 export CUSTODY_INDEXER_MODE=stub LOCAL_KEY_ENCRYPTION_PASSPHRASE=transport-test-only
-cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer
-pytest -v mpc-side/integration/test_network.py
+cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture
+pytest -v mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py
 ```
 
 The suite generates a fresh private test CA and distinct P-256 certificates,
@@ -101,7 +102,9 @@ No in-process application or transport mock is used. Tests cover CREATED's
 exact response, UUID retries/conflicts, all-process restart durability, all five
 roles, absent/foreign/expired/unknown/ambiguous certificates, wrong trust store,
 TLS 1.2, caller header spoofing, destination DNS and signer substitution.
-The `mpc-network` GitHub Actions job runs this same suite. All original CI jobs
+The DKG suite adds real upstream rounds, local encrypted persistence, restart
+reload, binding/replay rejection and incomplete execution recovery.
+The `mpc-network` GitHub Actions job runs both suites. All original CI jobs
 remain present.
 
 ## Reproduce separately mounted services
@@ -136,5 +139,5 @@ Django custody cert -> localhost:8443 [coordinator 172.28.6.11]
 ```
 
 Every arrow uses TLS 1.3 mTLS; only the coordinator port is published to host
-loopback. The Docker transport network is internal. Each signer returns only
-non-secret metadata.
+loopback. The Docker transport network is internal. Each signer returns only non-secret metadata to the coordinator. Directed DKG
+packages travel separately between signer peers over mTLS.

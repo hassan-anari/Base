@@ -155,8 +155,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend-side/requirements.txt
       - run: pip install -r backend-side/requirements.txt
-      - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer
-      - run: pytest -v mpc-side/integration/test_network.py
+      - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture
+      - run: pytest -v mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py
       - run: ruff format --check backend-side/custody/mpc_transport.py mpc-side/integration
       - run: ruff check backend-side/custody/mpc_transport.py mpc-side/integration
 

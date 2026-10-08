@@ -137,13 +137,13 @@ def configure(root, *, compose=False):
             "MPC_TLS_CERT": str(identity / "tls.crt"),
             "MPC_TLS_KEY": str(identity / "tls.key"),
         }
+        for signer_index, suffix in enumerate("ABC", start=1):
+            signer = f"signer-{suffix.lower()}"
+            addr = f"172.28.6.{11 + signer_index}" if compose else "127.0.0.1"
+            env[f"MPC_SIGNER_{suffix}_ADDR"] = f"{addr}:{ports[signer]}"
+            env[f"MPC_SIGNER_{suffix}_SERVER_NAME"] = signer if compose else "localhost"
         if role == "coordinator":
             env["MPC_COORDINATOR_STATE"] = str(storage / "coordinator.json")
-            for signer_index, suffix in enumerate("ABC", start=1):
-                signer = f"signer-{suffix.lower()}"
-                addr = f"172.28.6.{11 + signer_index}" if compose else "127.0.0.1"
-                env[f"MPC_SIGNER_{suffix}_ADDR"] = f"{addr}:{ports[signer]}"
-                env[f"MPC_SIGNER_{suffix}_SERVER_NAME"] = signer if compose else "localhost"
         else:
             private_file(node / "identity" / "wrapping.key", os.urandom(32))
             env.update(
@@ -152,7 +152,7 @@ def configure(root, *, compose=False):
                 MPC_SHARE_STORAGE_DIR=str(storage),
                 MPC_WRAPPING_KEY_FILE=str(identity / "wrapping.key"),
                 MPC_SUPPORTED_ALGORITHMS="CGGMP24_ECDSA,FROST_ED25519",
-                MPC_TRUSTED_PEERS="spiffe://wallet-mpc/coordinator=coordinator",
+                MPC_TRUSTED_PEERS=",".join(f"spiffe://wallet-mpc/{p}={p}" for p in ROLES[:4]),
             )
         configs[role] = env
         private_file(

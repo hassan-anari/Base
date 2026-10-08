@@ -67,19 +67,11 @@ pub struct SignSession {
     pub error_code: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DkgRequest {
-    pub session_id: Uuid,
-    pub execution_id: Uuid,
-    pub keyset_id: Uuid,
-    pub algorithm: String,
-    pub curve: String,
-    pub scope: String,
-    pub derivation_version: String,
-    pub threshold: u16,
-    pub party_count: u16,
-    pub participants: Vec<String>,
-}
+pub use wallet_mpc_protocol::dkg::DkgRequest;
+use wallet_mpc_protocol::dkg::{DkgReport, PARTIES};
+
+mod dkg;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DkgSession {
     #[serde(flatten)]
@@ -87,6 +79,8 @@ pub struct DkgSession {
     pub status: SessionStatus,
     pub group_public_key: Option<String>,
     pub result_fingerprint: Option<String>,
+    #[serde(default)]
+    pub participant_agreement: Vec<DkgReport>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -139,7 +133,7 @@ impl DurableStore {
             metadata.mode() & 0o077 == 0,
             "coordinator state directory must be private"
         );
-        let data = if path.exists() {
+        let mut data: Database = if path.exists() {
             let state_metadata = fs::symlink_metadata(&path)?;
             ensure!(
                 state_metadata.is_file(),
@@ -157,13 +151,30 @@ impl DurableStore {
         } else {
             Database::default()
         };
-        Ok(Self {
+        let mut recovered = false;
+        for session in data.dkg.values_mut() {
+            if matches!(
+                session.status,
+                SessionStatus::Starting | SessionStatus::InProgress
+            ) {
+                session.status = SessionStatus::ReconciliationRequired;
+                recovered = true;
+            }
+        }
+        let mut store = Self {
             path,
             data: Mutex::new(data),
             durability_uncertain: Mutex::new(BTreeSet::new()),
             #[cfg(test)]
             fault: std::sync::atomic::AtomicU8::new(0),
-        })
+        };
+        if recovered {
+            wallet_mpc_storage::atomic_replace_state(
+                &store.path,
+                &serde_json::to_vec(store.data.get_mut())?,
+            )?;
+        }
+        Ok(store)
     }
     async fn persist(&self, data: &Database) -> Result<(), PersistError> {
         let parent = self.path.parent().ok_or(PersistError::PreCommit)?;
@@ -273,7 +284,8 @@ impl DurableStore {
         let participants: BTreeSet<_> = request.participants.iter().map(String::as_str).collect();
         let topology_valid = request.threshold == 2
             && request.party_count == 3
-            && participants == BTreeSet::from(["signer-a", "signer-b", "signer-c"]);
+            && participants == BTreeSet::from(["signer-a", "signer-b", "signer-c"])
+            && request.participants.len() == 3;
         let algorithm_valid = match request.scope.as_str() {
             "EVM" | "TRON" => {
                 request.algorithm == "CGGMP24_ECDSA"
@@ -287,7 +299,10 @@ impl DurableStore {
             }
             _ => false,
         };
-        if !topology_valid || !algorithm_valid {
+        if !topology_valid
+            || !algorithm_valid
+            || (request.algorithm == "FROST_ED25519" && !request.is_frost())
+        {
             return Err(StoreError::Invalid);
         }
         let mut data = self.data.lock().await;
@@ -306,11 +321,18 @@ impl DurableStore {
                 Err(StoreError::Conflict)
             };
         }
+        if data.dkg.values().any(|s| {
+            s.request.keyset_id == request.keyset_id
+                || s.request.execution_id == request.execution_id
+        }) {
+            return Err(StoreError::Conflict);
+        }
         let session = DkgSession {
             request: request.clone(),
             status: SessionStatus::Created,
             group_public_key: None,
             result_fingerprint: None,
+            participant_agreement: vec![],
         };
         data.dkg.insert(request.session_id, session.clone());
         match self.persist(&data).await {
@@ -486,7 +508,8 @@ pub fn network_app(
     store: Arc<DurableStore>,
     signers: wallet_mpc_transport::SignerClient,
 ) -> Router {
-    base_app(store).route("/v1/health/quorum", get(move || {
+    let dkg_app = dkg::router(store.clone(), signers.clone());
+    base_app(store).merge(dkg_app).route("/v1/health/quorum", get(move || {
         let signers = signers.clone();
         async move {
             match signers.capabilities().await {

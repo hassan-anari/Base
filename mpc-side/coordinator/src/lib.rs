@@ -478,6 +478,26 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 pub fn app(store: Arc<DurableStore>) -> Router {
+    base_app(store).route("/v1/health/quorum", get(quorum))
+}
+
+/// Reachability metadata only. Never changes session status or dispatches signing.
+pub fn network_app(
+    store: Arc<DurableStore>,
+    signers: wallet_mpc_transport::SignerClient,
+) -> Router {
+    base_app(store).route("/v1/health/quorum", get(move || {
+        let signers = signers.clone();
+        async move {
+            match signers.capabilities().await {
+                Ok(metadata) => Ok(Json(serde_json::json!({"healthy":metadata.len(),"required":2,"party_count":3,"signable":false,"signers":metadata}))),
+                Err(_) => Err((StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error":"authenticated signer capabilities unavailable"})))),
+            }
+        }
+    }))
+}
+
+fn base_app(store: Arc<DurableStore>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/sign-sessions", post(create_sign))
@@ -486,7 +506,6 @@ pub fn app(store: Arc<DurableStore>) -> Router {
         .route("/v1/dkg-sessions/{id}", get(get_dkg))
         .route("/v1/keysets/{id}", get(get_keyset))
         .route("/v1/keysets/{id}/public-key", get(get_public_key))
-        .route("/v1/health/quorum", get(quorum))
         .with_state(store)
 }
 

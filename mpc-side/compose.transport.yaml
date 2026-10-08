@@ -1,0 +1,55 @@
+# Development only: one independent process and isolated mount per service.
+# Generate configs first using integration/environment.py --compose.
+services:
+  coordinator:
+    build: {context: ., args: {BINARY: wallet-mpc-coordinator}}
+    user: "${MPC_DEV_UID:?set host UID}:${MPC_DEV_GID:?set host GID}"
+    env_file: "${MPC_TRANSPORT_DIR:?generate test identities}/coordinator/service.env"
+    ports: ["127.0.0.1:8443:8443"]
+    volumes:
+      - "${MPC_TRANSPORT_DIR}/coordinator/identity:/run/identity:ro"
+      - "${MPC_TRANSPORT_DIR}/coordinator/storage:/data"
+    networks:
+      transport: {ipv4_address: 172.28.6.11}
+      ingress: {}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  signer-a:
+    build: {context: ., args: {BINARY: wallet-mpc-signer}}
+    user: "${MPC_DEV_UID}:${MPC_DEV_GID}"
+    env_file: "${MPC_TRANSPORT_DIR}/signer-a/service.env"
+    volumes:
+      - "${MPC_TRANSPORT_DIR}/signer-a/identity:/run/identity:ro"
+      - "${MPC_TRANSPORT_DIR}/signer-a/storage:/data"
+    networks: {transport: {ipv4_address: 172.28.6.12}}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  signer-b:
+    build: {context: ., args: {BINARY: wallet-mpc-signer}}
+    user: "${MPC_DEV_UID}:${MPC_DEV_GID}"
+    env_file: "${MPC_TRANSPORT_DIR}/signer-b/service.env"
+    volumes:
+      - "${MPC_TRANSPORT_DIR}/signer-b/identity:/run/identity:ro"
+      - "${MPC_TRANSPORT_DIR}/signer-b/storage:/data"
+    networks: {transport: {ipv4_address: 172.28.6.13}}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  signer-c:
+    build: {context: ., args: {BINARY: wallet-mpc-signer}}
+    user: "${MPC_DEV_UID}:${MPC_DEV_GID}"
+    env_file: "${MPC_TRANSPORT_DIR}/signer-c/service.env"
+    volumes:
+      - "${MPC_TRANSPORT_DIR}/signer-c/identity:/run/identity:ro"
+      - "${MPC_TRANSPORT_DIR}/signer-c/storage:/data"
+    networks: {transport: {ipv4_address: 172.28.6.14}}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+networks:
+  ingress: {}
+  transport:
+    internal: true
+    ipam: {config: [{subnet: 172.28.6.0/24}]}

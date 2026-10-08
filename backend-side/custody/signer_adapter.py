@@ -151,21 +151,11 @@ class SelfHostedMpcAdapter:
     """Client for our mTLS-only coordinator; it never handles private material."""
 
     def _request(self, method: str, path: str, **kwargs):
-        import requests
-        from django.conf import settings
+        from .mpc_transport import coordinator_request
 
-        response = requests.request(
-            method,
-            settings.MPC_COORDINATOR_URL.rstrip("/") + path,
-            cert=(settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY),
-            verify=settings.MPC_CA_CERT,
-            timeout=settings.MPC_REQUEST_TIMEOUT_SECONDS,
-            **kwargs,
+        return coordinator_request(
+            method, path, json_payload=kwargs.get("json"), params=kwargs.get("params")
         )
-        if response.status_code == 404:
-            raise CoordinatorSessionNotFound(path)
-        response.raise_for_status()
-        return response.json()
 
     def get_derived_address(self, network: str, path: str) -> str:
         data = self._request("GET", "/v1/derive", params={"chain": network, "path": path})

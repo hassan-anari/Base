@@ -271,3 +271,130 @@ def test_core_only_keyset_cannot_claim_signing_completion(cggmp_network):
         )[1]["signature"]
         is None
     )
+
+
+def message_fixture(net, context):
+    import subprocess
+
+    fixture = json.loads(
+        subprocess.check_output(
+            [str(net.bin / "examples" / "cggmp_round1_fixture"), json.dumps(context)], timeout=10
+        )
+    )
+    payload = json.dumps(fixture["msg"], separators=(",", ":")).encode()
+    tag = hashlib.sha256(json.dumps(context, separators=(",", ":")).encode()).hexdigest()
+    wire = {
+        "logical_session_id": context["session_id"],
+        "crypto_execution_id": context["execution_id"],
+        "keyset_id": context["keyset_id"],
+        "protocol": f"CGGMP24_KEYGEN:{tag}/broadcast",
+        "sender": "signer-b",
+        "recipient": "signer-a",
+        "round": fixture["round"],
+        "sequence": 0,
+        "payload": list(payload),
+        "payload_digest": "",
+    }
+    return bind_wire(wire)
+
+
+def bind_wire(wire):
+    import struct
+
+    digest = hashlib.sha256(b"wallet-mpc/protocol-envelope/v1\0")
+    fields = [
+        b"phase6-v1",
+        uuid.UUID(wire["logical_session_id"]).bytes,
+        uuid.UUID(wire["crypto_execution_id"]).bytes,
+        uuid.UUID(wire["keyset_id"]).bytes,
+        wire["protocol"].encode(),
+        wire["sender"].encode(),
+        wire["recipient"].encode(),
+        struct.pack(">H", wire["round"]),
+        struct.pack(">Q", wire["sequence"]),
+        bytes(wire["payload"]),
+    ]
+    for field in fields:
+        digest.update(struct.pack(">Q", len(field)))
+        digest.update(field)
+    wire["payload_digest"] = digest.hexdigest()
+    return wire
+
+
+def inject(net, role, wire):
+    return request(net, "signer-a", role, "/internal/v1/cggmp/keygen/message", wire)
+
+
+def test_exact_conflicting_and_new_sequence_round_replays(cggmp_network):
+    net = cggmp_network
+    context = binding()
+    assert control(net, "signer-a", "prepare", context)[0] == 200
+    wire = message_fixture(net, context)
+    assert inject(net, "signer-b", wire)[0] == 200
+    assert inject(net, "signer-b", wire)[0] == 409
+    conflict = message_fixture(net, context)
+    assert conflict["payload"] != wire["payload"]
+    assert inject(net, "signer-b", conflict)[0] == 409
+    assert inject(net, "signer-b", bind_wire(wire | {"sequence": 1}))[0] == 409
+    net.stop("signer-a")
+    net.start("signer-a")
+    assert inject(net, "signer-b", wire)[0] == 409
+    assert control(net, "signer-a", "start", context)[0] == 409
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sender": "signer-c"},
+        {"recipient": "signer-c"},
+        {"logical_session_id": str(uuid.uuid4())},
+        {"crypto_execution_id": str(uuid.uuid4())},
+        {"keyset_id": str(uuid.uuid4())},
+        {"protocol": "CGGMP24_KEYGEN:wrong/broadcast"},
+        {"round": 100},
+        {"sequence": 64},
+    ],
+)
+def test_authenticated_protocol_binding_is_immutable(cggmp_network, change):
+    net = cggmp_network
+    context = binding()
+    assert control(net, "signer-a", "prepare", context)[0] == 200
+    wire = message_fixture(net, context)
+    assert inject(net, "signer-b", bind_wire(wire | change))[0] == 409
+    assert inject(net, "coordinator", wire)[0] == 403
+    assert inject(net, "custody", wire)[0] == 403
+    assert inject(net, "signer-b", wire | {"payload_digest": "0" * 64})[0] == 409
+    assert inject(net, "signer-b", wire)[0] == 200
+
+
+def test_interrupted_keygen_never_substitutes_new_execution(cggmp_network):
+    net = cggmp_network
+    context = binding()
+    assert create(net, context)[0] == 200
+    for party in PARTIES:
+        assert control(net, party, "prepare", context)[0] == 200
+    assert control(net, "signer-a", "start", context)[0] == 200
+    net.stop("signer-a")
+    net.start("signer-a")
+    assert control(net, "signer-a", "report", context)[1]["status"] == "RECONCILIATION_REQUIRED"
+    assert control(net, "signer-a", "start", context)[0] == 409
+    assert (
+        control(net, "signer-a", "prepare", context | {"execution_id": str(uuid.uuid4())})[0] == 409
+    )
+    assert advance(net, context)[0] == 200
+    assert wait_keygen(net, context)["status"] == "RECONCILIATION_REQUIRED"
+    assert advance(net, context)[0] == 409
+    assert all(not list((net.root / p / "storage").glob("*.share.enc")) for p in PARTIES)
+
+
+def test_coordinator_rejects_tampered_public_completion_on_restart(cggmp_network):
+    net = cggmp_network
+    context = binding()
+    execute(net, context)
+    net.stop("coordinator")
+    path = net.root / "coordinator" / "storage" / "coordinator.json"
+    data = json.loads(path.read_text())
+    data["dkg"][context["session_id"]]["result_fingerprint"] = "0" * 64
+    path.write_text(json.dumps(data))
+    with pytest.raises(RuntimeError, match="stored CGGMP result mismatch"):
+        net.start("coordinator")

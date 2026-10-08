@@ -383,16 +383,24 @@ impl AuxService {
             let (primes, prime_permit) = tokio::task::spawn_blocking(move || {
                 // Aborting the async task cannot kill a blocking prime calculation.
                 // Its capacity permit stays here until the calculation actually ends.
-                let primes = PregeneratedPrimes::<cggmp24::security_level::SecurityLevel128>::generate(&mut rand_core::OsRng);
+                let primes =
+                    PregeneratedPrimes::<cggmp24::security_level::SecurityLevel128>::generate(
+                        &mut rand_core::OsRng,
+                    );
                 (primes, prime_permit)
             })
             .await?;
             let prime_generation_ms = u64::try_from(started.elapsed().as_millis())?;
             {
                 let mut local = self.local.lock().await;
-                let mut report = local.reports.get(&request.dkg.keyset_id).context("lost auxiliary report")?.clone();
+                let mut report = local
+                    .reports
+                    .get(&request.dkg.keyset_id)
+                    .context("lost auxiliary report")?
+                    .clone();
                 report.prime_generation_ms = Some(prime_generation_ms);
-                local.save(&report)?; local.reports.insert(request.dkg.keyset_id, report);
+                local.save(&report)?;
+                local.reports.insert(request.dkg.keyset_id, report);
             }
             eprintln!("CGGMP auxiliary fresh primes generated: milliseconds={prime_generation_ms}");
             let index = PARTIES
@@ -415,25 +423,29 @@ impl AuxService {
                 let _permit = prime_permit;
                 tokio::runtime::Handle::current().block_on(async move {
                     tokio::time::timeout(TIMEOUT, async move {
-                    cggmp24::aux_info_gen(
-                cggmp24::ExecutionId::new(transcript.as_bytes()),
-                index,
-                3,
-                primes,
-            )
-            .start(
-                &mut rand_core::OsRng,
-                MpcParty::connected(protocol_delivery::<Msg>(
-                    context,
-                    worker_party,
-                    peers,
-                    inbox,
-                )),
-            )
-            .await
-                    }).await.context("auxiliary proof timeout")?.map_err(anyhow::Error::from)
+                        cggmp24::aux_info_gen(
+                            cggmp24::ExecutionId::new(transcript.as_bytes()),
+                            index,
+                            3,
+                            primes,
+                        )
+                        .start(
+                            &mut rand_core::OsRng,
+                            MpcParty::connected(protocol_delivery::<Msg>(
+                                context,
+                                worker_party,
+                                peers,
+                                inbox,
+                            )),
+                        )
+                        .await
+                    })
+                    .await
+                    .context("auxiliary proof timeout")?
+                    .map_err(anyhow::Error::from)
                 })
-            }).await??;
+            })
+            .await??;
             let _public_fingerprint = fingerprint(&aux)?;
             let blob = AuxBlob {
                 format_version: 1,
@@ -526,7 +538,8 @@ impl AuxService {
         // is the unique delivery identity; both exact and conflicting duplicates fail.
         let payload_identity = (peer.into(), wire.round, hex(&Sha256::digest(&wire.payload)));
         ensure!(
-            !active.seen.contains(&(peer.into(), wire.sequence)) && !active.seen_payload.contains(&payload_identity),
+            !active.seen.contains(&(peer.into(), wire.sequence))
+                && !active.seen_payload.contains(&payload_identity),
             "duplicate auxiliary message"
         );
         active

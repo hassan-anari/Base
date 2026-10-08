@@ -231,8 +231,8 @@ def signing_request(net, payload_type="EVM_LEGACY_DIGEST", digest=None):
         "payload_hex": digest.hex(),
         "message_fingerprint": hashlib.sha256(digest).hexdigest(),
         "operation_type": "WITHDRAWAL",
-        "chain": "ETH",
-        "asset": "ETH",
+        "chain": "TRON" if scope == "TRON" else "ETH",
+        "asset": "TRX" if scope == "TRON" else "ETH",
         "expected_source": address,
         "derivation_reference": None,
     }
@@ -310,6 +310,8 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
         assert state["status"] == "COMPLETED", state
         assert state["selected_signers"] == list(pair)
         verify_independently(net, context, state)
+        net.completed_sign_context = context
+        net.completed_sign_state = state
         net.stop("coordinator")
         net.start("coordinator")
         assert advance_sign(net, context) == (200, state)
@@ -482,19 +484,25 @@ def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(
     transcript = hashlib.sha256(json.dumps(auxiliary, separators=(",", ":")).encode()).hexdigest()
 
     def wire(byte, sequence):
-        fixture = json.loads(subprocess.check_output([str(net.bin / "examples" / "cggmp_aux_message_fixture"), str(byte)]))
-        return bind_wire({
-            "logical_session_id": context["session_id"],
-            "crypto_execution_id": auxiliary["execution_id"],
-            "keyset_id": context["keyset_id"],
-            "protocol": f"CGGMP24_AUX:{transcript}/broadcast",
-            "sender": "signer-b",
-            "recipient": "signer-a",
-            "round": fixture["round"],
-            "sequence": sequence,
-            "payload": list(json.dumps(fixture["msg"], separators=(",", ":")).encode()),
-            "payload_digest": "",
-        })
+        fixture = json.loads(
+            subprocess.check_output(
+                [str(net.bin / "examples" / "cggmp_aux_message_fixture"), str(byte)]
+            )
+        )
+        return bind_wire(
+            {
+                "logical_session_id": context["session_id"],
+                "crypto_execution_id": auxiliary["execution_id"],
+                "keyset_id": context["keyset_id"],
+                "protocol": f"CGGMP24_AUX:{transcript}/broadcast",
+                "sender": "signer-b",
+                "recipient": "signer-a",
+                "round": fixture["round"],
+                "sequence": sequence,
+                "payload": list(json.dumps(fixture["msg"], separators=(",", ":")).encode()),
+                "payload_digest": "",
+            }
+        )
 
     def inject(role, message):
         return request(net, "signer-a", role, "/internal/v1/cggmp/aux/message", message)[0]
@@ -505,9 +513,14 @@ def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(
     assert inject("signer-b", wire(42, 1)) == 409
     assert inject("signer-b", wire(43, 1)) == 200
     for mutation in (
-        {"sender": "signer-c"}, {"recipient": "signer-c"}, {"round": 99}, {"sequence": 256},
-        {"crypto_execution_id": str(uuid.uuid4())}, {"logical_session_id": str(uuid.uuid4())},
-        {"keyset_id": str(uuid.uuid4())}, {"protocol": "CGGMP24_AUX:wrong/broadcast"},
+        {"sender": "signer-c"},
+        {"recipient": "signer-c"},
+        {"round": 99},
+        {"sequence": 256},
+        {"crypto_execution_id": str(uuid.uuid4())},
+        {"logical_session_id": str(uuid.uuid4())},
+        {"keyset_id": str(uuid.uuid4())},
+        {"protocol": "CGGMP24_AUX:wrong/broadcast"},
     ):
         assert inject("signer-b", bind_wire(wire(44, 2) | mutation)) == 409
     assert inject("coordinator", wire(44, 2)) == 403
@@ -516,4 +529,226 @@ def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(
     net.start("signer-a")
     assert inject("signer-b", wire(44, 2)) == 409
     assert aux_control(net, "signer-a", "start", auxiliary)[0] == 409
-    assert aux_control(net, "signer-a", "prepare", auxiliary | {"execution_id": str(uuid.uuid4())})[0] == 409
+    assert (
+        aux_control(net, "signer-a", "prepare", auxiliary | {"execution_id": str(uuid.uuid4())})[0]
+        == 409
+    )
+
+
+@pytest.fixture(scope="module")
+def tron_auxiliary_network(tmp_path_factory):
+    net = Processes(tmp_path_factory.mktemp("cggmp-tron") / "services")
+    try:
+        for role in ROLES[:4]:
+            net.start(role)
+        context = binding("TRON")
+        execute(net, context)
+        started = time.monotonic()
+        assert advance_aux(net, context)[0] == 200
+        while time.monotonic() < started + 1815:
+            state = get_keyset(net, context)
+            if state["auxiliary"]["status"] != "IN_PROGRESS":
+                break
+            time.sleep(1)
+        else:
+            pytest.fail("TRON fresh auxiliary protocol exceeded bounded deadline")
+        if state["auxiliary"]["status"] != "AUXILIARY_COMPLETED":
+            for party in PARTIES:
+                print(party, (net.root / party / "service.log").read_text())
+        assert state["auxiliary"]["status"] == "AUXILIARY_COMPLETED", state
+        costs = {r["party_id"]: r["prime_generation_ms"] for r in state["auxiliary"]["participant_agreement"]}
+        print(f"TRON fresh prime milliseconds: {costs}; total {time.monotonic() - started:.3f}s")
+        net.aux_context, net.aux_state = context, state
+        yield net
+    finally:
+        net.close()
+
+
+@pytest.mark.parametrize("pair", [("signer-a", "signer-b"), ("signer-a", "signer-c"), ("signer-b", "signer-c")])
+def test_tron_exact_txid_all_pairs(tron_auxiliary_network, pair):
+    net = tron_auxiliary_network
+    # The custody input is the already computed raw_data hash, passed unchanged.
+    txid = hashlib.sha256(b"custody TRON raw_data contract" + uuid.uuid4().bytes).digest()
+    context = signing_request(net, digest=txid)
+    assert context["payload_type"] == "TRON_TXID" and context["chain"] == "TRON"
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    offline = next(p for p in PARTIES if p not in pair)
+    net.stop(offline)
+    try:
+        assert advance_sign(net, context)[0] == 200
+        state = wait_sign(net, context)
+        assert state["status"] == "COMPLETED", state
+        assert state["selected_signers"] == list(pair)
+        verify_independently(net, context, state)
+    finally:
+        net.start(offline)
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_existing_evm_custody_digest_contract(auxiliary_network, typed):
+    from custody.mpc_payload import evm_signing_digest
+
+    net = auxiliary_network
+    unsigned = {
+        "nonce": 0, "gas": 21000, "to": "0x" + "11" * 20,
+        "value": 1, "data": b"", "chainId": 1,
+    }
+    if typed:
+        unsigned |= {"maxFeePerGas": 2_000_000_000, "maxPriorityFeePerGas": 1_000_000_000}
+    else:
+        unsigned["gasPrice"] = 1_000_000_000
+    payload_type, digest = evm_signing_digest(unsigned)
+    context = signing_request(net, payload_type, digest)
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    assert advance_sign(net, context)[0] == 200
+    state = wait_sign(net, context)
+    assert state["status"] == "COMPLETED", state
+    verify_independently(net, context, state)
+
+
+def test_missing_auxiliary_material_is_ineligible(auxiliary_network):
+    net = auxiliary_network
+    context = signing_request(net)
+    execution = {
+        "request": context, "crypto_execution_id": str(uuid.uuid4()),
+        "selected_signers": ["signer-a", "signer-b"], "auxiliary": net.aux_state["auxiliary"]["request"],
+    }
+    path = net.root / "signer-a" / "storage" / "cggmp-aux" / f"{net.aux_context['keyset_id']}.share.enc"
+    hidden = path.with_suffix(".unavailable")
+    path.rename(hidden)
+    try:
+        assert sign_control(net, "signer-a", "probe", execution)[0] == 409
+        assert sign_control(net, "signer-a", "prepare", execution)[0] == 409
+        assert not (net.root / "signer-a" / "storage" / "cggmp-signing" / f"{context['session_id']}.json").exists()
+    finally:
+        hidden.rename(path)
+
+
+def test_conflicting_signer_completion_rejected_on_restart(auxiliary_network):
+    net = auxiliary_network
+    context = net.completed_sign_context
+    party = net.completed_sign_state["selected_signers"][0]
+    path = net.root / party / "storage" / "cggmp-signing" / f"{context['session_id']}.completed"
+    net.stop(party)
+    saved = path.read_bytes()
+    try:
+        data = json.loads(saved)
+        data["signature"]["r"] = "00" * 32
+        path.write_text(json.dumps(data))
+        with pytest.raises(RuntimeError, match="CGGMP signing recovery failed"):
+            net.start(party)
+    finally:
+        net.stop(party)
+        path.write_bytes(saved)
+        net.start(party)
+
+
+def signing_wire(net, execution, byte, sequence):
+    import subprocess
+
+    from test_cggmp import bind_wire
+
+    fixture = json.loads(subprocess.check_output([
+        str(net.bin / "examples" / "cggmp_aux_message_fixture"), str(byte), "sign",
+    ]))
+    transcript = hashlib.sha256(json.dumps(execution, separators=(",", ":")).encode()).hexdigest()
+    return bind_wire({
+        "logical_session_id": execution["request"]["session_id"],
+        "crypto_execution_id": execution["crypto_execution_id"],
+        "keyset_id": execution["request"]["keyset_id"],
+        "protocol": f"CGGMP24_SIGN:{transcript}/broadcast",
+        "sender": "signer-b", "recipient": "signer-a", "round": fixture["round"], "sequence": sequence,
+        "payload": list(json.dumps(fixture["msg"], separators=(",", ":")).encode()), "payload_digest": "",
+    })
+
+
+def test_signing_transport_replay_and_invalid_partial_signature(auxiliary_network):
+    from test_cggmp import bind_wire
+
+    net = auxiliary_network
+    context = signing_request(net)
+    status, state = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200
+    execution = {
+        "request": context, "crypto_execution_id": state["crypto_execution_id"],
+        "selected_signers": ["signer-a", "signer-b"], "auxiliary": net.aux_state["auxiliary"]["request"],
+    }
+    for party in execution["selected_signers"]:
+        assert sign_control(net, party, "prepare", execution)[0] == 200
+    message_path = "/internal/v1/cggmp/sign/message"
+    forged = signing_wire(net, execution, 42, 200)
+    assert request(net, "signer-a", "signer-b", message_path, forged)[0] == 200
+    assert request(net, "signer-a", "signer-b", message_path, forged)[0] == 409
+    conflict = signing_wire(net, execution, 43, 200)
+    assert request(net, "signer-a", "signer-b", message_path, conflict)[0] == 409
+    replay = signing_wire(net, execution, 42, 201)
+    assert request(net, "signer-a", "signer-b", message_path, replay)[0] == 409
+    for mutation in (
+        {"sender": "signer-c"}, {"recipient": "signer-c"}, {"round": 99}, {"sequence": 256},
+        {"crypto_execution_id": str(uuid.uuid4())}, {"logical_session_id": str(uuid.uuid4())},
+        {"keyset_id": str(uuid.uuid4())}, {"protocol": "CGGMP24_SIGN:wrong/broadcast"},
+    ):
+        changed = bind_wire(signing_wire(net, execution, 44, 202) | mutation)
+        assert request(net, "signer-a", "signer-b", message_path, changed)[0] == 409
+    assert request(net, "signer-a", "coordinator", message_path, forged)[0] == 403
+    for party in execution["selected_signers"]:
+        assert sign_control(net, party, "start", execution)[0] == 200
+    deadline = time.monotonic() + 185
+    while time.monotonic() < deadline:
+        code, report = sign_control(net, "signer-a", "report", execution)
+        assert code == 200
+        if report["status"] != "IN_PROGRESS":
+            break
+        time.sleep(0.1)
+    assert report["status"] == "RECONCILIATION_REQUIRED" and report["signature"] is None
+    # Attempting dispatch/recovery cannot overwrite the original consumed execution.
+    assert advance_sign(net, context)[0] == 200
+    uncertain = wait_sign(net, context)
+    assert uncertain["crypto_execution_id"] == state["crypto_execution_id"]
+    assert uncertain["status"] == "RECONCILIATION_REQUIRED" and uncertain["signature"] is None
+    assert advance_sign(net, context)[0] == 409
+    assert advance_sign(net, context, "reconcile")[0] == 409
+    for party in execution["selected_signers"]:
+        sign_control(net, party, "abort", execution)
+
+
+def test_coordinator_restart_reconciles_existing_public_signature(auxiliary_network):
+    net = auxiliary_network
+    context = signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest())
+    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    assert advance_sign(net, context)[0] == 200
+    deadline = time.monotonic() + 205
+    while time.monotonic() < deadline:
+        state = sign_state(net, context)
+        if state["status"] == "COMPLETED":
+            break
+        if state["selected_signers"] and all(
+            (net.root / p / "storage" / "cggmp-signing" / f"{state['crypto_execution_id']}.consumed").exists()
+            for p in state["selected_signers"]
+        ):
+            break
+        time.sleep(0.01)
+    execution = {
+        "request": context, "crypto_execution_id": state["crypto_execution_id"],
+        "selected_signers": state["selected_signers"], "auxiliary": net.aux_state["auxiliary"]["request"],
+    }
+    net.stop("coordinator")
+    try:
+        while time.monotonic() < deadline:
+            reports = [sign_control(net, p, "report", execution) for p in state["selected_signers"]]
+            if all(code == 200 and report["status"] == "COMPLETED" for code, report in reports):
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("signers did not persist public completion with coordinator offline")
+    finally:
+        net.start("coordinator")
+    reopened = sign_state(net, context)
+    assert reopened["crypto_execution_id"] == state["crypto_execution_id"]
+    if reopened["status"] == "RECONCILIATION_REQUIRED":
+        assert advance_sign(net, context)[0] == 409
+        status, reopened = advance_sign(net, context, "reconcile")
+        assert status == 200
+    assert reopened["status"] == "COMPLETED"
+    verify_independently(net, context, reopened)
+    assert advance_sign(net, context) == (200, reopened)

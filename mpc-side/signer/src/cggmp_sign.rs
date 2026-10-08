@@ -448,7 +448,8 @@ impl SigningService {
             .context("lost signing state")?;
         let payload_identity = (peer.into(), wire.round, hex(&Sha256::digest(&wire.payload)));
         ensure!(
-            !active.seen.contains(&(peer.into(), wire.sequence)) && !active.seen_payload.contains(&payload_identity),
+            !active.seen.contains(&(peer.into(), wire.sequence))
+                && !active.seen_payload.contains(&payload_identity),
             "duplicate signing message"
         );
         active

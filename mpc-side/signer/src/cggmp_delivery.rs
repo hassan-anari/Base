@@ -135,7 +135,12 @@ where
                     .request(&recipient, "POST", &request.message_path, body)
                     .await
                     .map_err(|error| {
-                        eprintln!("CGGMP peer delivery failed: round={} bytes={} timeout={}", wire.round, body_len, error.is::<tokio::time::error::Elapsed>());
+                        eprintln!(
+                            "CGGMP peer delivery failed: round={} bytes={} timeout={}",
+                            wire.round,
+                            body_len,
+                            error.is::<tokio::time::error::Elapsed>()
+                        );
                         io::Error::other("CGGMP peer delivery failed")
                     })?;
             }

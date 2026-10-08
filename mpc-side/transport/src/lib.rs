@@ -289,7 +289,15 @@ impl SignerClient {
             .find(|(r, _, _)| r == role)
             .context("unconfigured signer destination")?;
         timeout(
-            Duration::from_secs(if path.starts_with("/internal/v1/cggmp/aux/") || path.starts_with("/internal/v1/cggmp/sign/") { 30 } else { 5 }),
+            Duration::from_secs(
+                if path.starts_with("/internal/v1/cggmp/aux/")
+                    || path.starts_with("/internal/v1/cggmp/sign/")
+                {
+                    30
+                } else {
+                    5
+                },
+            ),
             self.exchange(role, *addr, name, method, path, body),
         )
         .await?

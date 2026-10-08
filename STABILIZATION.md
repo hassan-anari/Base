@@ -3,7 +3,8 @@
 This repository is **not a production MPC wallet**. `local_key` derives complete
 private keys in-process and its broadcasts are synthetic. It is allowed only when
 `CUSTODY_DEMO_MODE=true` and a non-empty `LOCAL_KEY_ENCRYPTION_PASSPHRASE` is set.
-The `mpc_vendor` adapter remains unimplemented and therefore fails closed.
+The Phase 6A `self_hosted_mpc` integration is a non-operational foundation and
+is intentionally rejected at startup and runtime. There is no SaaS fallback.
 
 Generated frontend distributions are not source controlled. CI builds both SPAs,
 and deployment packaging must build them into `backend-side/frontend_dist` and
@@ -29,3 +30,10 @@ automated reconciliation remain future integration work.
 * Resolve the currently reported frontend dependency audit findings (the local
   baseline reports one moderate and seven high findings) in a separate,
   dependency-focused change with UI regression testing.
+
+## Phase 6A signer foundation
+
+Compatibility and persistence primitives exist for a future separately deployed, self-hosted
+2-of-3 subsystem using CGGMP24 secp256k1 and FROST Ed25519. Networked signing and mTLS do not yet
+exist, so production MPC signing is disabled. `local_key` is demo-only and there is no SaaS signer
+fallback.

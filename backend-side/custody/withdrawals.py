@@ -136,6 +136,9 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
     req = WithdrawalRequest.objects.get(id=req_id)
     if req.status != "APPROVED":
         raise ValueError("withdrawal must be APPROVED before broadcast")
+    from .signer_adapter import assert_mpc_backend_runtime_safe
+
+    assert_mpc_backend_runtime_safe()
     validate_chain_asset(req.chain_id, req.asset_key, "withdrawal")
 
     claimed_by_this_call = False

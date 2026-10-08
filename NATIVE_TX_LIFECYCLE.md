@@ -122,3 +122,15 @@ Business orchestration now selects a transfer executor by both `chain_id` and
 select their reviewed standard executor. Reconciliation uses the same selection,
 so a token attempt can never be interpreted as a native transfer. All EVM
 executors share the source-account nonce allocator.
+
+## Phase 6 recoverable MPC signing
+
+Phase 6A contains isolated recovery primitives, but production `self_hosted_mpc` activation is
+intentionally disabled until authenticated service signing is implemented. In those primitives,
+`SIGNING` is a durable, recoverable state, not proof of failure. Before any coordinator call Django
+locks the PREPARED attempt, records its exact message fingerprint and random MPC session UUID,
+and commits both the signing session and SIGNING transition. Recovery queries/restarts that same
+idempotent coordinator session. It never allocates another chain nonce or signs rebuilt business
+JSON. Unknown/inconsistent outcomes require reconciliation; only authoritative terminal
+no-signature failure permits a fresh cryptographic execution. Assembly, own-RPC broadcast and
+reconciliation remain custody responsibilities.

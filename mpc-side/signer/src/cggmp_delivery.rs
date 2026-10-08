@@ -6,34 +6,66 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::io;
 use tokio::sync::mpsc;
 use wallet_mpc_protocol::dkg::DkgRequest;
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub(super) struct DeliveryContext {
+    pub logical_session_id: Uuid,
+    pub execution_id: Uuid,
+    pub keyset_id: Uuid,
+    pub participants: Vec<String>,
+    pub transcript: String,
+    pub message_path: String,
+    pub message_budget: u64,
+}
+
 use wallet_mpc_transport::SignerClient;
 use zeroize::Zeroizing;
 
 pub(super) fn delivery<M>(
-    request: DkgRequest,
-    own: String,
-    peers: SignerClient,
+    request: DkgRequest, own: String, peers: SignerClient,
     inbox: mpsc::Receiver<ProtocolEnvelope>,
 ) -> (
     impl Stream<Item = Result<Incoming<M>, io::Error>> + Unpin,
     impl Sink<Outgoing<M>, Error = io::Error> + Unpin,
 )
-where
-    M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
+where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
 {
+    let context = DeliveryContext {
+        logical_session_id: request.session_id,
+        execution_id: request.execution_id,
+        keyset_id: request.keyset_id,
+        participants: request.participants.clone(),
+        transcript: request.cggmp_transcript().expect("validated keygen request"),
+        message_path: "/internal/v1/cggmp/keygen/message".into(),
+        message_budget: 64,
+    };
+    protocol_delivery(context, own, peers, inbox)
+}
+
+pub(super) fn protocol_delivery<M>(
+    request: DeliveryContext, own: String, peers: SignerClient,
+    inbox: mpsc::Receiver<ProtocolEnvelope>,
+) -> (
+    impl Stream<Item = Result<Incoming<M>, io::Error>> + Unpin,
+    impl Sink<Outgoing<M>, Error = io::Error> + Unpin,
+)
+where M: Serialize + DeserializeOwned + ProtocolMessage + Send + 'static,
+{
+    let participants = request.participants.clone();
     let incoming = Box::pin(
         stream::unfold(inbox, |mut inbox| async move {
             inbox.recv().await.map(|msg| (msg, inbox))
         })
-        .map(|mut wire| {
+        .map(move |mut wire| {
             let payload = Zeroizing::new(std::mem::take(&mut wire.payload));
             let msg: M = serde_json::from_slice(&payload).map_err(io::Error::other)?;
-            let sender = wallet_mpc_protocol::dkg::PARTIES
+            let sender = participants
                 .iter()
-                .position(|p| *p == wire.sender)
+                .position(|p| p == &wire.sender)
                 .ok_or_else(|| io::Error::other("unknown sender"))? as u16;
             Ok(Incoming {
-                id: u64::from(sender) * 128 + wire.sequence,
+                id: u64::from(sender) * 1024 + wire.sequence,
                 sender,
                 msg_type: if wire.protocol.ends_with("/broadcast") {
                     MessageType::Broadcast
@@ -61,7 +93,7 @@ where
                     .ok_or_else(|| io::Error::other("invalid recipient"))?
                     .clone()],
             };
-            if sequence >= 64 {
+            if sequence >= request.message_budget {
                 return Err(io::Error::other("message budget exceeded"));
             }
             let payload =
@@ -71,12 +103,12 @@ where
                     return Err(io::Error::other("self message"));
                 }
                 let mut wire = ProtocolEnvelope {
-                    logical_session_id: request.session_id,
+                    logical_session_id: request.logical_session_id,
                     crypto_execution_id: request.execution_id,
                     keyset_id: request.keyset_id,
                     protocol: format!(
                         "{}/{}",
-                        request.cggmp_transcript().map_err(io::Error::other)?,
+                        request.transcript,
                         if broadcast { "broadcast" } else { "p2p" }
                     ),
                     sender: own.clone(),
@@ -94,7 +126,7 @@ where
                     .request(
                         &recipient,
                         "POST",
-                        "/internal/v1/cggmp/keygen/message",
+                        &request.message_path,
                         body,
                     )
                     .await

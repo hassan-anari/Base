@@ -74,8 +74,10 @@ async fn main() {
         let dkg =
             wallet_mpc_signer::dkg::DkgService::open(store, executions.clone(), peers.clone())
                 .expect("DKG recovery failed");
-        let cggmp = wallet_mpc_signer::cggmp::CggmpService::open(config, executions.clone(), peers)
+        let cggmp = wallet_mpc_signer::cggmp::CggmpService::open(config.clone(), executions.clone(), peers.clone())
             .expect("CGGMP keygen recovery failed");
+        let auxiliary = wallet_mpc_signer::cggmp_aux::AuxService::open(config, executions.clone(), peers)
+            .expect("CGGMP auxiliary recovery failed");
         let signing = wallet_mpc_signer::sign::SigningService::open(
             dkg.clone(),
             executions,
@@ -86,7 +88,8 @@ async fn main() {
         let app = app
             .merge(wallet_mpc_signer::dkg::router(dkg))
             .merge(wallet_mpc_signer::sign::router(signing))
-            .merge(wallet_mpc_signer::cggmp::router(cggmp));
+            .merge(wallet_mpc_signer::cggmp::router(cggmp))
+            .merge(wallet_mpc_signer::cggmp_aux::router(auxiliary));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");

@@ -40,11 +40,11 @@ type Msg = cggmp24::keygen::msg::threshold::Msg<
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CoreBlob {
-    format_version: u16,
-    kind: String,
-    request: DkgRequest,
-    core: Vec<u8>,
+pub(super) struct CoreBlob {
+    pub(super) format_version: u16,
+    pub(super) kind: String,
+    pub(super) request: DkgRequest,
+    pub(super) core: Vec<u8>,
 }
 impl Drop for CoreBlob {
     fn drop(&mut self) {
@@ -70,7 +70,7 @@ pub struct CggmpService {
     peers: SignerClient,
 }
 
-fn public_report(
+pub(super) fn public_report(
     request: &DkgRequest,
     party: &str,
     core: &IncompleteKeyShare<Secp256k1>,

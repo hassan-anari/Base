@@ -22,3 +22,8 @@ frost-ed25519 = { version = "=3.0.0", features = ["serialization"] }
 
 [profile.test]
 opt-level = 2
+
+# Safe-prime generation and upstream proof arithmetic must not run in an
+# unoptimized development build used by the real-process acceptance gate.
+[profile.dev.package."*"]
+opt-level = 3

@@ -19,7 +19,9 @@ impl DurableStore {
             return Err(StoreError::Conflict);
         }
         if status == SessionStatus::KeygenCompleted
-            && wallet_mpc_protocol::cggmp::verify_keygen_receipts(&previous.request, &agreement).is_err() {
+            && wallet_mpc_protocol::cggmp::verify_keygen_receipts(&previous.request, &agreement)
+                .is_err()
+        {
             return Err(StoreError::Invalid);
         }
         if previous.status == SessionStatus::KeygenCompleted {
@@ -28,7 +30,10 @@ impl DurableStore {
         let mut session = previous.clone();
         session.status = status;
         session.participant_agreement = agreement;
-        if matches!(session.status, SessionStatus::Completed | SessionStatus::KeygenCompleted) {
+        if matches!(
+            session.status,
+            SessionStatus::Completed | SessionStatus::KeygenCompleted
+        ) {
             session.group_public_key = session.participant_agreement[0].group_public_key.clone();
             session.result_fingerprint = Some(format!(
                 "{:x}",
@@ -139,7 +144,13 @@ impl Driver {
     async fn execute(&self, id: Uuid, reconcile: bool) -> Result<DkgSession, StoreError> {
         let session = self.store.get_dkg(id).await?.ok_or(StoreError::Invalid)?;
         if session.request.is_cggmp() {
-            return super::cggmp::execute(self.store.clone(), self.peers.clone(), session, reconcile).await;
+            return super::cggmp::execute(
+                self.store.clone(),
+                self.peers.clone(),
+                session,
+                reconcile,
+            )
+            .await;
         }
         let _serial = self.serial.lock().await;
         let session = self.store.get_dkg(id).await?.ok_or(StoreError::Invalid)?;

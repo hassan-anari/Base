@@ -163,12 +163,28 @@ impl DurableStore {
         }
         for session in data.dkg.values() {
             if session.status == SessionStatus::KeygenCompleted {
-                wallet_mpc_protocol::cggmp::verify_keygen_receipts(&session.request, &session.participant_agreement)?;
-                ensure!(session.group_public_key == session.participant_agreement[0].group_public_key,
-                    "stored CGGMP group mismatch");
-                ensure!(session.result_fingerprint.as_deref() == Some(format!("{:x}", Sha256::digest(
-                    serde_json::to_vec(&(&session.request, &session.participant_agreement))?)).as_str()),
-                    "stored CGGMP result mismatch");
+                wallet_mpc_protocol::cggmp::verify_keygen_receipts(
+                    &session.request,
+                    &session.participant_agreement,
+                )?;
+                ensure!(
+                    session.group_public_key == session.participant_agreement[0].group_public_key,
+                    "stored CGGMP group mismatch"
+                );
+                ensure!(
+                    session.result_fingerprint.as_deref()
+                        == Some(
+                            format!(
+                                "{:x}",
+                                Sha256::digest(serde_json::to_vec(&(
+                                    &session.request,
+                                    &session.participant_agreement
+                                ))?)
+                            )
+                            .as_str()
+                        ),
+                    "stored CGGMP result mismatch"
+                );
             }
         }
         for session in data.dkg.values_mut() {

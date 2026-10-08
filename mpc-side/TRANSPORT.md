@@ -1,11 +1,12 @@
 # Secure transport (Phase 6B, extended for Phase 6C.1)
 
-Operational MPC signing remains disabled (`custody.E011` and the runtime guard
-remain intact). Signing CREATED is durable metadata; `signable` stays false.
+Production MPC signing remains disabled (`custody.E011` and the runtime guard
+remain intact). Generic quorum `signable` stays false.
 Phase 6C.1 adds direct signer FROST DKG and encrypted local key packages using
 this transport. See [the distributed DKG guide](DKG.md) for its API, recovery
 rules and real-process acceptance gate. Wallet provisioning, blockchain assembly,
-CGGMP network execution and FROST signing remain outside this milestone.
+CGGMP network execution remain outside this milestone. Phase 6C.2 service FROST
+signing uses this same transport; see [SIGNING.md](SIGNING.md).
 
 ## Authentication boundary
 

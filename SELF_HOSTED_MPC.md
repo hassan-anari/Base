@@ -6,8 +6,12 @@ with its peers and retains only its own encrypted key package. The coordinator
 stores public metadata and three matching durable receipts. See [DKG.md](mpc-side/DKG.md)
 and [TRANSPORT.md](mpc-side/TRANSPORT.md) for current APIs, recovery and tests.
 
+Phase 6C.2 adds real two-signer FROST signing, public aggregation material,
+single-use nonces and durable result recovery over that transport. See
+[SIGNING.md](mpc-side/SIGNING.md) for the authenticated service API and acceptance gate.
+
 **Production MPC signing remains disabled.** `custody.E011` and the runtime guard
-remain unchanged. This milestone adds no signing, wallet provisioning, chain
+remain unchanged. This milestone adds no wallet provisioning, chain
 transaction assembly or production cutover. The Phase 6A sections below describe
 the historical foundation and future design, not a production deployment.
 

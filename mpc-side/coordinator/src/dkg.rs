@@ -46,23 +46,57 @@ impl DurableStore {
     }
 }
 
-fn unanimous(request: &DkgRequest, reports: &[DkgReport]) -> bool {
-    request.is_frost()
-        && reports.len() == 3
-        && reports.iter().zip(PARTIES).all(|(r, party)| {
-            r.request == *request
-                && r.party_id == party
-                && r.status == "COMPLETED"
-                && r.durable
-                && r.share_format_version == 1
-                && r.group_public_key == reports[0].group_public_key
-                && r.group_public_key.as_ref().is_some_and(|key| {
-                    key.len() == 64
-                        && key
-                            .bytes()
-                            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-                })
-        })
+pub(super) fn verified_public(
+    request: &DkgRequest,
+    reports: &[DkgReport],
+) -> anyhow::Result<frost_ed25519::keys::PublicKeyPackage> {
+    use frost_ed25519 as frost;
+    ensure!(
+        request.is_frost() && reports.len() == 3,
+        "incomplete DKG receipts"
+    );
+    let group = reports[0]
+        .group_public_key
+        .as_deref()
+        .context("missing group key")?;
+    let mut shares = BTreeMap::new();
+    for (report, party) in reports.iter().zip(PARTIES) {
+        ensure!(
+            report.request == *request
+                && report.party_id == party
+                && report.status == "COMPLETED"
+                && report.durable
+                && report.share_format_version == 1
+                && report.group_public_key.as_deref() == Some(group)
+                && report.public_key_package == reports[0].public_key_package,
+            "invalid DKG agreement"
+        );
+        shares.insert(
+            wallet_mpc_protocol::dkg::identifier(party).unwrap(),
+            frost::keys::VerifyingShare::deserialize(
+                report
+                    .verification_share
+                    .as_deref()
+                    .context("missing verification share")?,
+            )?,
+        );
+    }
+    // Legacy Phase 6C.1 packages can recover PUBLIC material from each authenticated
+    // signer's own verification share. No private share is sent or combined.
+    let public = frost::keys::PublicKeyPackage::new(
+        shares,
+        frost::VerifyingKey::deserialize(&decode_hex(group).context("invalid public key")?)?,
+        Some(2),
+    );
+    let bytes = public.serialize()?;
+    wallet_mpc_protocol::sign::public_package(&bytes, group)?;
+    if let Some(recorded) = &reports[0].public_key_package {
+        ensure!(*recorded == bytes, "public DKG metadata mismatch");
+    }
+    Ok(public)
+}
+pub(super) fn unanimous(request: &DkgRequest, reports: &[DkgReport]) -> bool {
+    verified_public(request, reports).is_ok()
 }
 
 struct Driver {
@@ -108,6 +142,19 @@ impl Driver {
             }
             if session.status == SessionStatus::Completed {
                 if receipts != session.participant_agreement {
+                    if session
+                        .participant_agreement
+                        .iter()
+                        .all(|r| r.verification_share.is_none())
+                        && receipts
+                            .iter()
+                            .all(|r| r.group_public_key == session.group_public_key)
+                    {
+                        return self
+                            .store
+                            .update_dkg(id, SessionStatus::Completed, receipts)
+                            .await;
+                    }
                     return Err(StoreError::Conflict);
                 }
                 return Ok(session);
@@ -225,6 +272,8 @@ mod tests {
                 status: "COMPLETED".into(),
                 share_format_version: 1,
                 group_public_key: Some("ab".repeat(32)),
+                public_key_package: None,
+                verification_share: None,
                 durable: true,
             })
             .collect();

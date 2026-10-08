@@ -4,7 +4,9 @@ Three independent `wallet-mpc-signer` processes (`signer-a`, `signer-b`,
 `signer-c`) run upstream `frost-ed25519 =3.0.0` `part1`, `part2`, and `part3`.
 The fixed FROST identifiers are 1, 2, and 3; the threshold is 2. There is no
 dealer, key reconstruction, network signing or custom threshold cryptography.
-The existing cryptographic compatibility tests remain intact.
+The existing cryptographic compatibility tests remain intact. Phase 6C.2 adds
+public aggregation material persistence and authenticated service signing on
+top of this DKG; see [SIGNING.md](SIGNING.md), including legacy public-material recovery.
 
 ## Run the acceptance gate
 

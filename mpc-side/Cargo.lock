@@ -213,6 +213,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1912,6 +1921,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "tokio"
 version = "1.47.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2090,6 +2105,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "frost-ed25519",
  "libc",
  "serde",
  "serde_json",
@@ -2106,6 +2122,8 @@ dependencies = [
 name = "wallet-mpc-protocol"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bs58",
  "cggmp24",
  "cggmp24-keygen",
  "frost-ed25519",

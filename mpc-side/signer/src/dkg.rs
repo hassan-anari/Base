@@ -51,6 +51,8 @@ struct KeyBlob {
     format_version: u16,
     request: DkgRequest,
     key_package: Vec<u8>,
+    #[serde(default)]
+    public_key_package: Option<Vec<u8>>,
 }
 impl Drop for KeyBlob {
     fn drop(&mut self) {
@@ -86,7 +88,10 @@ impl Local {
         )?;
         Ok(())
     }
-    fn loaded_public(&self, request: &DkgRequest) -> Result<String> {
+    fn loaded_key(
+        &self,
+        request: &DkgRequest,
+    ) -> Result<(frost::keys::KeyPackage, Option<Vec<u8>>)> {
         let share = self.store.load(request.keyset_id, ALGORITHM)?;
         let blob: KeyBlob = serde_json::from_slice(&share.protocol_share)?;
         ensure!(
@@ -101,6 +106,24 @@ impl Local {
                 && *key.min_signers() == 2,
             "FROST key package identity mismatch"
         );
+        ensure!(
+            frost::keys::VerifyingShare::from(*key.signing_share()) == *key.verifying_share(),
+            "private signing share mismatch"
+        );
+        if let Some(bytes) = &blob.public_key_package {
+            let public = wallet_mpc_protocol::sign::public_package(
+                bytes,
+                &hex(&key.verifying_key().serialize()?),
+            )?;
+            ensure!(
+                public.verifying_shares().get(key.identifier()) == Some(key.verifying_share()),
+                "private/public verification share mismatch"
+            );
+        }
+        Ok((key, blob.public_key_package.clone()))
+    }
+    fn loaded_public(&self, request: &DkgRequest) -> Result<String> {
+        let (key, _) = self.loaded_key(request)?;
         Ok(hex(&key.verifying_key().serialize()?))
     }
     fn report(&self, request: &DkgRequest) -> Result<DkgReport> {
@@ -115,6 +138,15 @@ impl Local {
                     && report.share_format_version == SHARE_FORMAT_VERSION
                     && report.group_public_key.as_ref() == Some(&self.loaded_public(request)?),
                 "persisted DKG result mismatch"
+            );
+            ensure!(
+                report.public_key_package == self.loaded_key(request)?.1,
+                "durable public package mismatch"
+            );
+            ensure!(
+                report.verification_share.as_ref()
+                    == Some(&self.loaded_key(request)?.0.verifying_share().serialize()?),
+                "verification share mismatch"
             );
             confirm_parent_durability(&self.store.path(request.keyset_id))?;
             confirm_parent_durability(&self.record_path(request.keyset_id))?;
@@ -144,6 +176,41 @@ impl Local {
 }
 
 impl DkgService {
+    pub async fn signing_key(
+        &self,
+        execution: &wallet_mpc_protocol::sign::SigningExecution,
+    ) -> Result<frost::keys::KeyPackage> {
+        execution.validate()?;
+        let local = self.local.lock().await;
+        ensure!(
+            local
+                .store
+                .config
+                .supported_algorithms
+                .iter()
+                .any(|a| a == ALGORITHM),
+            "algorithm unavailable"
+        );
+        let report = local.report(&execution.dkg)?;
+        ensure!(
+            report.status == "COMPLETED"
+                && report.durable
+                && (report.public_key_package.is_none()
+                    || report.public_key_package.as_ref() == Some(&execution.public_key_package))
+                && report.group_public_key.as_ref() == Some(&execution.group_public_key),
+            "signing evidence does not match completed DKG"
+        );
+        let key = local.loaded_key(&execution.dkg)?.0;
+        let public = wallet_mpc_protocol::sign::public_package(
+            &execution.public_key_package,
+            &execution.group_public_key,
+        )?;
+        ensure!(
+            public.verifying_shares().get(key.identifier()) == Some(key.verifying_share()),
+            "public verification share mismatch"
+        );
+        Ok(key)
+    }
     pub fn open(
         store: SignerStore,
         executions: ExecutionTombstones,
@@ -190,6 +257,16 @@ impl DkgService {
                 local.save(&report)?;
             }
             let request = report.request.clone();
+            if report.status == "COMPLETED" && report.verification_share.is_none() {
+                report.verification_share = Some(
+                    local
+                        .loaded_key(&request)?
+                        .0
+                        .verifying_share()
+                        .serialize()?,
+                );
+                local.save(&report)?;
+            }
             local.reports.insert(request.keyset_id, report);
             local.report(&request)?;
         }
@@ -238,6 +315,8 @@ impl DkgService {
                 status: "IN_PROGRESS".into(),
                 share_format_version: SHARE_FORMAT_VERSION,
                 group_public_key: None,
+                public_key_package: None,
+                verification_share: None,
                 durable: false,
             };
             // Reserve execution before generating any ephemeral randomness. The
@@ -294,6 +373,7 @@ impl DkgService {
                 format_version: SHARE_FORMAT_VERSION,
                 request: request.clone(),
                 key_package: key.serialize()?,
+                public_key_package: Some(public.serialize()?),
             };
             let share = StoredShare {
                 format_version: SHARE_FORMAT_VERSION,
@@ -311,6 +391,8 @@ impl DkgService {
             let mut completed = report;
             completed.status = "COMPLETED".into();
             completed.group_public_key = Some(hex(&public.verifying_key().serialize()?));
+            completed.public_key_package = Some(public.serialize()?);
+            completed.verification_share = Some(key.verifying_share().serialize()?);
             completed.durable = true;
             // If either state write fails, completion is not acknowledged. A
             // restart reconciles the encrypted package rather than rerunning DKG.

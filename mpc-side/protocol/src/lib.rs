@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub mod dkg;
+pub mod sign;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExecutionId(Uuid);

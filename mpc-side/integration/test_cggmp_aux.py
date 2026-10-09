@@ -233,6 +233,13 @@ def signing_request(net, payload_type="EVM_LEGACY_DIGEST", digest=None):
     address = (
         "0x" + keccak(PublicKey(bytes.fromhex(group)).format(compressed=False)[1:])[-20:].hex()
     )
+    scope = net.aux_context["scope"]
+    if scope == "TRON":
+        from tronpy.keys import PublicKey as TronPublicKey
+
+        raw_public = PublicKey(bytes.fromhex(group)).format(compressed=False)[1:]
+        address = TronPublicKey(raw_public).to_base58check_address()
+        payload_type = "TRON_TXID"
     digest = digest or bytes(range(32))
     return {
         "session_id": str(uuid.uuid4()),
@@ -521,12 +528,16 @@ def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(
 
     encoded = proof_wire(wire(42, 0))
     for malformed in (
-        encoded | {"wire_version": 2}, encoded | {"payload_base64": "!invalid!"},
+        encoded | {"wire_version": 2},
+        encoded | {"payload_base64": "!invalid!"},
         encoded | {"payload_base64": "AA==\n"},
         encoded | {"payload_base64": base64.b64encode(b"x" * (512 * 1024 + 1)).decode("ascii")},
         wire(42, 0),
     ):
-        assert request(net, "signer-a", "signer-b", "/internal/v1/cggmp/aux/message", malformed)[0] == 400
+        assert (
+            request(net, "signer-a", "signer-b", "/internal/v1/cggmp/aux/message", malformed)[0]
+            == 400
+        )
     assert inject("signer-b", wire(42, 0)) == 200
     assert inject("signer-b", wire(42, 0)) == 409
     assert inject("signer-b", wire(43, 0)) == 409
@@ -853,6 +864,11 @@ def test_partial_auxiliary_persistence_cannot_claim_readiness(tmp_path):
         assert advance_aux(net, context, "reconcile")[0] == 409
         assert get_keyset(net, context)["auxiliary"]["request"]["execution_id"] == execution_id
         assert aux_control(net, "signer-a", "prepare", auxiliary)[0] == 409
-        assert aux_control(net, "signer-a", "prepare", auxiliary | {"execution_id": str(uuid.uuid4())})[0] == 409
+        assert (
+            aux_control(
+                net, "signer-a", "prepare", auxiliary | {"execution_id": str(uuid.uuid4())}
+            )[0]
+            == 409
+        )
     finally:
         net.close()

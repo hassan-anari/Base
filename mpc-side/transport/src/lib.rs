@@ -381,7 +381,9 @@ impl SignerClient {
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(body)))?;
         let response = sender.send_request(request).await?;
-        if response.status() != StatusCode::OK { return Err(PeerHttpStatus(response.status()).into()); }
+        if response.status() != StatusCode::OK {
+            return Err(PeerHttpStatus(response.status()).into());
+        }
         let body = Limited::new(response.into_body(), limit)
             .collect()
             .await

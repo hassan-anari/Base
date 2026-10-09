@@ -129,7 +129,12 @@ where
                 wire.payload_digest = wire.transcript_digest();
                 let proof = request.message_path != "/internal/v1/cggmp/keygen/message";
                 let decoded_len = wire.payload.len();
-                let body = if proof { super::cggmp_wire::encode(&wire) } else { serde_json::to_vec(&wire).map_err(Into::into) }.map_err(io::Error::other)?;
+                let body = if proof {
+                    super::cggmp_wire::encode(&wire)
+                } else {
+                    serde_json::to_vec(&wire).map_err(Into::into)
+                }
+                .map_err(io::Error::other)?;
                 if proof {
                     eprintln!("CGGMP proof delivery: path={} round={} decoded_bytes={} http_bytes={} exceeded_old_payload_limit={}", request.message_path, wire.round, decoded_len, body.len(), decoded_len > 192 * 1024);
                 }

@@ -19,8 +19,8 @@ use zeroize::{Zeroize, Zeroizing};
 pub mod cggmp;
 pub mod cggmp_aux;
 mod cggmp_delivery;
-mod cggmp_wire;
 pub mod cggmp_sign;
+mod cggmp_wire;
 pub mod dkg;
 pub mod sign;
 

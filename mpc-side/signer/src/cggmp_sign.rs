@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, Mutex, Semaphore, OwnedSemaphorePermit},
+    sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
 };
 use uuid::Uuid;
@@ -223,7 +223,11 @@ impl SigningService {
                         .all(|r| r.execution.crypto_execution_id != execution.crypto_execution_id),
                 "signing already reserved or capacity exhausted"
             );
-            let permit = self.capacity.clone().try_acquire_owned().context("signing worker capacity exhausted")?;
+            let permit = self
+                .capacity
+                .clone()
+                .try_acquire_owned()
+                .context("signing worker capacity exhausted")?;
             // The exact pair, digest, logical session and auxiliary binding are reserved
             // durably before cryptographic nonce randomness is allowed.
             local.executions.begin(execution.crypto_execution_id)?;
@@ -297,7 +301,13 @@ impl SigningService {
             .receiver
             .take()
             .context("already started")?;
-        let permit = local.active.get_mut(&id).context("lost signing state")?.permit.take().context("lost signing capacity")?;
+        let permit = local
+            .active
+            .get_mut(&id)
+            .context("lost signing state")?
+            .permit
+            .take()
+            .context("lost signing capacity")?;
         let service = self.clone();
         let task = tokio::spawn(async move {
             service.run(execution, party, inbox, permit).await;
@@ -325,71 +335,74 @@ impl SigningService {
             let execution = worker_execution;
             let party = worker_party;
             tokio::runtime::Handle::current().block_on(async move {
-                    tokio::time::timeout(Duration::from_secs(180), async {
-            let digest = execution.validate()?;
-            let key = auxiliary.own_key(&execution.auxiliary).await?;
-            let index = execution
-                .selected_signers
-                .iter()
-                .position(|p| p == &party)
-                .context("unknown selected party")? as u16;
-            let original: Vec<u16> = execution
-                .selected_signers
-                .iter()
-                .map(|p| {
-                    PARTIES
+                tokio::time::timeout(Duration::from_secs(180), async {
+                    let digest = execution.validate()?;
+                    let key = auxiliary.own_key(&execution.auxiliary).await?;
+                    let index = execution
+                        .selected_signers
                         .iter()
-                        .position(|s| *s == p.as_str())
-                        .map(|i| i as u16)
-                        .context("unknown DKG party")
+                        .position(|p| p == &party)
+                        .context("unknown selected party")? as u16;
+                    let original: Vec<u16> = execution
+                        .selected_signers
+                        .iter()
+                        .map(|p| {
+                            PARTIES
+                                .iter()
+                                .position(|s| *s == p.as_str())
+                                .map(|i| i as u16)
+                                .context("unknown DKG party")
+                        })
+                        .collect::<Result<_>>()?;
+                    let transcript = execution.transcript()?;
+                    let context = DeliveryContext {
+                        logical_session_id: execution.request.session_id,
+                        execution_id: execution.crypto_execution_id,
+                        keyset_id: execution.request.keyset_id,
+                        participants: execution.selected_signers.clone(),
+                        transcript: transcript.clone(),
+                        message_path: "/internal/v1/cggmp/sign/message".into(),
+                        message_budget: 256,
+                    };
+                    // The pinned upstream full interactive protocol accepts AnyDataToSign.
+                    // Converting the custody prehash to a scalar does NOT hash it again.
+                    let message = PrehashedDataToSign::<Secp256k1>::from_scalar(
+                        Scalar::from_be_bytes_mod_order(digest),
+                    );
+                    let signature = cggmp24::signing(
+                        cggmp24::ExecutionId::new(transcript.as_bytes()),
+                        index,
+                        &original,
+                        &key,
+                    )
+                    .sign(
+                        &mut rand_core::OsRng,
+                        MpcParty::connected(protocol_delivery::<Msg>(
+                            context,
+                            party.clone(),
+                            peers,
+                            inbox,
+                        )),
+                        &message,
+                    )
+                    .await?
+                    .normalize_s();
+                    let mut bytes = [0u8; 64];
+                    signature.write_to_slice(&mut bytes);
+                    verified_signature(&execution, &bytes)
                 })
-                .collect::<Result<_>>()?;
-            let transcript = execution.transcript()?;
-            let context = DeliveryContext {
-                logical_session_id: execution.request.session_id,
-                execution_id: execution.crypto_execution_id,
-                keyset_id: execution.request.keyset_id,
-                participants: execution.selected_signers.clone(),
-                transcript: transcript.clone(),
-                message_path: "/internal/v1/cggmp/sign/message".into(),
-                message_budget: 256,
-            };
-            // The pinned upstream full interactive protocol accepts AnyDataToSign.
-            // Converting the custody prehash to a scalar does NOT hash it again.
-            let message = PrehashedDataToSign::<Secp256k1>::from_scalar(
-                Scalar::from_be_bytes_mod_order(digest),
-            );
-            let signature = cggmp24::signing(
-                cggmp24::ExecutionId::new(transcript.as_bytes()),
-                index,
-                &original,
-                &key,
-            )
-            .sign(
-                &mut rand_core::OsRng,
-                MpcParty::connected(protocol_delivery::<Msg>(
-                    context,
-                    party.clone(),
-                    peers,
-                    inbox,
-                )),
-                &message,
-            )
-            .await?
-            .normalize_s();
-            let mut bytes = [0u8; 64];
-            signature.write_to_slice(&mut bytes);
-            verified_signature(&execution, &bytes)
-        })
-        .await
+                .await
             })
-        }).await;
+        })
+        .await;
         let mut local = self.local.lock().await;
         if !local.active.contains_key(&execution.request.session_id) {
             return;
         }
         let persisted = (|| -> Result<()> {
-            let signature = outcome.context("signing worker failed")?.context("signing timeout")??;
+            let signature = outcome
+                .context("signing worker failed")?
+                .context("signing timeout")??;
             local
                 .executions
                 .require_active(execution.crypto_execution_id)?;
@@ -504,7 +517,10 @@ async fn receive(
         return Err(StatusCode::FORBIDDEN);
     }
     let wire = super::cggmp_wire::decode(&body).map_err(|_| {
-        eprintln!("CGGMP proof rejected: phase=cggmp_sign category=wire_encoding http_bytes={}", body.len());
+        eprintln!(
+            "CGGMP proof rejected: phase=cggmp_sign category=wire_encoding http_bytes={}",
+            body.len()
+        );
         StatusCode::BAD_REQUEST
     })?;
     service

@@ -315,11 +315,18 @@ impl AuxService {
             return Ok(report);
         }
         if action == "reconcile" {
-            if report.status == AUX_READY { return Ok(report); }
-            ensure!(report.status == "RECONCILIATION_REQUIRED" && !local.active.contains_key(&id), "auxiliary work is not quiescent");
+            if report.status == AUX_READY {
+                return Ok(report);
+            }
+            ensure!(
+                report.status == "RECONCILIATION_REQUIRED" && !local.active.contains_key(&id),
+                "auxiliary work is not quiescent"
+            );
             report = local.ready_report(&request)?;
             confirm_parent_durability(&local.aux_store.path(id))?;
-            local.save(&report)?; local.reports.insert(id, report.clone()); return Ok(report);
+            local.save(&report)?;
+            local.reports.insert(id, report.clone());
+            return Ok(report);
         }
         if action == "abort" {
             if report.status == AUX_READY {
@@ -583,7 +590,10 @@ async fn receive(
         return Err(StatusCode::FORBIDDEN);
     }
     let wire = super::cggmp_wire::decode(&body).map_err(|_| {
-        eprintln!("CGGMP proof rejected: phase=cggmp_aux category=wire_encoding http_bytes={}", body.len());
+        eprintln!(
+            "CGGMP proof rejected: phase=cggmp_aux category=wire_encoding http_bytes={}",
+            body.len()
+        );
         StatusCode::BAD_REQUEST
     })?;
     service

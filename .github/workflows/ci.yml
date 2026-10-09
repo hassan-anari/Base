@@ -207,7 +207,7 @@ jobs:
       CUSTODY_TX_MODE: stub
       CUSTODY_INDEXER_MODE: stub
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
-      PHASE6F_TRON_JAR: ${{ runner.temp }}/FullNode.jar
+      PHASE6F_TRON_JAR: /tmp/phase6f-FullNode.jar
     steps:
       - uses: actions/checkout@v4
         with:

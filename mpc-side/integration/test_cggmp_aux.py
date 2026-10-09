@@ -841,10 +841,19 @@ def test_partial_auxiliary_persistence_cannot_claim_readiness(tmp_path):
         core_path = net.root / "signer-a" / "storage" / f"{context['keyset_id']}.share.enc"
         core = core_path.read_bytes()
         artifact = net.root / "signer-a" / "storage" / "cggmp-aux" / core_path.name
-        # A conflicting immutable target simulates failed final persistence. The
-        # protocol still uses fresh primes and all three actual signer workers.
-        artifact.write_bytes(b"conflicting immutable auxiliary artifact")
         assert advance_aux(net, context)[0] == 200
+        auxiliary = get_keyset(net, context)["auxiliary"]["request"]
+        preparation_deadline = time.monotonic() + 30
+        while time.monotonic() < preparation_deadline:
+            reports = [aux_control(net, p, "report", auxiliary) for p in PARTIES]
+            if all(code == 200 and report["status"] == "IN_PROGRESS" for code, report in reports):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("all three auxiliary workers were not started")
+        # Inject only AFTER preparation, while fresh primes are being generated.
+        # The conflict then blocks final persistence, not initial reservation.
+        artifact.write_bytes(b"conflicting immutable auxiliary artifact")
         deadline = time.monotonic() + 1815
         while time.monotonic() < deadline:
             state = get_keyset(net, context)
@@ -857,6 +866,9 @@ def test_partial_auxiliary_persistence_cannot_claim_readiness(tmp_path):
         assert not state["auxiliary"]["internally_signable"]
         assert artifact.read_bytes() == b"conflicting immutable auxiliary artifact"
         assert core_path.read_bytes() == core
+        for party in PARTIES:
+            code, report = aux_control(net, party, "report", auxiliary)
+            assert code == 200 and report["prime_generation_ms"] > 0
         auxiliary = state["auxiliary"]["request"]
         execution_id = auxiliary["execution_id"]
         artifact.unlink()

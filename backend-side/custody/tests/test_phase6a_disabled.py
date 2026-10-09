@@ -40,7 +40,7 @@ def test_valid_looking_https_and_certificates_cannot_enable_phase6a():
             assert "custody.E011" in {error.id for error in errors}
             with (
                 patch("custody.signer_adapter._ADAPTER", None),
-                pytest.raises(RuntimeError, match="Phase 6A foundation only"),
+                pytest.raises(RuntimeError, match="production activation is disabled"),
             ):
                 get_adapter()
 
@@ -60,7 +60,7 @@ def test_runtime_guards_prevent_attempt_and_withdrawal_side_effects():
         amount=Decimal("1"),
         status="APPROVED",
     )
-    with pytest.raises(RuntimeError, match="Phase 6A foundation only"):
+    with pytest.raises(RuntimeError, match="production activation is disabled"):
         process_withdrawal("admin", request.pk)
     request.refresh_from_db()
     assert request.status == "APPROVED"
@@ -68,7 +68,7 @@ def test_runtime_guards_prevent_attempt_and_withdrawal_side_effects():
         operation_type="WITHDRAWAL", operation_id=request.pk
     ).exists()
 
-    with pytest.raises(RuntimeError, match="Phase 6A foundation only"):
+    with pytest.raises(RuntimeError, match="production activation is disabled"):
         execute_attempt(999_999, "admin")
 
 

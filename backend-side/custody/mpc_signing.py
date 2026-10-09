@@ -1,16 +1,46 @@
-"""Asynchronous, idempotent advancement of durable self-hosted MPC sessions."""
+"""Resumable advancement of one durable CGGMP execution for an approved EVM attempt."""
 
 from __future__ import annotations
 
 import hashlib
 import uuid
+from contextlib import contextmanager
 
-from django.db import transaction
+import requests
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
+from eth_keys.exceptions import BadSignature
+from eth_utils.exceptions import ValidationError
 
 from .models import MpcSigningSession, OnchainTransactionAttempt
+from .mpc_binding import (
+    identity_fingerprint,
+    local_root_keyset,
+    transaction_identity,
+    validate_custody_intent,
+    verify_coordinator_keyset,
+)
+from .mpc_payload import exact_signing_payload
 
 ACTIVE = {"CREATED", "STARTING", "IN_PROGRESS"}
+
+
+@contextmanager
+def attempt_execution_lock(attempt_id):
+    """Nonblocking PostgreSQL ownership; released automatically on worker death."""
+    if connection.vendor != "postgresql":
+        yield True
+        return
+    lock_id = 0x4D50430000000000 + int(attempt_id)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [lock_id])
+        acquired = cursor.fetchone()[0]
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_id])
 
 
 def coordinator_request(attempt, session) -> dict:
@@ -18,6 +48,20 @@ def coordinator_request(attempt, session) -> dict:
     fingerprint = hashlib.sha256(payload).hexdigest()
     if fingerprint != session.message_fingerprint:
         raise ValueError("persisted MPC signing payload fingerprint mismatch")
+    keyset = local_root_keyset(attempt)
+    if keyset.pk != session.keyset_id or session.algorithm != keyset.algorithm:
+        raise ValueError("persisted session/keyset binding mismatch")
+    validate_custody_intent(attempt)
+    identity = transaction_identity(attempt, keyset)
+    payload_type, digest = exact_signing_payload(attempt.chain_id, attempt.prepared_metadata, b"")
+    if (
+        len(payload) != 32
+        or digest != payload
+        or payload_type != session.payload_type
+        or identity != session.transaction_identity
+        or identity_fingerprint(identity) != session.coordinator_request_id
+    ):
+        raise ValueError("immutable MPC transaction identity or digest mismatch")
     return {
         "session_id": str(session.session_id),
         "attempt_id": attempt.pk,
@@ -29,202 +73,238 @@ def coordinator_request(attempt, session) -> dict:
         "operation_type": attempt.operation_type,
         "chain": attempt.chain_id,
         "asset": attempt.asset_key,
-        "expected_source": attempt.from_address,
-        "derivation_reference": _derivation_reference(attempt),
+        "expected_source": attempt.from_address.lower(),
+        "derivation_reference": None,
     }
 
 
 def _coordinator_identity_matches(expected: dict, result: dict) -> bool:
     actual = result.get("request", result)
-    fields = (
-        "session_id",
-        "attempt_id",
-        "keyset_id",
-        "algorithm",
-        "payload_type",
-        "payload_hex",
-        "message_fingerprint",
-        "operation_type",
-        "chain",
-        "asset",
-        "expected_source",
-        "derivation_reference",
-    )
-    return all(actual.get(field) == expected.get(field) for field in fields)
+    return all(field in actual and actual[field] == value for field, value in expected.items())
 
 
 def _execution_identity_matches(session, result: dict) -> bool:
-    status = result.get("status")
     execution = result.get("crypto_execution_id")
-    signers = result.get("selected_signers")
-    if status == "CREATED":
-        if signers:
-            return False
-        if not execution:
-            return session.crypto_execution_id is None
-        try:
-            execution = uuid.UUID(str(execution))
-        except ValueError:
-            return False
-        return session.crypto_execution_id in {None, execution}
-    if status == "STARTING":
-        if execution:
-            try:
-                execution = uuid.UUID(str(execution))
-            except ValueError:
-                return False
-            if session.crypto_execution_id and session.crypto_execution_id != execution:
-                return False
-        elif session.crypto_execution_id:
-            return False
-        if not signers:
-            return True
-        return _valid_selected_signers(session, signers)
-    if status not in {
-        "STARTING",
-        "IN_PROGRESS",
-        "COMPLETED",
-        "DEFINITIVE_NO_SIGNATURE_FAILURE",
-    }:
-        return False
-    if not execution:
-        return False
     try:
         execution = uuid.UUID(str(execution))
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         return False
-    if session.crypto_execution_id and session.crypto_execution_id != execution:
+    if (
+        execution.int == 0
+        or execution == session.keyset.dkg_execution_id
+        or session.crypto_execution_id not in {None, execution}
+    ):
         return False
-    if not _valid_selected_signers(session, signers):
+    signers = result.get("selected_signers")
+    if not isinstance(signers, list) or any(not isinstance(p, str) for p in signers):
         return False
     if session.selected_signers and session.selected_signers != signers:
         return False
-    return status != "COMPLETED" or bool(result.get("signature"))
-
-
-def _valid_selected_signers(session, signers) -> bool:
+    if result.get("status") == "CREATED":
+        return not signers and not session.selected_signers
+    if result.get("status") in {"STARTING", "RECONCILIATION_REQUIRED"} and not signers:
+        return not session.selected_signers
     return (
-        isinstance(signers, list)
-        and len(signers) == session.keyset.threshold
-        and len(signers) == len(set(signers))
+        len(signers) == 2
+        and signers == sorted(set(signers))
         and set(signers).issubset(set(session.keyset.participant_identities))
     )
 
 
-def _derivation_reference(attempt):
-    from .outbound import _signing_ref
+def mark_signing_uncertain(attempt_id, code):
+    from .outbound import sync_parent_state
 
-    return _signing_ref(attempt.operation_type, attempt.operation_id, attempt.chain_id)
-
-
-def _consume_completed(attempt_id, session_id, consumer):
     with transaction.atomic():
         attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
-        session = MpcSigningSession.objects.select_for_update().get(pk=session_id)
-        if attempt.status == "SIGNED" and session.signature_consumed_at:
+        if attempt.status not in {"SIGNING", "RECONCILIATION_REQUIRED"}:
             return attempt
+        MpcSigningSession.objects.filter(
+            attempt=attempt, signature_consumed_at__isnull=True
+        ).update(status="RECONCILIATION_REQUIRED", error_code=code)
+        attempt.status = "RECONCILIATION_REQUIRED"
+        attempt.error_code = code
+        attempt.save(update_fields=["status", "error_code", "updated_at"])
+        sync_parent_state(attempt)
+        return attempt
+
+
+def _default_consumer(attempt, session):
+    from eth_keys import keys
+
+    from .mpc_payload import assemble_evm_signature
+
+    coordinator_request(attempt, session)
+    result = session.signature_result
+    expected = {
+        "logical_session_id": str(session.session_id),
+        "crypto_execution_id": str(session.crypto_execution_id),
+        "keyset_id": str(session.keyset.keyset_id),
+        "selected_signers": session.selected_signers,
+        "algorithm": session.algorithm,
+        "payload_fingerprint": session.message_fingerprint,
+        "verified": True,
+    }
+    if (
+        any(result.get(k) != v for k, v in expected.items())
+        or not _execution_identity_matches(
+            session,
+            {
+                "status": "COMPLETED",
+                "crypto_execution_id": str(session.crypto_execution_id),
+                "selected_signers": session.selected_signers,
+            },
+        )
+        or type(result.get("recovery_id")) is not int
+        or result.get("y_parity") != result.get("recovery_id")
+        or len(result.get("r", "")) != 64
+        or len(result.get("s", "")) != 64
+        or result.get("signature_hex") != result["r"] + result["s"]
+    ):
+        raise ValueError("completed signature identity/encoding mismatch")
+    signed_payload, tx_id = assemble_evm_signature(
+        attempt.prepared_metadata, result, attempt.from_address
+    )
+    signature = keys.Signature(
+        vrs=(result["recovery_id"], int(result["r"], 16), int(result["s"], 16))
+    )
+    public = signature.recover_public_key_from_msg_hash(bytes(session.signing_payload))
+    if (
+        public.to_compressed_bytes().hex() != session.keyset.public_key
+        or not signature.verify_msg_hash(bytes(session.signing_payload), public)
+    ):
+        raise ValueError("signature does not recover the persisted DKG public key")
+    return signed_payload, tx_id
+
+
+def _consume_completed(attempt_id, session_id):
+    with transaction.atomic():
+        attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
+        session = (
+            MpcSigningSession.objects.select_for_update()
+            .select_related("keyset")
+            .get(pk=session_id)
+        )
+        if session.signature_consumed_at:
+            return attempt
+        if attempt.status not in {"SIGNING", "RECONCILIATION_REQUIRED"}:
+            raise ValueError("signature cannot be consumed in current attempt state")
         if session.status != "COMPLETED" or not session.signature_result:
             raise ValueError("completed MPC session has no signature result")
-        if consumer is None:
-            consumer = _default_consumer
-        signed_payload, network_tx_id = consumer(attempt, session)
-        attempt.signed_payload = signed_payload
-        attempt.network_tx_id = network_tx_id
-        attempt.status = "SIGNED"
-        attempt.save(update_fields=["signed_payload", "network_tx_id", "status", "updated_at"])
+        signed_payload, tx_id = _default_consumer(attempt, session)
+        attempt.signed_payload, attempt.network_tx_id, attempt.status = (
+            signed_payload,
+            tx_id,
+            "SIGNED",
+        )
+        attempt.error_code = ""
+        attempt.save(
+            update_fields=["signed_payload", "network_tx_id", "status", "error_code", "updated_at"]
+        )
         session.signature_consumed_at = timezone.now()
         session.save(update_fields=["signature_consumed_at"])
         return attempt
 
 
-def _default_consumer(attempt, session):
-    if session.payload_type not in {"EVM_LEGACY_DIGEST", "EVM_EIP1559_DIGEST"}:
-        raise ValueError("chain-specific MPC signature consumer is not implemented")
-    from .mpc_payload import assemble_evm_signature
-
-    return assemble_evm_signature(
-        attempt.prepared_metadata, session.signature_result, attempt.from_address
-    )
-
-
-def advance_mpc_signing(attempt_id: int, client=None, consumer=None):
-    """Start/query one logical session without waiting for protocol completion."""
-    if client is None:
-        from .signer_adapter import get_adapter
-
-        client = get_adapter()
+def _persist_result(attempt_id, session_id, request, result):
     with transaction.atomic():
         attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
-        if attempt.status not in {"SIGNING", "SIGNED"}:
-            raise ValueError("MPC advancement requires a SIGNING attempt")
-        if attempt.status == "SIGNED":
-            return attempt
         session = (
             MpcSigningSession.objects.select_for_update()
             .select_related("keyset")
-            .filter(attempt=attempt, status__in=ACTIVE | {"COMPLETED"})
-            .order_by("-session_number")
-            .first()
+            .get(pk=session_id)
         )
-        if session is None:
-            raise ValueError("SIGNING attempt has no active MPC session")
-        was_starting = session.status == "STARTING"
-        if session.status == "COMPLETED":
-            completed_id = session.pk
-            request = None
-            should_create = False
-        else:
-            completed_id = None
-            request = coordinator_request(attempt, session)
-        should_create = session.status == "CREATED"
-        if should_create:
-            session.status = "STARTING"
-            session.started_at = session.started_at or timezone.now()
-            session.save(update_fields=["status", "started_at"])
-
-    if completed_id:
-        return _consume_completed(attempt_id, completed_id, consumer)
-    # The local DB transaction is committed before this external effect.
-    from .signer_adapter import CoordinatorSessionNotFound
-
-    if was_starting:
-        try:
-            result = client.get_signing_session(str(session.session_id))
-        except CoordinatorSessionNotFound:
-            result = client.create_signing_session(request)
-    else:
-        result = (
-            client.create_signing_session(request)
-            if should_create
-            else client.get_signing_session(str(session.session_id))
-        )
-    with transaction.atomic():
-        attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
-        session = MpcSigningSession.objects.select_for_update().get(pk=session.pk)
         if not _coordinator_identity_matches(request, result) or not _execution_identity_matches(
             session, result
         ):
-            session.status = "RECONCILIATION_REQUIRED"
-            session.error_code = "COORDINATOR_IDENTITY_MISMATCH"
-        elif result["status"] in {"CREATED", "STARTING", "IN_PROGRESS"}:
-            session.status = result["status"]
-            if session.crypto_execution_id is None and result.get("crypto_execution_id"):
-                session.crypto_execution_id = uuid.UUID(str(result["crypto_execution_id"]))
-            if not session.selected_signers and result.get("selected_signers"):
-                session.selected_signers = result["selected_signers"]
-        elif result["status"] == "DEFINITIVE_NO_SIGNATURE_FAILURE":
-            session.status = "DEFINITIVE_NO_SIGNATURE_FAILURE"
-            session.error_code = result.get("error_code", "MPC_DEFINITIVE_FAILURE")
-        elif result["status"] == "COMPLETED":
-            # Assembly/cryptographic verification is chain-specific. Persisting
-            # the result first closes the crash window without claiming SIGNED.
-            session.signature_result = result.get("signature") or {}
-            session.status = "COMPLETED"
+            raise ValueError("COORDINATOR_IDENTITY_MISMATCH")
+        status = result.get("status")
+        if status not in ACTIVE | {"COMPLETED", "RECONCILIATION_REQUIRED"}:
+            raise ValueError("COORDINATOR_STATE_UNKNOWN")
+        if session.status == "COMPLETED":
+            if result.get("signature") != session.signature_result:
+                raise ValueError("conflicting completed coordinator result")
+            return session
+        session.crypto_execution_id = uuid.UUID(result["crypto_execution_id"])
+        session.selected_signers = result["selected_signers"]
+        session.status = status
+        if status == "COMPLETED":
+            if not result.get("signature"):
+                raise ValueError("missing completed signature")
+            session.signature_result = result["signature"]
             session.completed_at = timezone.now()
-        else:
-            session.status = "RECONCILIATION_REQUIRED"
-            session.error_code = "COORDINATOR_STATE_UNKNOWN"
         session.save()
-    if session.status == "COMPLETED":
-        return _consume_completed(attempt_id, session.pk, consumer)
-    return attempt
+        if status != "RECONCILIATION_REQUIRED":
+            attempt.status = "SIGNING"
+            attempt.save(update_fields=["status", "updated_at"])
+        return session
+
+
+def advance_mpc_signing(attempt_id: int, client=None):
+    """Create/execute/read/reconcile the SAME execution; no interactive protocol wait."""
+    from .signer_adapter import assert_mpc_backend_runtime_safe, get_adapter
+
+    snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
+    assert_mpc_backend_runtime_safe(snapshot.chain_id)
+    with attempt_execution_lock(attempt_id) as acquired:
+        if not acquired:
+            return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+        if snapshot.status not in {"SIGNING", "RECONCILIATION_REQUIRED"}:
+            return snapshot
+        client = client or get_adapter()
+        sessions = list(
+            MpcSigningSession.objects.select_related("keyset").filter(attempt_id=attempt_id)[:2]
+        )
+        if len(sessions) != 1:
+            return mark_signing_uncertain(attempt_id, "MPC_SESSION_OWNERSHIP_MISMATCH")
+        session = sessions[0]
+        try:
+            with transaction.atomic():
+                request = coordinator_request(snapshot, session)
+            from .mpc_evm_network import verify_evm_rpc_endpoints
+            from .native_tx import RequestsTransport
+
+            verify_evm_rpc_endpoints(snapshot.chain_id, RequestsTransport())
+            verify_coordinator_keyset(
+                session.keyset, client.get_keyset(str(session.keyset.keyset_id))
+            )
+            if session.status == "COMPLETED":
+                return _consume_completed(attempt_id, session.pk)
+            from .signer_adapter import CoordinatorSessionNotFound
+
+            if session.status == "CREATED":
+                MpcSigningSession.objects.filter(pk=session.pk).update(
+                    status="STARTING", started_at=timezone.now()
+                )
+                result = client.create_signing_session(request)
+            else:
+                try:
+                    result = client.get_signing_session(str(session.session_id))
+                except CoordinatorSessionNotFound:
+                    if session.crypto_execution_id is not None:
+                        raise ValueError("coordinator lost a known execution") from None
+                    result = client.create_signing_session(request)
+            session = _persist_result(attempt_id, session.pk, request, result)
+            if session.status == "CREATED":
+                result = client.execute_signing_session(str(session.session_id))
+                session = _persist_result(attempt_id, session.pk, request, result)
+            elif session.status == "RECONCILIATION_REQUIRED":
+                result = client.reconcile_signing_session(str(session.session_id))
+                session = _persist_result(attempt_id, session.pk, request, result)
+            if session.status == "COMPLETED":
+                return _consume_completed(attempt_id, session.pk)
+            if session.status == "RECONCILIATION_REQUIRED":
+                return mark_signing_uncertain(attempt_id, "COORDINATOR_SIGNING_UNCERTAIN")
+        except (
+            OSError,
+            requests.RequestException,
+            ValueError,
+            KeyError,
+            TypeError,
+            BadSignature,
+            ValidationError,
+            IntegrityError,
+        ):
+            # A timeout or invalid result cannot establish nonce non-consumption.
+            # Do not persist external payload/error details in logs or error_message.
+            return mark_signing_uncertain(attempt_id, "MPC_RECONCILIATION_REQUIRED")
+        return OnchainTransactionAttempt.objects.get(pk=attempt_id)

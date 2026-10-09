@@ -117,7 +117,7 @@ def _execute_live(intent, actor_id, source, asset_key):
         "CONFIRMED": "CONFIRMED",
         "FAILED": "FAILED",
         "RECONCILIATION_REQUIRED": "RECONCILIATION_REQUIRED",
-    }.get(attempt.status, "BROADCASTED")
+    }.get(attempt.status, "BROADCASTED" if attempt.status == "BROADCASTED" else "PROCESSING")
     GasTopupIntent.objects.filter(pk=intent.pk).update(
         status=intent_status, tx_hash=attempt.network_tx_id
     )

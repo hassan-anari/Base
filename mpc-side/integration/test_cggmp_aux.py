@@ -912,3 +912,10 @@ def test_partial_auxiliary_persistence_cannot_claim_readiness(tmp_path):
         )
     finally:
         net.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6e_real_evm_custody_acceptance(auxiliary_network, tmp_path):
+    from evm_acceptance import run_evm_acceptance
+
+    run_evm_acceptance(auxiliary_network, tmp_path)

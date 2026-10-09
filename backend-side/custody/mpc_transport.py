@@ -10,17 +10,25 @@ from cryptography import x509
 from django.conf import settings
 
 
-def coordinator_request(method, path, *, json_payload=None, params=None):
+def coordinator_tls_context():
     url = urlsplit(settings.MPC_COORDINATOR_URL)
     if url.scheme != "https" or not url.hostname or url.username or url.password:
         raise ValueError("MPC coordinator requires an HTTPS service URL")
     if url.path not in ("", "/") or url.query or url.fragment:
         raise ValueError("MPC coordinator URL must not contain a path, query or fragment")
-    if not path.startswith("/") or path.startswith("//"):
-        raise ValueError("MPC request requires an absolute service path")
+    if not 1 <= settings.MPC_REQUEST_TIMEOUT_SECONDS <= 120:
+        raise ValueError("MPC timeout must be between 1 and 120 seconds")
     context = ssl.create_default_context(cafile=settings.MPC_CA_CERT)
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
     context.load_cert_chain(settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY)
+    return context
+
+
+def coordinator_request(method, path, *, json_payload=None, params=None):
+    context = coordinator_tls_context()
+    url = urlsplit(settings.MPC_COORDINATOR_URL)
+    if not path.startswith("/") or path.startswith("//"):
+        raise ValueError("MPC request requires an absolute service path")
     connection = http.client.HTTPSConnection(
         url.hostname,
         url.port or 443,

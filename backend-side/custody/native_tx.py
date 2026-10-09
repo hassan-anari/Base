@@ -115,7 +115,10 @@ class RequestsTransport:
             url,
             json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
             timeout=15,
+            allow_redirects=False,
         )
+        if 300 <= response.status_code < 400:
+            raise PreparationError("RPC redirects are not permitted")
         response.raise_for_status()
         body = response.json()
         if body.get("error"):
@@ -175,6 +178,11 @@ class EvmNativeExecutor:
     def __init__(self, transport: RpcTransport | None = None):
         self.transport = transport or RequestsTransport()
 
+    def _rpc(self, chain_id, url, method, params):
+        from .mpc_evm_network import guarded_evm_rpc
+
+        return guarded_evm_rpc(chain_id, url, self.transport, method, params)
+
     def prepare(
         self,
         chain_id: str,
@@ -190,7 +198,7 @@ class EvmNativeExecutor:
             raise UnsupportedNativeTransaction("valid EVM chain id is required")
         url = rpc_urls(chain_id)[0]
         value = to_base_units(amount, spec.native_decimals)
-        pending = _int(self.transport.rpc(url, "eth_getTransactionCount", [source, "pending"]))
+        pending = _int(self._rpc(chain_id, url, "eth_getTransactionCount", [source, "pending"]))
         candidate = {
             "chainId": spec.evm_chain_id,
             # A provisional nonce is sufficient for estimation. Durable nonce
@@ -200,14 +208,14 @@ class EvmNativeExecutor:
             "to": destination,
             "value": value,
         }
-        gas = _int(self.transport.rpc(url, "eth_estimateGas", [candidate]))
+        gas = _int(self._rpc(chain_id, url, "eth_estimateGas", [candidate]))
         gas_cap = _cap(spec.gas_settings, "max_gas_limit")
         if gas > gas_cap:
             raise FeePolicyError("estimated gas exceeds max_gas_limit")
-        latest = self.transport.rpc(url, "eth_getBlockByNumber", ["latest", False]) or {}
+        latest = self._rpc(chain_id, url, "eth_getBlockByNumber", ["latest", False]) or {}
         fees: dict[str, str]
         if latest.get("baseFeePerGas") is not None:
-            priority = _int(self.transport.rpc(url, "eth_maxPriorityFeePerGas", []))
+            priority = _int(self._rpc(chain_id, url, "eth_maxPriorityFeePerGas", []))
             suggested = _int(latest["baseFeePerGas"]) * 2 + priority
             max_fee_cap = _cap(spec.gas_settings, "max_fee_per_gas")
             if suggested > max_fee_cap:
@@ -226,7 +234,7 @@ class EvmNativeExecutor:
             }
             worst_fee = gas * max_fee
         else:
-            gas_price = _int(self.transport.rpc(url, "eth_gasPrice", []))
+            gas_price = _int(self._rpc(chain_id, url, "eth_gasPrice", []))
             if gas_price > _cap(spec.gas_settings, "max_legacy_gas_price"):
                 raise FeePolicyError("gas price exceeds configured cap")
             candidate.update({"gas": gas, "gasPrice": gas_price})
@@ -237,7 +245,7 @@ class EvmNativeExecutor:
             spec.gas_settings, "max_total_fee_base_units"
         ):
             raise FeePolicyError("worst-case fee exceeds total fee cap")
-        balance = _int(self.transport.rpc(url, "eth_getBalance", [source, "pending"]))
+        balance = _int(self._rpc(chain_id, url, "eth_getBalance", [source, "pending"]))
         if sweep:
             value = balance - worst_fee
             if value <= 0:
@@ -279,7 +287,7 @@ class EvmNativeExecutor:
         ambiguous = False
         for url in rpc_urls(chain_id):
             try:
-                returned = self.transport.rpc(url, "eth_sendRawTransaction", [raw])
+                returned = self._rpc(chain_id, url, "eth_sendRawTransaction", [raw])
                 if str(returned).lower() != expected.lower():
                     raise DeterministicBroadcastRejection("RPC returned an unexpected tx hash")
                 return expected
@@ -314,16 +322,18 @@ class EvmNativeExecutor:
 
     def reconcile(self, prepared: PreparedNativeTransaction, tx_id: str) -> ReconciliationResult:
         urls = rpc_urls(prepared.chain_id)
-        receipt, url = self._read(urls, "eth_getTransactionReceipt", [tx_id])
+        receipt, url = self._read(prepared.chain_id, urls, "eth_getTransactionReceipt", [tx_id])
         if receipt is None:
-            tx, _ = self._read(urls, "eth_getTransactionByHash", [tx_id])
+            tx, _ = self._read(prepared.chain_id, urls, "eth_getTransactionByHash", [tx_id])
             return ReconciliationResult(
                 ReconciliationState.PENDING if tx else ReconciliationState.UNKNOWN
             )
         if str(receipt.get("transactionHash", "")).lower() != tx_id.lower():
             raise NativeTxError("receipt transaction hash mismatch")
         evidence = {"block_number": _int(receipt["blockNumber"]), "receipt": receipt}
-        head, _ = self._read([url, *(item for item in urls if item != url)], "eth_blockNumber", [])
+        head, _ = self._read(
+            prepared.chain_id, [url, *(item for item in urls if item != url)], "eth_blockNumber", []
+        )
         head = _int(head)
         confirmations = head - evidence["block_number"] + 1
         evidence["confirmations"] = confirmations
@@ -337,11 +347,11 @@ class EvmNativeExecutor:
             state = ReconciliationState.FAILED
         return ReconciliationResult(state, evidence)
 
-    def _read(self, urls, method, params):
+    def _read(self, chain_id, urls, method, params):
         last_error = None
         for url in urls:
             try:
-                return self.transport.rpc(url, method, params), url
+                return self._rpc(chain_id, url, method, params), url
             except (requests.Timeout, requests.ConnectionError) as exc:
                 last_error = exc
         raise PreparationError(f"all EVM endpoints unavailable for {method}") from last_error

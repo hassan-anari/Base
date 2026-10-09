@@ -141,6 +141,16 @@ impl TlsConfig {
     }
 }
 
+/// Non-secret peer rejection diagnostics; never includes response/proof bodies.
+#[derive(Debug)]
+pub struct PeerHttpStatus(pub StatusCode);
+impl std::fmt::Display for PeerHttpStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "signer request rejected: HTTP {}", self.0.as_u16())
+    }
+}
+impl std::error::Error for PeerHttpStatus {}
+
 async fn authorize(
     request: Request,
     next: Next,
@@ -215,7 +225,7 @@ pub async fn serve_roles(
                 .header_read_timeout(Duration::from_secs(5));
             // Bound idle/body connections as well as handshake resource use.
             let _ = timeout(
-                Duration::from_secs(15),
+                Duration::from_secs(45),
                 http.serve_connection(TokioIo::new(stream), TowerToHyperService::new(app)),
             )
             .await;
@@ -289,7 +299,15 @@ impl SignerClient {
             .find(|(r, _, _)| r == role)
             .context("unconfigured signer destination")?;
         timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(
+                if path.starts_with("/internal/v1/cggmp/aux/")
+                    || path.starts_with("/internal/v1/cggmp/sign/")
+                {
+                    30
+                } else {
+                    5
+                },
+            ),
             self.exchange(role, *addr, name, method, path, body),
         )
         .await?
@@ -326,7 +344,16 @@ impl SignerClient {
         path: &str,
         body: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        ensure!(body.len() <= 64 * 1024, "protocol request too large");
+        // Auxiliary/signing proofs need more space than keygen controls. These RPCs
+        // enqueue bounded messages; expensive crypto runs in asynchronous workers.
+        let limit = if path.starts_with("/internal/v1/cggmp/aux/")
+            || path.starts_with("/internal/v1/cggmp/sign/")
+        {
+            1024 * 1024
+        } else {
+            64 * 1024
+        };
+        ensure!(body.len() <= limit, "protocol request too large");
         let socket = tokio::net::TcpStream::connect(addr).await?;
         let stream = TlsConnector::from(self.tls.clone())
             .connect(ServerName::try_from(name.to_owned())?, socket)
@@ -354,11 +381,10 @@ impl SignerClient {
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(body)))?;
         let response = sender.send_request(request).await?;
-        ensure!(
-            response.status() == StatusCode::OK,
-            "signer request rejected"
-        );
-        let body = Limited::new(response.into_body(), 64 * 1024)
+        if response.status() != StatusCode::OK {
+            return Err(PeerHttpStatus(response.status()).into());
+        }
+        let body = Limited::new(response.into_body(), limit)
             .collect()
             .await
             .map_err(|_| anyhow::anyhow!("invalid signer response"))?

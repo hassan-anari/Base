@@ -26,7 +26,7 @@ impl DurableStore {
         }
         Ok(dkg)
     }
-    async fn advance_sign(
+    pub(super) async fn advance_sign(
         &self,
         id: Uuid,
         expected: SessionStatus,
@@ -118,6 +118,9 @@ fn execution(
 }
 
 pub(super) fn validate_completed(session: &SignSession, dkg: &DkgSession) -> anyhow::Result<()> {
+    if session.request.algorithm == wallet_mpc_protocol::cggmp::ALGORITHM {
+        return super::cggmp_sign::validate_completed(session, dkg);
+    }
     ensure!(dkg.status == SessionStatus::Completed, "incomplete keyset");
     let binding = execution(session, dkg, session.selected_signers.clone())
         .map_err(|_| anyhow::anyhow!("invalid completion binding"))?;
@@ -199,6 +202,15 @@ impl Driver {
     }
     async fn execute(&self, id: Uuid, reconcile: bool) -> Result<SignSession, StoreError> {
         let session = self.store.get_sign(id).await?.ok_or(StoreError::Invalid)?;
+        if session.request.algorithm == wallet_mpc_protocol::cggmp::ALGORITHM {
+            return super::cggmp_sign::execute(
+                self.store.clone(),
+                self.peers.clone(),
+                session,
+                reconcile,
+            )
+            .await;
+        }
         if session.status == SessionStatus::Completed {
             return Ok(session);
         }

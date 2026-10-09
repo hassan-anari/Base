@@ -36,6 +36,7 @@ pub enum SessionStatus {
     Starting,
     InProgress,
     Completed,
+    KeygenCompleted,
     DefinitiveNoSignatureFailure,
     ReconciliationRequired,
 }
@@ -55,6 +56,9 @@ pub struct SignSession {
 pub use wallet_mpc_protocol::dkg::DkgRequest;
 use wallet_mpc_protocol::dkg::{DkgReport, PARTIES};
 
+mod cggmp;
+mod cggmp_aux;
+mod cggmp_sign;
 mod dkg;
 mod sign;
 
@@ -67,6 +71,8 @@ pub struct DkgSession {
     pub result_fingerprint: Option<String>,
     #[serde(default)]
     pub participant_agreement: Vec<DkgReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary: Option<cggmp_aux::AuxiliaryState>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -159,7 +165,43 @@ impl DurableStore {
                     .context("invalid completed signing result")?;
             }
         }
+        for session in data.dkg.values() {
+            if session.status == SessionStatus::KeygenCompleted {
+                wallet_mpc_protocol::cggmp::verify_keygen_receipts(
+                    &session.request,
+                    &session.participant_agreement,
+                )?;
+                ensure!(
+                    session.group_public_key == session.participant_agreement[0].group_public_key,
+                    "stored CGGMP group mismatch"
+                );
+                ensure!(
+                    session.result_fingerprint.as_deref()
+                        == Some(
+                            format!(
+                                "{:x}",
+                                Sha256::digest(serde_json::to_vec(&(
+                                    &session.request,
+                                    &session.participant_agreement
+                                ))?)
+                            )
+                            .as_str()
+                        ),
+                    "stored CGGMP result mismatch"
+                );
+            }
+        }
         for session in data.dkg.values_mut() {
+            if let Some(auxiliary) = &session.auxiliary {
+                auxiliary.validate(session)?;
+            }
+            if let Some(auxiliary) = &mut session.auxiliary {
+                if auxiliary.status == "IN_PROGRESS" {
+                    auxiliary.status = "RECONCILIATION_REQUIRED".into();
+                    auxiliary.internally_signable = false;
+                    recovered = true;
+                }
+            }
             if matches!(
                 session.status,
                 SessionStatus::Starting | SessionStatus::InProgress
@@ -312,6 +354,7 @@ impl DurableStore {
         if !topology_valid
             || !algorithm_valid
             || (request.algorithm == "FROST_ED25519" && !request.is_frost())
+            || (request.algorithm == "CGGMP24_ECDSA" && !request.is_cggmp())
         {
             return Err(StoreError::Invalid);
         }
@@ -343,6 +386,7 @@ impl DurableStore {
             group_public_key: None,
             result_fingerprint: None,
             participant_agreement: vec![],
+            auxiliary: None,
         };
         data.dkg.insert(request.session_id, session.clone());
         match self.persist(&data).await {
@@ -520,7 +564,8 @@ pub fn network_app(
 ) -> Router {
     let dkg_app = dkg::router(store.clone(), signers.clone());
     let signing_app = sign::router(store.clone(), signers.clone());
-    base_app(store).merge(dkg_app).merge(signing_app).route("/v1/health/quorum", get(move || {
+    let auxiliary_app = cggmp_aux::router(store.clone(), signers.clone());
+    base_app(store).merge(dkg_app).merge(signing_app).merge(auxiliary_app).route("/v1/health/quorum", get(move || {
         let signers = signers.clone();
         async move {
             match signers.capabilities().await {

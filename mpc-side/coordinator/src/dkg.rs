@@ -3,7 +3,7 @@ use super::*;
 use wallet_mpc_transport::SignerClient;
 
 impl DurableStore {
-    async fn update_dkg(
+    pub(super) async fn update_dkg(
         &self,
         id: Uuid,
         status: SessionStatus,
@@ -15,10 +15,25 @@ impl DurableStore {
         if status == SessionStatus::Completed && !unanimous(&previous.request, &agreement) {
             return Err(StoreError::Invalid);
         }
+        if status == SessionStatus::InProgress && previous.status != SessionStatus::Created {
+            return Err(StoreError::Conflict);
+        }
+        if status == SessionStatus::KeygenCompleted
+            && wallet_mpc_protocol::cggmp::verify_keygen_receipts(&previous.request, &agreement)
+                .is_err()
+        {
+            return Err(StoreError::Invalid);
+        }
+        if previous.status == SessionStatus::KeygenCompleted {
+            return Err(StoreError::Conflict);
+        }
         let mut session = previous.clone();
         session.status = status;
         session.participant_agreement = agreement;
-        if session.status == SessionStatus::Completed {
+        if matches!(
+            session.status,
+            SessionStatus::Completed | SessionStatus::KeygenCompleted
+        ) {
             session.group_public_key = session.participant_agreement[0].group_public_key.clone();
             session.result_fingerprint = Some(format!(
                 "{:x}",
@@ -127,6 +142,16 @@ impl Driver {
         Ok(receipts)
     }
     async fn execute(&self, id: Uuid, reconcile: bool) -> Result<DkgSession, StoreError> {
+        let session = self.store.get_dkg(id).await?.ok_or(StoreError::Invalid)?;
+        if session.request.is_cggmp() {
+            return super::cggmp::execute(
+                self.store.clone(),
+                self.peers.clone(),
+                session,
+                reconcile,
+            )
+            .await;
+        }
         let _serial = self.serial.lock().await;
         let session = self.store.get_dkg(id).await?.ok_or(StoreError::Invalid)?;
         if !session.request.is_frost() {

@@ -244,7 +244,9 @@ jobs:
           echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
       - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
       - run: pytest -x -v mpc-side/integration/test_cggmp.py
-      - run: pytest -x -v -s mpc-side/integration/test_cggmp_aux.py --basetemp=work/full-crypto --junitxml=work/mpc-network.xml
+      - run: |
+          mkdir -p work
+          pytest -x -v -s mpc-side/integration/test_cggmp_aux.py --basetemp=work/full-crypto --junitxml=work/mpc-network.xml
       - run: pytest -v mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py
       - run: ruff format --check backend-side/custody/mpc_transport.py mpc-side/integration
       - run: ruff check backend-side/custody/mpc_transport.py mpc-side/integration

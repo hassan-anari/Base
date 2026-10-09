@@ -314,6 +314,13 @@ impl AuxService {
         if action == "report" {
             return Ok(report);
         }
+        if action == "reconcile" {
+            if report.status == AUX_READY { return Ok(report); }
+            ensure!(report.status == "RECONCILIATION_REQUIRED" && !local.active.contains_key(&id), "auxiliary work is not quiescent");
+            report = local.ready_report(&request)?;
+            confirm_parent_durability(&local.aux_store.path(id))?;
+            local.save(&report)?; local.reports.insert(id, report.clone()); return Ok(report);
+        }
         if action == "abort" {
             if report.status == AUX_READY {
                 return Ok(report);
@@ -503,7 +510,7 @@ impl AuxService {
             PARTIES.contains(&peer)
                 && wire.sender == peer
                 && wire.sequence < 256
-                && wire.payload.len() <= 192 * 1024
+                && wire.payload.len() <= super::cggmp_wire::PAYLOAD_LIMIT
                 && wire.transcript_digest() == wire.payload_digest,
             "invalid auxiliary message"
         );
@@ -575,12 +582,18 @@ async fn receive(
     if !PARTIES.contains(&peer.role()) {
         return Err(StatusCode::FORBIDDEN);
     }
-    let wire = serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let wire = super::cggmp_wire::decode(&body).map_err(|_| {
+        eprintln!("CGGMP proof rejected: phase=cggmp_aux category=wire_encoding http_bytes={}", body.len());
+        StatusCode::BAD_REQUEST
+    })?;
     service
         .receive(peer.role(), wire)
         .await
         .map(|()| Json(serde_json::json!({"accepted":true})))
-        .map_err(|_| StatusCode::CONFLICT)
+        .map_err(|_| {
+            eprintln!("CGGMP proof rejected: phase=cggmp_aux category=peer_queue_or_validation");
+            StatusCode::CONFLICT
+        })
 }
 pub fn router(service: Arc<AuxService>) -> Router {
     Router::new()

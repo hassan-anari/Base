@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, Semaphore, OwnedSemaphorePermit},
     task::JoinHandle,
 };
 use uuid::Uuid;
@@ -45,6 +45,7 @@ struct Active {
     seen: BTreeSet<(String, u64)>,
     seen_payload: BTreeSet<(String, u16, String)>,
     task: Option<JoinHandle<()>>,
+    permit: Option<OwnedSemaphorePermit>,
 }
 struct Local {
     directory: PathBuf,
@@ -57,6 +58,7 @@ pub struct SigningService {
     local: Mutex<Local>,
     auxiliary: Arc<AuxService>,
     peers: SignerClient,
+    capacity: Arc<Semaphore>,
 }
 impl Local {
     fn path(&self, session: Uuid) -> PathBuf {
@@ -182,6 +184,7 @@ impl SigningService {
             local: Mutex::new(local),
             auxiliary,
             peers,
+            capacity: Arc::new(Semaphore::new(4)),
         }))
     }
     async fn control(
@@ -220,6 +223,7 @@ impl SigningService {
                         .all(|r| r.execution.crypto_execution_id != execution.crypto_execution_id),
                 "signing already reserved or capacity exhausted"
             );
+            let permit = self.capacity.clone().try_acquire_owned().context("signing worker capacity exhausted")?;
             // The exact pair, digest, logical session and auxiliary binding are reserved
             // durably before cryptographic nonce randomness is allowed.
             local.executions.begin(execution.crypto_execution_id)?;
@@ -239,6 +243,7 @@ impl SigningService {
                     seen: BTreeSet::new(),
                     seen_payload: BTreeSet::new(),
                     task: None,
+                    permit: Some(permit),
                 },
             );
             local.reports.insert(id, report.clone());
@@ -292,9 +297,10 @@ impl SigningService {
             .receiver
             .take()
             .context("already started")?;
+        let permit = local.active.get_mut(&id).context("lost signing state")?.permit.take().context("lost signing capacity")?;
         let service = self.clone();
         let task = tokio::spawn(async move {
-            service.run(execution, party, inbox).await;
+            service.run(execution, party, inbox, permit).await;
         });
         local
             .active
@@ -308,10 +314,20 @@ impl SigningService {
         execution: SigningExecution,
         party: String,
         inbox: mpsc::Receiver<ProtocolEnvelope>,
+        permit: OwnedSemaphorePermit,
     ) {
-        let outcome = tokio::time::timeout(Duration::from_secs(180), async {
+        let worker_execution = execution.clone();
+        let worker_party = party.clone();
+        let auxiliary = self.auxiliary.clone();
+        let peers = self.peers.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let execution = worker_execution;
+            let party = worker_party;
+            tokio::runtime::Handle::current().block_on(async move {
+                    tokio::time::timeout(Duration::from_secs(180), async {
             let digest = execution.validate()?;
-            let key = self.auxiliary.own_key(&execution.auxiliary).await?;
+            let key = auxiliary.own_key(&execution.auxiliary).await?;
             let index = execution
                 .selected_signers
                 .iter()
@@ -354,7 +370,7 @@ impl SigningService {
                 MpcParty::connected(protocol_delivery::<Msg>(
                     context,
                     party.clone(),
-                    self.peers.clone(),
+                    peers,
                     inbox,
                 )),
                 &message,
@@ -365,13 +381,15 @@ impl SigningService {
             signature.write_to_slice(&mut bytes);
             verified_signature(&execution, &bytes)
         })
-        .await;
+        .await
+            })
+        }).await;
         let mut local = self.local.lock().await;
         if !local.active.contains_key(&execution.request.session_id) {
             return;
         }
         let persisted = (|| -> Result<()> {
-            let signature = outcome.context("signing timeout")??;
+            let signature = outcome.context("signing worker failed")?.context("signing timeout")??;
             local
                 .executions
                 .require_active(execution.crypto_execution_id)?;
@@ -414,7 +432,7 @@ impl SigningService {
             PARTIES.contains(&peer)
                 && wire.sender == peer
                 && wire.sequence < 256
-                && wire.payload.len() <= 192 * 1024
+                && wire.payload.len() <= super::cggmp_wire::PAYLOAD_LIMIT
                 && wire.transcript_digest() == wire.payload_digest,
             "invalid signing message"
         );
@@ -485,12 +503,18 @@ async fn receive(
     if !PARTIES.contains(&peer.role()) {
         return Err(StatusCode::FORBIDDEN);
     }
-    let wire = serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let wire = super::cggmp_wire::decode(&body).map_err(|_| {
+        eprintln!("CGGMP proof rejected: phase=cggmp_sign category=wire_encoding http_bytes={}", body.len());
+        StatusCode::BAD_REQUEST
+    })?;
     service
         .receive(peer.role(), wire)
         .await
         .map(|()| Json(serde_json::json!({"accepted":true})))
-        .map_err(|_| StatusCode::CONFLICT)
+        .map_err(|_| {
+            eprintln!("CGGMP proof rejected: phase=cggmp_sign category=peer_queue_or_validation");
+            StatusCode::CONFLICT
+        })
 }
 pub fn router(service: Arc<SigningService>) -> Router {
     Router::new()

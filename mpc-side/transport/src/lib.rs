@@ -141,6 +141,16 @@ impl TlsConfig {
     }
 }
 
+/// Non-secret peer rejection diagnostics; never includes response/proof bodies.
+#[derive(Debug)]
+pub struct PeerHttpStatus(pub StatusCode);
+impl std::fmt::Display for PeerHttpStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "signer request rejected: HTTP {}", self.0.as_u16())
+    }
+}
+impl std::error::Error for PeerHttpStatus {}
+
 async fn authorize(
     request: Request,
     next: Next,
@@ -371,10 +381,7 @@ impl SignerClient {
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(body)))?;
         let response = sender.send_request(request).await?;
-        ensure!(
-            response.status() == StatusCode::OK,
-            "signer request rejected"
-        );
+        if response.status() != StatusCode::OK { return Err(PeerHttpStatus(response.status()).into()); }
         let body = Limited::new(response.into_body(), limit)
             .collect()
             .await

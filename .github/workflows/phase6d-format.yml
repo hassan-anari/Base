@@ -14,6 +14,7 @@ jobs:
       - run: pip install ruff==0.14.0
       - run: ruff format mpc-side/integration/test_cggmp_aux.py
       - run: git diff --no-color --binary
+      - run: ruff check mpc-side/integration/test_cggmp_aux.py
       - uses: Swatinem/rust-cache@v2
         with: {workspaces: mpc-side}
       - run: cargo check --manifest-path mpc-side/Cargo.toml --workspace --all-targets

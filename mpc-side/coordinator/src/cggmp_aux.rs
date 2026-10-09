@@ -190,7 +190,7 @@ impl Driver {
                 return Err(StoreError::Conflict);
             }
             let reports = self
-                .all(&auxiliary.request, "report")
+                .all(&auxiliary.request, "reconcile")
                 .await
                 .map_err(|_| StoreError::Conflict)?;
             return self

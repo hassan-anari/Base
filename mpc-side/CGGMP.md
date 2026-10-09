@@ -163,7 +163,8 @@ Auxiliary/signing delivery allows distinct messages in the same upstream round.
 Repeated sender sequences, conflicting sequences, and repeated sender/round
 payloads are rejected. Transport binds phase, full request transcript, session,
 execution, keyset, sender, destination, mode, round, sequence, and payload.
-Proof RPCs have a 1 MiB body cap, 192 KiB decoded-payload cap, 16-entry inbox,
+Proof RPCs use a version-1 canonical base64 envelope with the original raw-byte
+transcript digest unchanged. They have a 1 MiB body cap, 512 KiB decoded-payload cap, 16-entry inbox,
 256-message sender budget, and bounded 30-second RPC deadline. TLS handshakes
 and header reads retain five-second bounds; server connections are bounded at
 45 seconds. Signing workers have 180 seconds and orchestration 200 seconds.

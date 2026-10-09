@@ -127,7 +127,12 @@ where
                     payload_digest: String::new(),
                 };
                 wire.payload_digest = wire.transcript_digest();
-                let body = serde_json::to_vec(&wire).map_err(io::Error::other)?;
+                let proof = request.message_path != "/internal/v1/cggmp/keygen/message";
+                let decoded_len = wire.payload.len();
+                let body = if proof { super::cggmp_wire::encode(&wire) } else { serde_json::to_vec(&wire).map_err(Into::into) }.map_err(io::Error::other)?;
+                if proof {
+                    eprintln!("CGGMP proof delivery: path={} round={} decoded_bytes={} http_bytes={} exceeded_old_payload_limit={}", request.message_path, wire.round, decoded_len, body.len(), decoded_len > 192 * 1024);
+                }
                 use zeroize::Zeroize;
                 wire.payload.zeroize();
                 let body_len = body.len();
@@ -136,9 +141,11 @@ where
                     .await
                     .map_err(|error| {
                         eprintln!(
-                            "CGGMP peer delivery failed: round={} bytes={} timeout={}",
+                            "CGGMP peer delivery failed: round={} decoded_bytes={} http_bytes={} http_status={:?} timeout={}",
                             wire.round,
+                            decoded_len,
                             body_len,
+                            error.downcast_ref::<wallet_mpc_transport::PeerHttpStatus>().map(|s| s.0.as_u16()),
                             error.is::<tokio::time::error::Elapsed>()
                         );
                         io::Error::other("CGGMP peer delivery failed")

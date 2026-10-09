@@ -48,8 +48,10 @@ def complete(context):
 
 
 @pytest.mark.parametrize("numeric", [1, 10, 56, 137, 42161, 8453, 43114])
-def test_mislabeled_mainnet_rejected_before_preparation_or_signing(context, numeric):
+def test_mislabeled_mainnet_rejected_before_preparation_or_signing(context, settings, numeric):
     preparing(context)
+    settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": numeric}
+    NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url="http://127.0.0.1:8545")
     Chain.objects.filter(chain_id="ETH").update(evm_chain_id=numeric, is_testnet=True)
     with (
         patch("custody.outbound._executor") as executor,
@@ -61,6 +63,40 @@ def test_mislabeled_mainnet_rejected_before_preparation_or_signing(context, nume
         coordinator.assert_not_called()
     assert not SourceAccountSequence.objects.filter(chain_id="ETH").exists()
     assert not MpcSigningSession.objects.filter(attempt=context.attempt).exists()
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+@pytest.mark.parametrize("numeric", [10, 250, 324, 1101, 1337, 999, 31339, 11155112])
+def test_matching_rpc_cannot_authorize_disallowed_development_identity(context, settings, numeric):
+    settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": numeric}
+    Chain.objects.filter(chain_id="ETH").update(evm_chain_id=numeric)
+    NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url="http://127.0.0.1:8545")
+    transport = Mock()
+    transport.rpc.return_value = hex(numeric)
+    with pytest.raises(MpcNetworkError, match="testnet allowlist"):
+        verify_evm_rpc_endpoints("ETH", transport)
+    transport.rpc.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["SIGNING", "SIGNED"])
+def test_mainnet_override_cannot_execute_session_or_broadcast(context, settings, state):
+    context.attempt.status = state
+    context.attempt.save()
+    settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": 10}
+    Chain.objects.filter(chain_id="ETH").update(evm_chain_id=10)
+    NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url="http://127.0.0.1:8545")
+    client = CoordinatorClient(context)
+    with pytest.raises(MpcNetworkError, match="testnet allowlist"):
+        advance_mpc_signing(context.attempt.pk, client)
+    assert not client.creates and not client.executes
+    with patch("custody.outbound._executor") as executor:
+        with pytest.raises(MpcNetworkError, match="testnet allowlist"):
+            execute_attempt(context.attempt.pk, "worker")
+        executor.assert_not_called()
+    context.attempt.refresh_from_db()
+    context.session.refresh_from_db()
+    assert context.attempt.sequence == 7 and context.session.crypto_execution_id is None
+    assert not SourceAccountSequence.objects.filter(chain_id="ETH").exists()
     assert user_balances("phase6e", "ETH")["reserved"] == 1
 
 
@@ -130,12 +166,15 @@ def test_custom_network_rejects_nonliteral_or_nonloopback_endpoints(context, url
     assert context.attempt.sequence == 7
 
 
+@pytest.mark.parametrize("numeric", [31337, 31338])
 @pytest.mark.parametrize("url", ["http://127.0.0.1:8545", "http://[::1]:8545"])
-def test_explicit_loopback_development_chain_accepted(context, url):
+def test_explicit_loopback_development_chain_accepted(context, settings, url, numeric):
+    settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": numeric}
+    Chain.objects.filter(chain_id="ETH").update(evm_chain_id=numeric)
     NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url=url)
     assert_mpc_backend_runtime_safe("ETH")
     transport = Mock()
-    transport.rpc.return_value = "0x7a69"
+    transport.rpc.return_value = hex(numeric)
     verify_evm_rpc_endpoints("ETH", transport)
 
 

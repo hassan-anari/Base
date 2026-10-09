@@ -11,6 +11,7 @@ from .chain_registry import ChainKind, get_chain_spec, rpc_urls
 
 # Reviewed public testnets. The custody alias never substitutes for numeric identity.
 PUBLIC_TESTNETS = {"ETH": 11155111, "BSC": 97, "MATIC": 80002, "ARB": 421614, "BASE": 84532}
+LOCAL_DEVELOPMENT_CHAIN_IDS = frozenset({31337, 31338})
 
 
 class MpcNetworkError(ValueError):
@@ -46,7 +47,8 @@ def authorize_evm_network(chain_id, *, endpoint=None):
         return spec
     development = settings.MPC_EVM_DEVELOPMENT_CHAINS
     if (
-        settings.MPC_INTEGRATION_ENVIRONMENT != "development"
+        spec.evm_chain_id not in LOCAL_DEVELOPMENT_CHAIN_IDS
+        or settings.MPC_INTEGRATION_ENVIRONMENT != "development"
         or not isinstance(development, dict)
         or type(development.get(spec.chain_id)) is not int
         or development.get(spec.chain_id) != spec.evm_chain_id

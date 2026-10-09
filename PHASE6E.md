@@ -42,13 +42,19 @@ MPC_REQUEST_TIMEOUT_SECONDS=5
 ```
 
 `MPC_EVM_DEVELOPMENT_CHAINS` defaults to `{}`. This optional JSON mapping authorizes
-the exact custom numeric identity for each permitted custody alias **only** in
-the `development` environment. All enabled primary and fallback RPC endpoints
+only the immutable disposable local-chain allowlist **31337 and 31338** for each
+permitted custody alias in the `development` environment. Arbitrary numeric
+identities, including production IDs explicitly entered in this mapping, are
+rejected. The five reviewed public testnet pairs above remain supported.
+All enabled primary and fallback RPC endpoints
 must use HTTP(S) URLs with a port and literal IPv4/IPv6 loopback addresses
 (for example `http://127.0.0.1:8545` or `http://[::1]:8545`). DNS names, including
 `localhost`, credentials and fragments are rejected for this mode. Custom remote
 RPCs and custom identities in `testnet` mode remain disabled. Use only disposable
 chains; a loopback proxy to a production network is not authorized development.
+Loopback and numeric-identity checks reduce accidental misuse; they are not
+cryptographic proof that a local proxy cannot misrepresent an upstream network.
+Production/mainnet activation remains disabled and deployment is outside Phase 6E.
 
 Before preparation/nonce allocation and before coordinator execution, all enabled
 RPC endpoints must report the authorized numeric `eth_chainId`. Each native/ERC20
@@ -231,8 +237,16 @@ Solidity token, catching fixture platform/lockfile failures before fresh-prime
 protocol execution. Ganache's bundled macOS-only `fsevents` dependency is optional;
 its lockfile retains that classification so npm 10 can install the fixture on Linux.
 
-The **full cryptographic gate is mandatory before Phase 6E approval**, on the exact
-reviewed PR head. **Before merge**, a reviewer with label permission adds
+The **default approval requirement is the full cryptographic gate**, on the exact
+reviewed PR head. The final PR #30 correction limited to the development allowlist,
+its regressions and this documentation proposes a narrow exception: the full gate
+[passed on `bc2c913cae9207f1d6da0ae464d6f0b5eb6c9618`](https://github.com/hassan-anari/Wallet-MPC/actions/runs/37946589711),
+while focused regressions and Fast CI separately verify the corrected head.
+The full gate is **not rerun on that corrected head**; this supporting evidence
+is not an exact-head full pass. Final reviewer acceptance is required, after
+verifying no cryptographic, transaction-execution or CI implementation changes.
+
+**Before merge**, a reviewer with label permission adds
 `run-full-crypto` to the PR. The `pull_request: labeled` event executes the PR's
 workflow without requiring it to exist on the default branch. It uses read-only
 contents permissions, no deployment secrets, and never `pull_request_target`.

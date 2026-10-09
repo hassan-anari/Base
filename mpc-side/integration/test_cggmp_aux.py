@@ -4,6 +4,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,18 @@ def get_keyset(net, context):
     )[1]
 
 
+def print_proof_sizes(net):
+    pattern = re.compile(
+        r"^CGGMP proof delivery: path=/internal/v1/cggmp/aux/message "
+        r"round=1 decoded_bytes=\d+ http_bytes=\d+ exceeded_old_payload_limit=(?:true|false)$",
+        re.MULTILINE,
+    )
+    for party in PARTIES:
+        metadata = pattern.findall((net.root / party / "service.log").read_text())
+        assert metadata, "missing auxiliary round-one size diagnostics"
+        print(party, metadata[0])
+
+
 @pytest.fixture(scope="module")
 def auxiliary_network(tmp_path_factory):
     net = Processes(tmp_path_factory.mktemp("cggmp-aux") / "services")
@@ -79,6 +92,7 @@ def auxiliary_network(tmp_path_factory):
                 print(party, (net.root / party / "service.log").read_text())
         assert auxiliary["status"] == "AUXILIARY_COMPLETED", auxiliary
         assert auxiliary["internally_signable"]
+        print_proof_sizes(net)
         costs = {
             r["party_id"]: r["prime_generation_ms"] for r in auxiliary["participant_agreement"]
         }
@@ -587,6 +601,7 @@ def tron_auxiliary_network(tmp_path_factory):
             for party in PARTIES:
                 print(party, (net.root / party / "service.log").read_text())
         assert state["auxiliary"]["status"] == "AUXILIARY_COMPLETED", state
+        print_proof_sizes(net)
         costs = {
             r["party_id"]: r["prime_generation_ms"]
             for r in state["auxiliary"]["participant_agreement"]

@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -6,6 +7,8 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 
 from custody.models import MpcKeyset
+
+from .test_phase6_signing import metadata_for
 
 
 def keyset(scope, algorithm, curve, derivation):
@@ -63,9 +66,13 @@ def test_activation_is_scoped_and_preserves_other_cggmp_scope():
     tron.participant_identities = ["signer-a", "signer-b", "signer-c"]
     tron.save()
 
-    call_command("mpc_keyset", "activate", keyset_id=str(tron.keyset_id))
+    with patch(
+        "custody.signer_adapter.SelfHostedMpcAdapter.get_keyset", return_value=metadata_for(tron)
+    ):
+        call_command("mpc_keyset", "activate", keyset_id=str(tron.keyset_id))
 
     evm.refresh_from_db()
     tron.refresh_from_db()
     assert evm.active_for_new_wallets is True
-    assert tron.active_for_new_wallets is True
+    assert tron.status == "ACTIVE"
+    assert tron.active_for_new_wallets is False  # Root binding only; provisioning remains 6G.

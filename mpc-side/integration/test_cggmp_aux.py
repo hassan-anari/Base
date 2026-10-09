@@ -919,3 +919,10 @@ def test_phase6e_real_evm_custody_acceptance(auxiliary_network, tmp_path):
     from evm_acceptance import run_evm_acceptance
 
     run_evm_acceptance(auxiliary_network, tmp_path)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6f_real_tron_custody_acceptance(tron_auxiliary_network, tmp_path):
+    from tron_acceptance import run_tron_acceptance
+
+    run_tron_acceptance(tron_auxiliary_network, tmp_path)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -89,7 +89,13 @@ def to_base_units(amount: Decimal | str, decimals: int, *, maximum: int = 2**256
     """Convert exactly, rejecting rounding, non-positive and out-of-range values."""
     try:
         value = Decimal(amount) if isinstance(amount, str) else amount
-        scaled = value * (Decimal(10) ** decimals)
+        if not isinstance(value, Decimal) or not value.is_finite() or value <= 0:
+            raise ValueError("amount must be a positive finite Decimal")
+        if type(decimals) is not int or not 0 <= decimals <= 18:
+            raise ValueError("unsupported ledger precision")
+        with localcontext() as context:
+            context.prec = max(80, len(value.as_tuple().digits) + decimals + 1)
+            scaled = value * (Decimal(10) ** decimals)
     except (InvalidOperation, TypeError) as exc:
         raise ValueError("invalid decimal amount") from exc
     if not value.is_finite() or value <= 0:
@@ -97,6 +103,8 @@ def to_base_units(amount: Decimal | str, decimals: int, *, maximum: int = 2**256
     integral = scaled.to_integral_value()
     if scaled != integral:
         raise ValueError(f"amount exceeds asset precision ({decimals} decimals)")
+    if scaled > maximum:
+        raise OverflowError("base-unit amount exceeds chain range")
     result = int(integral)
     if result > maximum:
         raise OverflowError("base-unit amount exceeds chain range")
@@ -126,7 +134,11 @@ class RequestsTransport:
         return body.get("result")
 
     def post(self, url: str, path: str, payload: dict[str, Any]) -> Any:
-        response = requests.post(url.rstrip("/") + path, json=payload, timeout=15)
+        response = requests.post(
+            url.rstrip("/") + path, json=payload, timeout=15, allow_redirects=False
+        )
+        if 300 <= response.status_code < 400:
+            raise PreparationError("RPC redirects are not permitted")
         response.raise_for_status()
         return response.json()
 
@@ -361,15 +373,44 @@ class TronNativeExecutor:
     def __init__(self, transport: RpcTransport | None = None):
         self.transport = transport or RequestsTransport()
 
+    def _post(self, chain_id, url, path, payload):
+        from .mpc_tron_network import guarded_tron_post
+
+        return guarded_tron_post(chain_id, url, self.transport, path, payload)
+
     def prepare(
-        self, chain_id: str, asset_key: str, source: str, destination: str, amount: Decimal
+        self,
+        chain_id: str,
+        asset_key: str,
+        source: str,
+        destination: str,
+        amount: Decimal,
+        *,
+        sweep: bool = False,
     ):
         spec = get_chain_spec(chain_id)
         if spec.kind is not ChainKind.TRON:
             raise UnsupportedNativeTransaction("TRON executor requires a TRON chain")
         value = to_base_units(amount, spec.native_decimals, maximum=2**63 - 1)
-        body = self.transport.post(
-            rpc_urls(chain_id)[0],
+        from django.conf import settings
+
+        mpc = settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        url = rpc_urls(chain_id)[0]
+        fees = {}
+        if mpc:
+            from .tron_policy import resource_budget
+
+            def post(path, payload):
+                return self._post(chain_id, url, path, payload)
+
+            balance, budget, fees = resource_budget(chain_id, source, destination, post)
+            if sweep:
+                value = min(value, balance - budget)
+            if value <= 0 or balance < value + budget:
+                raise InsufficientBalance("source cannot fund TRX plus resource budget")
+        body = self._post(
+            chain_id,
+            url,
             "/wallet/createtransaction",
             {"owner_address": source, "to_address": destination, "amount": value, "visible": True},
         )
@@ -377,6 +418,15 @@ class TronNativeExecutor:
         raw = body.get("raw_data")
         if not tx_id or not raw:
             raise PreparationError("TRON node did not return txID/raw_data")
+        if mpc:
+            from .mpc_tron_network import network_identity
+            from .tron_policy import freeze_transaction, validate_transfer
+
+            validate_transfer(body, source, destination, value)
+            body, evidence = freeze_transaction(chain_id, body, post)
+            fees.update(evidence)
+            fees["network"] = network_identity(chain_id)
+            tx_id, raw = body["txID"], body["raw_data"]
         expiration = raw.get("expiration")
         return PreparedNativeTransaction(
             spec.chain_id,
@@ -387,10 +437,13 @@ class TronNativeExecutor:
             value,
             bytes.fromhex(tx_id),
             body,
-            {},
+            fees,
             expected_tx_id=tx_id,
             expires_at_ms=expiration,
         )
+
+    def prepare_sweep(self, chain_id, asset_key, source, destination, amount):
+        return self.prepare(chain_id, asset_key, source, destination, amount, sweep=True)
 
     @staticmethod
     def assemble(prepared: PreparedNativeTransaction, signed_ref: str) -> dict[str, Any]:
@@ -400,31 +453,54 @@ class TronNativeExecutor:
         return body
 
     def broadcast(self, chain_id: str, signed: dict[str, Any], expected: str) -> str:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .tron_policy import require_fresh
+            from .tron_wire import hex_bytes, validate_wire
+
+            unsigned = {k: v for k, v in signed.items() if k != "signature"}
+            validate_wire(unsigned)
+            if unsigned["txID"] != expected or len(signed.get("signature", [])) != 1:
+                raise ValueError("TRON persisted broadcast identity mismatch")
+            hex_bytes(signed["signature"][0], 65)
+            require_fresh(unsigned)
         ambiguous = False
         for url in rpc_urls(chain_id):
             try:
-                result = self.transport.post(url, "/wallet/broadcasttransaction", signed)
+                result = self._post(chain_id, url, "/wallet/broadcasttransaction", signed)
             except (requests.Timeout, requests.ConnectionError):
                 ambiguous = True
                 continue
-            if result.get("result") is True:
+            if result.get("result") is True and result.get("txid", expected) == expected:
                 return expected
             message = base64.b64decode(result.get("message", "")).decode(errors="replace").lower()
-            if "duplicate" in message:
+            if (
+                result.get("code") == "DUP_TRANSACTION_ERROR"
+                and result.get("txid", expected) == expected
+            ):
                 return expected
+            if ambiguous:
+                raise AmbiguousBroadcast("earlier TRON RPC may have accepted original txID")
             raise DeterministicBroadcastRejection(message or result.get("code", "TRON rejected tx"))
         if ambiguous:
             raise AmbiguousBroadcast("TRON broadcast outcome is unknown")
         raise DeterministicBroadcastRejection("all TRON endpoints rejected transaction")
 
     def reconcile(self, prepared: PreparedNativeTransaction, tx_id: str) -> ReconciliationResult:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .tron_settlement import reconcile_tron_transfer
+
+            return reconcile_tron_transfer(self, prepared, tx_id)
         urls = rpc_urls(prepared.chain_id)
         full_info = None
         last_error = None
         for candidate in urls:
             try:
-                full_info = self.transport.post(
-                    candidate, "/wallet/gettransactioninfobyid", {"value": tx_id}
+                full_info = self._post(
+                    prepared.chain_id, candidate, "/wallet/gettransactioninfobyid", {"value": tx_id}
                 )
                 break
             except (requests.Timeout, requests.ConnectionError) as exc:
@@ -436,8 +512,11 @@ class TronNativeExecutor:
         solid_info = None
         for candidate in urls:
             try:
-                solid_info = self.transport.post(
-                    candidate, "/walletsolidity/gettransactioninfobyid", {"value": tx_id}
+                solid_info = self._post(
+                    prepared.chain_id,
+                    candidate,
+                    "/walletsolidity/gettransactioninfobyid",
+                    {"value": tx_id},
                 )
                 break
             except (requests.Timeout, requests.ConnectionError) as exc:

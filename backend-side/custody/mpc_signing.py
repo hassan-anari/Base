@@ -12,6 +12,7 @@ from django.utils import timezone
 from eth_keys.exceptions import BadSignature
 from eth_utils.exceptions import ValidationError
 
+from .chain_registry import ChainKind, get_chain_spec
 from .models import MpcSigningSession, OnchainTransactionAttempt
 from .mpc_binding import (
     identity_fingerprint,
@@ -71,9 +72,13 @@ def coordinator_request(attempt, session) -> dict:
         "payload_hex": payload.hex(),
         "message_fingerprint": fingerprint,
         "operation_type": attempt.operation_type,
-        "chain": attempt.chain_id,
+        "chain": "TRON"
+        if get_chain_spec(attempt.chain_id).kind is ChainKind.TRON
+        else attempt.chain_id,
         "asset": attempt.asset_key,
-        "expected_source": attempt.from_address.lower(),
+        "expected_source": attempt.from_address
+        if session.payload_type == "TRON_TXID"
+        else attempt.from_address.lower(),
         "derivation_reference": None,
     }
 
@@ -161,9 +166,14 @@ def _default_consumer(attempt, session):
         or result.get("signature_hex") != result["r"] + result["s"]
     ):
         raise ValueError("completed signature identity/encoding mismatch")
-    signed_payload, tx_id = assemble_evm_signature(
-        attempt.prepared_metadata, result, attempt.from_address
-    )
+    if session.payload_type == "TRON_TXID":
+        from .tron_policy import assemble_tron_signature
+
+        signed_payload, tx_id = assemble_tron_signature(attempt.prepared_metadata, result)
+    else:
+        signed_payload, tx_id = assemble_evm_signature(
+            attempt.prepared_metadata, result, attempt.from_address
+        )
     signature = keys.Signature(
         vrs=(result["recovery_id"], int(result["r"], 16), int(result["s"], 16))
     )
@@ -260,10 +270,10 @@ def advance_mpc_signing(attempt_id: int, client=None):
         try:
             with transaction.atomic():
                 request = coordinator_request(snapshot, session)
-            from .mpc_evm_network import verify_evm_rpc_endpoints
+            from .mpc_tron_network import verify_mpc_rpc_endpoints
             from .native_tx import RequestsTransport
 
-            verify_evm_rpc_endpoints(snapshot.chain_id, RequestsTransport())
+            verify_mpc_rpc_endpoints(snapshot.chain_id, RequestsTransport())
             verify_coordinator_keyset(
                 session.keyset, client.get_keyset(str(session.keyset.keyset_id))
             )
@@ -272,6 +282,10 @@ def advance_mpc_signing(attempt_id: int, client=None):
             from .signer_adapter import CoordinatorSessionNotFound
 
             if session.status == "CREATED":
+                if session.payload_type == "TRON_TXID":
+                    from .tron_policy import require_fresh
+
+                    require_fresh(snapshot.prepared_metadata, signing=True)
                 MpcSigningSession.objects.filter(pk=session.pk).update(
                     status="STARTING", started_at=timezone.now()
                 )
@@ -282,9 +296,17 @@ def advance_mpc_signing(attempt_id: int, client=None):
                 except CoordinatorSessionNotFound:
                     if session.crypto_execution_id is not None:
                         raise ValueError("coordinator lost a known execution") from None
+                    if session.payload_type == "TRON_TXID":
+                        from .tron_policy import require_fresh
+
+                        require_fresh(snapshot.prepared_metadata, signing=True)
                     result = client.create_signing_session(request)
             session = _persist_result(attempt_id, session.pk, request, result)
             if session.status == "CREATED":
+                if session.payload_type == "TRON_TXID":
+                    from .tron_policy import require_fresh
+
+                    require_fresh(snapshot.prepared_metadata, signing=True)
                 result = client.execute_signing_session(str(session.session_id))
                 session = _persist_result(attempt_id, session.pk, request, result)
             elif session.status == "RECONCILIATION_REQUIRED":

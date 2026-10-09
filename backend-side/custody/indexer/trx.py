@@ -38,13 +38,21 @@ class TrxIndexer(IndexerClient):
     def get_balance(
         self, address: str, *, asset_key=None, after_block=None, memo=None
     ) -> BalanceResult:
+        from django.conf import settings
+
         if self._stub_enabled():
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                raise IndexerUnavailable("TRON MPC indexing forbids simulated balances")
             return self._stub_balance(asset_key=asset_key)
         from ..models import Asset
 
         asset = Asset.objects.filter(
             asset_key=asset_key, chain_id=self.chain_id, enabled=True
         ).first()
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            if asset is None:
+                raise IndexerUnavailable("explicit verified TRON balance asset required")
+            return self._mpc_balance(asset, address, after_block)
         if asset and not asset.is_native:
             return self._token_balance(asset, address, after_block)
         urls = rpc_urls(self.chain_id)
@@ -233,6 +241,183 @@ class TrxIndexer(IndexerClient):
             except Exception as exc:
                 last_error = exc
         raise IndexerUnavailable("TRC20 solidified scan unavailable") from last_error
+
+    def _mpc_balance(self, asset, address, after_block):
+        """Bounded solidified backfill; balance observations alone never credit the ledger."""
+        import hashlib
+
+        import base58
+
+        from ..chain_registry import get_chain_spec
+        from ..models import OnchainTransactionAttempt
+        from ..mpc_tron_network import guarded_tron_post, verify_tron_rpc_endpoints
+        from ..native_tx import RequestsTransport
+        from ..token_metadata import assert_verified_token
+        from ..tron_wire import address_bytes, block_identity, integer, serialize_raw
+
+        spec = get_chain_spec(self.chain_id)
+        transport = RequestsTransport()
+        verify_tron_rpc_endpoints(self.chain_id, transport)
+        owner = address_bytes(address)
+
+        def amount(units):
+            integer(units, maximum=2**256 - 1)
+            # Decimal division uses ambient precision and may round a token integer.
+            return Decimal(f"{units}e-{asset.decimals}")
+
+        if not asset.is_native:
+            asset = assert_verified_token(asset.asset_key)
+        caps = spec.gas_settings
+        lookback = int(caps.get("token_initial_lookback_blocks", 1000))
+        overlap = int(caps.get("token_reorg_overlap_blocks", 20))
+        chunk = int(caps.get("token_log_chunk_blocks", 100))
+        if not 0 <= overlap <= 100 or not 1 <= lookback <= 10000 or not overlap + 1 < chunk <= 1000:
+            raise IndexerUnavailable("TRON scan bounds outside reviewed policy")
+        last_error = None
+        for url in rpc_urls(self.chain_id):
+            try:
+
+                def post(path, body):
+                    return guarded_tron_post(self.chain_id, url, transport, path, body)
+
+                if asset.is_native:
+                    account = post(
+                        "/walletsolidity/getaccount", {"address": address, "visible": True}
+                    )
+                    if account and address_bytes(account.get("address")) != owner:
+                        raise ValueError("solidified TRON account mismatch")
+                    units = integer(account.get("balance", 0))
+                else:
+                    balance = post(
+                        "/walletsolidity/triggerconstantcontract",
+                        {
+                            "owner_address": address,
+                            "contract_address": asset.contract_address,
+                            "function_selector": "balanceOf(address)",
+                            "parameter": owner[1:].hex().rjust(64, "0"),
+                            "visible": True,
+                        },
+                    )
+                    if (
+                        balance.get("result", {}).get("result") is not True
+                        or len(bytes.fromhex(balance["constant_result"][0])) != 32
+                    ):
+                        raise ValueError("solidified TRC20 balance evidence mismatch")
+                    units = int(balance["constant_result"][0], 16)
+                head, _, _ = block_identity(post("/walletsolidity/getnowblock", {}))
+                # Genesis allocations are not incoming, signed deposit transfers.
+                start = max(
+                    1, after_block - overlap if after_block is not None else head - lookback
+                )
+                end = min(head, start + chunk - 1)
+                events = []
+                for number in range(start, end + 1):
+                    block = post("/walletsolidity/getblockbynum", {"num": number})
+                    height, block_hash, timestamp = block_identity(block)
+                    if height != number:
+                        raise ValueError("TRON scan block number mismatch")
+                    for tx in block.get("transactions", []):
+                        contracts = tx.get("raw_data", {}).get("contract", [])
+                        if not contracts or contracts[0].get("type") != (
+                            "TransferContract" if asset.is_native else "TriggerSmartContract"
+                        ):
+                            continue
+                        txid = tx["txID"]
+                        raw = serialize_raw(tx["raw_data"])
+                        if (
+                            hashlib.sha256(raw).hexdigest() != txid
+                            or tx.get("raw_data_hex") != raw.hex()
+                        ):
+                            raise ValueError("TRON deposit txID mismatch")
+                        info = post("/walletsolidity/gettransactioninfobyid", {"value": txid})
+                        if (
+                            info.get("id") != txid
+                            or info.get("blockNumber") != number
+                            or info.get("blockTimeStamp") != timestamp
+                        ):
+                            raise ValueError("TRON deposit inclusion mismatch")
+                        if not (
+                            len(tx.get("ret", [])) == 1
+                            and tx["ret"][0].get("contractRet") == "SUCCESS"
+                        ):
+                            continue
+                        if info.get("result") == "FAILED":
+                            raise ValueError("TRON deposit execution evidence disagreement")
+                        effects = []
+                        if asset.is_native:
+                            value = contracts[0]["parameter"]["value"]
+                            if address_bytes(value["to_address"]) == owner:
+                                # Treasury gas funding is not a customer deposit, including
+                                # when native/token wallets share this owned root address.
+                                internal_grant = (
+                                    OnchainTransactionAttempt.objects.filter(
+                                        chain_id=self.chain_id,
+                                        asset_key=asset.asset_key,
+                                        operation_type="GAS_TOPUP",
+                                        network_tx_id=txid,
+                                        from_address=base58.b58encode_check(
+                                            address_bytes(value["owner_address"])
+                                        ).decode(),
+                                        to_address=address,
+                                        base_unit_amount=value["amount"],
+                                        prepared_metadata__raw_data_hex=raw.hex(),
+                                        mpc_sessions__status="COMPLETED",
+                                        mpc_sessions__signature_consumed_at__isnull=False,
+                                    )
+                                    .exclude(signed_payload="")
+                                    .exists()
+                                )
+                                if not internal_grant:
+                                    if OnchainTransactionAttempt.objects.filter(
+                                        chain_id=self.chain_id,
+                                        operation_type="GAS_TOPUP",
+                                        network_tx_id=txid,
+                                    ).exists():
+                                        raise ValueError(
+                                            "TRON gas grant has incomplete custody provenance"
+                                        )
+                                    effects.append(("contract:0", value["amount"]))
+                        else:
+                            if (
+                                info.get("receipt", {}).get("result") != "SUCCESS"
+                                or info.get("result") == "FAILED"
+                            ):
+                                continue
+                            for index, log in enumerate(info.get("log", [])):
+                                topics = log.get("topics", [])
+                                if (
+                                    log.get("address")
+                                    == address_bytes(asset.contract_address)[1:].hex()
+                                    and len(topics) == 3
+                                    and topics[0] == TRANSFER_TOPIC
+                                    and len(bytes.fromhex(topics[1])) == 32
+                                    and topics[1][:24] == "0" * 24
+                                    and topics[2] == owner[1:].hex().rjust(64, "0")
+                                    and len(bytes.fromhex(log["data"])) == 32
+                                ):
+                                    effects.append((f"log:{index}", int(log["data"], 16)))
+                        for event_index, effect_units in effects:
+                            if effect_units > 0:
+                                events.append(
+                                    DepositEvent(
+                                        tx_hash=txid,
+                                        amount=amount(effect_units),
+                                        block=number,
+                                        confirmations=head - number + 1,
+                                        asset_key=asset.asset_key,
+                                        event_index=event_index,
+                                        block_hash=block_hash,
+                                        contract_address=asset.contract_address,
+                                    )
+                                )
+                return BalanceResult(
+                    amount(units),
+                    last_scanned_block=end,
+                    deposit_events=events,
+                )
+            except Exception as exc:
+                last_error = exc
+        raise IndexerUnavailable("TRON pinned solidified scan unavailable") from last_error
 
     def get_txs(self, address: str, after_block=None, memo=None):
         return []

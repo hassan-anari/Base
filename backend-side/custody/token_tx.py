@@ -11,6 +11,7 @@ from .native_tx import (
     PreparedNativeTransaction,
     ReconciliationResult,
     ReconciliationState,
+    TronNativeExecutor,
     UnsupportedNativeTransaction,
     _cap,
     _int,
@@ -134,7 +135,7 @@ def get_transfer_executor(chain_id: str, asset_key: str, transport=None):
     raise UnsupportedNativeTransaction(f"{asset.token_standard} executor is not yet available")
 
 
-class Trc20Executor:
+class Trc20Executor(TronNativeExecutor):
     """TRC20 executor over the exact node-generated TRON transaction."""
 
     def __init__(self, transport=None):
@@ -147,7 +148,11 @@ class Trc20Executor:
 
         spec = get_chain_spec(chain_id)
         asset = assert_verified_token(asset_key)
-        if spec.kind is not ChainKind.TRON or asset.token_standard != "TRC20":
+        if (
+            spec.kind is not ChainKind.TRON
+            or asset.token_standard != "TRC20"
+            or asset.chain_id != chain_id
+        ):
             raise UnsupportedNativeTransaction("TRC20 chain mismatch")
         units = to_base_units(amount, asset.decimals)
         fee_limit = _cap(spec.gas_settings, "max_trc20_fee_limit")
@@ -155,7 +160,8 @@ class Trc20Executor:
         destination_hex = tron_address_hex(destination)
         balance_parameter = source_hex[2:].rjust(64, "0")
         url = rpc_urls(chain_id)[0]
-        balance = self.transport.post(
+        balance = self._post(
+            chain_id,
             url,
             "/wallet/triggerconstantcontract",
             {
@@ -167,18 +173,52 @@ class Trc20Executor:
             },
         )
         try:
+            from django.conf import settings
+
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and (
+                balance.get("result", {}).get("result") is not True
+                or len(balance.get("constant_result", [])) != 1
+                or len(bytes.fromhex(balance["constant_result"][0])) != 32
+            ):
+                raise ValueError("TRC20 balance ABI/result mismatch")
             available = int(balance["constant_result"][0], 16)
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise InsufficientBalance("TRC20 balance preflight failed") from exc
         if available < units:
             raise InsufficientBalance("source token balance is insufficient")
-        account = self.transport.post(
-            url, "/wallet/getaccount", {"address": source, "visible": True}
+        account = self._post(
+            chain_id, url, "/wallet/getaccount", {"address": source, "visible": True}
         )
         if int(account.get("balance", 0)) < fee_limit:
             raise InsufficientBalance("source TRX balance cannot fund reviewed fee_limit")
         parameter = destination_hex[2:].rjust(64, "0") + units.to_bytes(32, "big").hex()
-        body = self.transport.post(
+        from django.conf import settings
+
+        mpc = settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        fees = {"fee_limit_sun": str(fee_limit)}
+        if mpc:
+            from .tron_policy import resource_budget
+
+            def post(path, payload):
+                return self._post(chain_id, url, path, payload)
+
+            estimate = post(
+                "/wallet/estimateenergy",
+                {
+                    "owner_address": source,
+                    "contract_address": asset.contract_address,
+                    "function_selector": "transfer(address,uint256)",
+                    "parameter": parameter,
+                    "call_value": 0,
+                    "visible": True,
+                },
+            )
+            _, _, resource_fees = resource_budget(
+                chain_id, source, destination, post, token=True, estimate=estimate
+            )
+            fees.update(resource_fees)
+        body = self._post(
+            chain_id,
             url,
             "/wallet/triggersmartcontract",
             {
@@ -195,14 +235,27 @@ class Trc20Executor:
         txid, raw = tx.get("txID"), tx.get("raw_data")
         if not txid or not raw or body.get("result", {}).get("result") is False:
             raise FeePolicyError("TRON node did not prepare TRC20 transaction")
-        tx.update(
-            {
-                "token_contract": asset.contract_address,
-                "token_amount": str(units),
-                "token_recipient": destination,
-                "fee_limit": fee_limit,
-            }
-        )
+        if mpc:
+            from .mpc_tron_network import network_identity
+            from .tron_policy import freeze_transaction, validate_transfer
+
+            validate_transfer(
+                tx, source, destination, units, contract=asset.contract_address, fee_limit=fee_limit
+            )
+            tx, evidence = freeze_transaction(chain_id, tx, post)
+            fees.update(evidence)
+            fees["network"] = network_identity(chain_id)
+            fees["token_contract"] = asset.contract_address
+            txid, raw = tx["txID"], tx["raw_data"]
+        else:
+            tx.update(
+                {
+                    "token_contract": asset.contract_address,
+                    "token_amount": str(units),
+                    "token_recipient": destination,
+                    "fee_limit": fee_limit,
+                }
+            )
         return PreparedNativeTransaction(
             chain_id,
             asset_key,
@@ -212,7 +265,7 @@ class Trc20Executor:
             units,
             bytes.fromhex(txid),
             tx,
-            {"fee_limit_sun": str(fee_limit)},
+            fees,
             expected_tx_id=txid,
             expires_at_ms=raw.get("expiration"),
         )
@@ -235,7 +288,14 @@ class Trc20Executor:
         return TronNativeExecutor(self.transport).broadcast(chain_id, signed, expected)
 
     def reconcile(self, prepared, tx_id):
+        from django.conf import settings
+
         from .token_metadata import tron_address_hex
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .tron_settlement import reconcile_tron_transfer
+
+            return reconcile_tron_transfer(self, prepared, tx_id, token=True)
 
         last_error = None
         info = None

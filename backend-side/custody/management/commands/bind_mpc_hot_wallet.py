@@ -50,7 +50,9 @@ class Command(BaseCommand):
                 )
             else:
                 # Base58 encodings used by TRON and Solana are case-sensitive.
-                matches = expected == wallet.address
+                matches = expected == (
+                    wallet.deposit_address if isinstance(wallet, UserWallet) else wallet.address
+                )
             if not matches:
                 raise CommandError("MPC public key does not control configured hot-wallet address")
             wallet.mpc_keyset = keyset

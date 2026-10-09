@@ -41,11 +41,55 @@ def _prepared(attempt: OnchainTransactionAttempt) -> PreparedNativeTransaction:
 
 
 def reconcile_attempt(attempt_id: int):
+    from .mpc_signing import attempt_execution_lock
+
+    with attempt_execution_lock(attempt_id) as acquired:
+        if not acquired:
+            return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+        try:
+            return _reconcile_attempt(attempt_id)
+        except Exception:
+            from django.conf import settings
+
+            from .outbound import sync_parent_state
+
+            snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id == "TRX":
+                OnchainTransactionAttempt.objects.filter(pk=attempt_id).exclude(
+                    status__in=["CONFIRMED", "FAILED"]
+                ).update(status="RECONCILIATION_REQUIRED", error_code="TRON_EVIDENCE_UNVERIFIED")
+                sync_parent_state(OnchainTransactionAttempt.objects.get(pk=attempt_id))
+            raise
+
+
+def _reconcile_attempt(attempt_id: int):
     snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
     if snapshot.status in {"CONFIRMED", "FAILED"}:
         return snapshot
     if not snapshot.network_tx_id:
         return snapshot
+    from django.conf import settings
+
+    from .chain_registry import ChainKind, get_chain_spec
+
+    if (
+        settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        and get_chain_spec(snapshot.chain_id).kind is ChainKind.TRON
+    ):
+        from .models import MpcSigningSession
+        from .mpc_signing import _default_consumer
+
+        if not snapshot.signed_payload:
+            return snapshot  # An unsigned txID cannot authorize financial settlement.
+        with transaction.atomic():
+            session = MpcSigningSession.objects.select_related("keyset").get(attempt=snapshot)
+            if session.status != "COMPLETED" or not session.signature_consumed_at:
+                raise ValueError("TRON reconciliation lacks consumed MPC completion")
+            if _default_consumer(snapshot, session) != (
+                snapshot.signed_payload,
+                snapshot.network_tx_id,
+            ):
+                raise ValueError("TRON reconciliation signed identity mismatch")
     result = _executor(snapshot.chain_id, snapshot.asset_key).reconcile(
         _prepared(snapshot), snapshot.network_tx_id
     )
@@ -56,13 +100,20 @@ def reconcile_attempt(attempt_id: int):
     }:
         updates = {"confirmation_metadata": {"state": result.state.value, **result.evidence}}
         if result.state is ReconciliationState.RECONCILIATION_REQUIRED:
-            updates.update(status="RECONCILIATION_REQUIRED", error_code="TOKEN_EFFECT_MISMATCH")
+            updates.update(
+                status="RECONCILIATION_REQUIRED",
+                error_code=result.evidence.get("error", "TOKEN_EFFECT_MISMATCH"),
+            )
             if snapshot.operation_type == "WITHDRAWAL":
                 WithdrawalRequest.objects.filter(pk=snapshot.operation_id).update(
                     status="RECONCILIATION_REQUIRED"
                 )
             elif snapshot.operation_type == "SWEEP":
                 SweepJob.objects.filter(pk=snapshot.operation_id).update(
+                    status="RECONCILIATION_REQUIRED"
+                )
+            else:
+                GasTopupIntent.objects.filter(pk=snapshot.operation_id).update(
                     status="RECONCILIATION_REQUIRED"
                 )
         OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(**updates)

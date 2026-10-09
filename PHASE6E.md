@@ -226,6 +226,10 @@ and transaction concurrency cases), deterministic Phase 6E contracts/recovery,
 Django checks and migration consistency, Ruff, Rust fmt/clippy/fast workspace
 tests, existing Rust dependency audit, frontend contract tests and both builds.
 Test-only local signatures in deterministic tests do not establish MPC acceptance.
+The fast frontend job also installs the EVM fixture on Linux and compiles its
+Solidity token, catching fixture platform/lockfile failures before fresh-prime
+protocol execution. Ganache's bundled macOS-only `fsevents` dependency is optional;
+its lockfile retains that classification so npm 10 can install the fixture on Linux.
 
 The **full cryptographic gate is mandatory before Phase 6E approval**, on the exact
 reviewed PR head. **Before merge**, a reviewer with label permission adds

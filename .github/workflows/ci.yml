@@ -266,6 +266,10 @@ jobs:
           cache: npm
           cache-dependency-path: front-side/package-lock.json
       - run: npm ci
+      - name: Verify Linux EVM acceptance dependencies and token compilation
+        run: |
+          npm ci --prefix ../mpc-side/integration/evm
+          node ../mpc-side/integration/evm/compile.cjs "$RUNNER_TEMP/phase6e-token-bytecode"
       - run: npm run test:contract
       - run: npm run build
       - run: npm run build:sim

@@ -778,6 +778,14 @@ def test_mainnet_and_local_signer_production_guards(context, settings):
         assert_mpc_backend_runtime_safe("ETH")
 
 
+def test_integration_requires_postgresql(context):
+    from custody.signer_adapter import assert_mpc_backend_runtime_safe
+
+    with patch.object(connection, "vendor", "sqlite"):
+        with pytest.raises(RuntimeError, match="requires PostgreSQL"):
+            assert_mpc_backend_runtime_safe("ETH")
+
+
 def test_missing_reservation_and_changed_approval_prevent_signing(context):
     from custody.models import AdminActionLog
 

@@ -43,6 +43,10 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
             or settings.CUSTODY_TX_MODE != "live"
         ):
             raise RuntimeError(SELF_HOSTED_MPC_DISABLED_MESSAGE)
+        from django.db import connection
+
+        if connection.vendor != "postgresql":
+            raise RuntimeError("Phase 6E MPC integration requires PostgreSQL execution ownership")
         from .mpc_transport import coordinator_tls_context
 
         coordinator_tls_context()

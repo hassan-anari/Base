@@ -150,8 +150,8 @@ PostgreSQL advisory ownership serializes resumable advancement, preparation and
 broadcast per attempt; a competing worker returns the current durable state.
 Row locks atomically persist the session and nonce allocation and consume a
 completed signature together with the signed bytes and local transaction hash.
-The advisory claim is released on worker death. PostgreSQL is required for the
-concurrency gates; SQLite is not evidence of concurrent safety.
+The advisory claim is released on worker death. Runtime activation requires
+PostgreSQL; SQLite cannot activate the integration or establish concurrent safety.
 
 One attempt owns one signing session. Create and execute are idempotent for that
 same coordinator session. Interactive cryptography runs asynchronously in Rust;

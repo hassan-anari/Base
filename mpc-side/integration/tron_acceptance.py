@@ -156,6 +156,7 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
     hot_keyset = imported_keyset(net.aux_context, net.aux_state)
     hot = address_from_public_key("TRX", hot_keyset.public_key)
     # A second independently generated root proves deposit ownership; no child derivation.
+    deposit_root_started = time.monotonic()
     if deposit_metadata is None:
         context = binding("TRON")
         execute(net, context)
@@ -171,8 +172,10 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
         # Reuses DKG/auxiliary artifacts, never a replacement signing execution.
         context, state = deposit_metadata
     assert state["auxiliary"]["status"] == "AUXILIARY_COMPLETED", state["auxiliary"]["status"]
+    print(f"CI_STAGE tron_deposit_root_seconds={time.monotonic() - deposit_root_started:.3f}")
     deposit_keyset = imported_keyset(context, state)
     deposit = address_from_public_key("TRX", deposit_keyset.public_key)
+    validator_acceptance_started = time.monotonic()
     validator = Validator(tmp_path / "validator", [(hot, 10000000000), (deposit, 0)])
     evidence = {
         "validator_release": "GreatVoyage-v4.8.2.3",
@@ -506,6 +509,10 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                 net.start("signer-a")
     finally:
         validator.close()
+        print(
+            "CI_STAGE tron_validator_acceptance_seconds="
+            f"{time.monotonic() - validator_acceptance_started:.3f}"
+        )
         (tmp_path / "tron-evidence.json").write_text(json.dumps(evidence, indent=2))
     print("REAL_TRON_ACCEPTANCE", json.dumps(evidence, sort_keys=True))
 

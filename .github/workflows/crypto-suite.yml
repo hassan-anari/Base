@@ -1,0 +1,100 @@
+name: Isolated crypto suite
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        required: true
+        type: string
+      reviewed_head_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REVIEWED_HEAD_SHA: ${{ inputs.reviewed_head_sha }}
+
+jobs:
+  crypto-suite:
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wallet_mpc
+          POSTGRES_USER: wallet_mpc
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wallet_mpc -d wallet_mpc"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    runs-on: ubuntu-latest
+    env:
+      CRYPTO_SUITE: ${{ inputs.suite }}
+      DATABASE_URL: postgresql://wallet_mpc:ci-only-password@127.0.0.1:5432/wallet_mpc
+      POSTGRES_DB: wallet_mpc
+      POSTGRES_USER: wallet_mpc
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_HOST: 127.0.0.1
+      DJANGO_SECRET_KEY: ci-transport-only
+      MPC_SIGNER_BACKEND: local_key
+      CUSTODY_DEMO_MODE: "true"
+      CUSTODY_TX_MODE: stub
+      CUSTODY_INDEXER_MODE: stub
+      LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
+      PHASE6F_TRON_JAR: /tmp/phase6f-FullNode.jar
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: dtolnay/rust-toolchain@stable
+        with: {toolchain: 1.90.0}
+      - uses: Swatinem/rust-cache@v2
+        with: {workspaces: mpc-side, shared-key: mpc-network}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend-side/requirements.txt
+      - run: pip install -r backend-side/requirements.txt
+      - if: inputs.suite == 'evm' || inputs.suite == 'tron'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mpc-side/integration/evm/package-lock.json
+      - if: inputs.suite == 'evm' || inputs.suite == 'tron'
+        run: npm ci --prefix mpc-side/integration/evm
+      - if: inputs.suite == 'tron'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+      - name: Fetch and verify pinned disposable java-tron validator
+        if: inputs.suite == 'tron'
+        run: |
+          curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
+      - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
+      - name: Run every selected original scenario with private fixtures local to this job
+        run: |
+          mkdir -p work/crypto
+          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crypto-${{ inputs.suite }}-public-results
+          retention-days: 7
+          path: |
+            work/crypto/manifest.json
+            work/crypto/results.xml
+            work/crypto/fixtures/**/tron-evidence.json
+

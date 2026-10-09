@@ -297,6 +297,10 @@ def _token_native_requirement(job: SweepJob) -> Decimal:
         units = gas_limit * int(fee_cap)
     elif cfg.kind.value == "tron":
         units = int(settings["max_trc20_fee_limit"])
+        from django.conf import settings as django_settings
+
+        if django_settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            units += int(settings["max_bandwidth_bytes"]) * int(settings["max_bandwidth_price_sun"])
     elif cfg.kind.value == "solana":
         units = int(settings["max_fee_lamports"]) + int(settings["max_ata_rent_lamports"])
     else:

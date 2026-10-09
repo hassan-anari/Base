@@ -57,7 +57,7 @@ def canonical_contract(kind: ChainKind, value: str) -> str:
         except Exception as exc:
             raise TokenVerificationError(f"invalid {kind.value} token address") from exc
         expected = 21 if kind is ChainKind.TRON else 32
-        if len(raw) != expected:
+        if len(raw) != expected or (kind is ChainKind.TRON and raw[0] != 0x41):
             raise TokenVerificationError(f"invalid {kind.value} token address")
         return value
     raise TokenVerificationError("tokens are not supported on this chain family")
@@ -153,19 +153,32 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
                 )
             )
         elif standard == "TRC20":
+            from django.conf import settings
+
+            from .mpc_tron_network import guarded_tron_post
+
+            def tron_post(path, body):
+                return guarded_tron_post(spec.chain_id, url, transport, path, body)
+
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                deployed = tron_post(
+                    "/wallet/getcontract", {"value": asset.contract_address, "visible": True}
+                )
+                if tron_address_hex(deployed.get("contract_address", "")) != tron_address_hex(
+                    asset.contract_address
+                ) or not deployed.get("bytecode"):
+                    raise TokenVerificationError("TRC20 deployed contract identity unavailable")
             zero = "00" * 20
             common = {
                 "contract_address": asset.contract_address,
                 "owner_address": asset.contract_address,
                 "visible": True,
             }
-            dec = transport.post(
-                url,
+            dec = tron_post(
                 "/wallet/triggerconstantcontract",
                 {**common, "function_selector": "decimals()", "parameter": ""},
             )
-            bal = transport.post(
-                url,
+            bal = tron_post(
                 "/wallet/triggerconstantcontract",
                 {
                     **common,
@@ -174,6 +187,14 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
                 },
             )
             try:
+                if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                    if any(
+                        response.get("result", {}).get("result") is not True
+                        or len(response.get("constant_result", [])) != 1
+                        or len(bytes.fromhex(response["constant_result"][0])) != 32
+                        for response in (dec, bal)
+                    ):
+                        raise ValueError
                 decimals = int((dec["constant_result"][0]), 16)
                 int(bal["constant_result"][0], 16)
             except (KeyError, IndexError, TypeError, ValueError) as exc:

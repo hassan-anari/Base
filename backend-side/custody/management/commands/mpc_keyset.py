@@ -49,7 +49,7 @@ class Command(BaseCommand):
                 f"{keyset.threshold}-of-{keyset.party_count} {keyset.status}"
             )
         elif action in {"import-dkg", "activate"}:
-            if keyset.scope == "EVM":
+            if keyset.scope in {"EVM", "TRON"}:
                 from custody.mpc_binding import verify_coordinator_keyset
                 from custody.signer_adapter import SelfHostedMpcAdapter
 
@@ -66,7 +66,7 @@ class Command(BaseCommand):
                     keyset.save()
                     return
             elif action == "import-dkg":
-                raise CommandError("Phase 6E imports EVM CGGMP root keysets only")
+                raise CommandError("only reviewed EVM/TRON CGGMP root keysets can import DKG")
             if not all(
                 [
                     keyset.public_key,
@@ -83,7 +83,7 @@ class Command(BaseCommand):
                     scope=keyset.scope, active_for_new_wallets=True
                 ).update(active_for_new_wallets=False)
                 keyset.status = "ACTIVE"
-                keyset.active_for_new_wallets = keyset.scope != "EVM"
+                keyset.active_for_new_wallets = keyset.scope not in {"EVM", "TRON"}
                 keyset.full_clean()
                 keyset.save()
         else:

@@ -41,11 +41,42 @@ def _prepared(attempt: OnchainTransactionAttempt) -> PreparedNativeTransaction:
 
 
 def reconcile_attempt(attempt_id: int):
+    from .mpc_signing import attempt_execution_lock
+
+    with attempt_execution_lock(attempt_id) as acquired:
+        if not acquired:
+            return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+        return _reconcile_attempt(attempt_id)
+
+
+def _reconcile_attempt(attempt_id: int):
     snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
     if snapshot.status in {"CONFIRMED", "FAILED"}:
         return snapshot
     if not snapshot.network_tx_id:
         return snapshot
+    from django.conf import settings
+
+    from .chain_registry import ChainKind, get_chain_spec
+
+    if (
+        settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        and get_chain_spec(snapshot.chain_id).kind is ChainKind.TRON
+    ):
+        from .models import MpcSigningSession
+        from .mpc_signing import _default_consumer
+
+        if not snapshot.signed_payload:
+            return snapshot  # An unsigned txID cannot authorize financial settlement.
+        with transaction.atomic():
+            session = MpcSigningSession.objects.select_related("keyset").get(attempt=snapshot)
+            if session.status != "COMPLETED" or not session.signature_consumed_at:
+                raise ValueError("TRON reconciliation lacks consumed MPC completion")
+            if _default_consumer(snapshot, session) != (
+                snapshot.signed_payload,
+                snapshot.network_tx_id,
+            ):
+                raise ValueError("TRON reconciliation signed identity mismatch")
     result = _executor(snapshot.chain_id, snapshot.asset_key).reconcile(
         _prepared(snapshot), snapshot.network_tx_id
     )

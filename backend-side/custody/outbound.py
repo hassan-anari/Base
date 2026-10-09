@@ -6,6 +6,8 @@ import base64
 import hashlib
 import json
 import uuid
+from datetime import datetime
+from datetime import timezone as datetime_timezone
 from decimal import Decimal
 
 from django.conf import settings
@@ -207,10 +209,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
         try:
             if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
                 from .mpc_binding import local_root_keyset
-                from .mpc_evm_network import verify_evm_rpc_endpoints
+                from .mpc_tron_network import verify_mpc_rpc_endpoints
 
                 local_root_keyset(attempt)
-                verify_evm_rpc_endpoints(attempt.chain_id, executor.transport)
+                verify_mpc_rpc_endpoints(attempt.chain_id, executor.transport)
             method = (
                 executor.prepare_sweep
                 if attempt.operation_type == "SWEEP" and hasattr(executor, "prepare_sweep")
@@ -255,6 +257,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             attempt.fee_metadata = prepared.fee_metadata
             attempt.network_tx_id = prepared.expected_tx_id
             attempt.last_valid_block = prepared.last_valid_block
+            if prepared.expires_at_ms is not None:
+                attempt.expires_at = datetime.fromtimestamp(
+                    prepared.expires_at_ms / 1000, datetime_timezone.utc
+                )
             if int(attempt.base_unit_amount) != prepared.base_unit_amount:
                 from .models import Asset
 
@@ -280,6 +286,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             validate_custody_intent(attempt)
             keyset = local_root_keyset(attempt)
             identity = transaction_identity(attempt, keyset)
+            if keyset.scope == "TRON":
+                from .tron_policy import require_fresh
+
+                require_fresh(attempt.prepared_metadata, signing=True)
             payload_type, payload = exact_signing_payload(
                 attempt.chain_id, attempt.prepared_metadata, b""
             )
@@ -385,9 +395,9 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
         )
     try:
         if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
-            from .mpc_evm_network import verify_evm_rpc_endpoints
+            from .mpc_tron_network import verify_mpc_rpc_endpoints
 
-            verify_evm_rpc_endpoints(attempt.chain_id, executor.transport)
+            verify_mpc_rpc_endpoints(attempt.chain_id, executor.transport)
         with transaction.atomic():
             attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
             if attempt.status != "SIGNED":

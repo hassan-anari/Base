@@ -24,7 +24,7 @@ from .crypto_utils import derive_scalar
 logger = logging.getLogger("custody.vault")
 
 SELF_HOSTED_MPC_DISABLED_MESSAGE = (
-    "self_hosted_mpc requires explicit Phase 6E isolated EVM integration enablement; "
+    "self_hosted_mpc requires explicit isolated EVM or TRON integration enablement; "
     "production activation is disabled"
 )
 
@@ -37,7 +37,7 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
         raise RuntimeError("local_key signer is restricted to demo mode")
     if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
         if (
-            not settings.MPC_EVM_INTEGRATION_ENABLED
+            not (settings.MPC_EVM_INTEGRATION_ENABLED or settings.MPC_TRON_INTEGRATION_ENABLED)
             or settings.MPC_INTEGRATION_ENVIRONMENT not in {"development", "testnet"}
             or settings.CUSTODY_DEMO_MODE
             or settings.CUSTODY_TX_MODE != "live"
@@ -52,8 +52,14 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
         coordinator_tls_context()
         if chain_id is not None:
             from .mpc_evm_network import authorize_evm_network
+            from .mpc_tron_network import authorize_tron_network
 
-            authorize_evm_network(chain_id)
+            if get_chain_spec(chain_id).kind is ChainKind.TRON:
+                authorize_tron_network(chain_id)
+            elif settings.MPC_EVM_INTEGRATION_ENABLED:
+                authorize_evm_network(chain_id)
+            else:
+                raise RuntimeError(SELF_HOSTED_MPC_DISABLED_MESSAGE)
 
 
 class CoordinatorSessionNotFound(RuntimeError):

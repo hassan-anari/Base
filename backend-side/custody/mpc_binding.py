@@ -41,10 +41,13 @@ def source_wallet(attempt):
 
 
 def local_root_keyset(attempt):
-    spec = get_chain_spec(attempt.chain_id)
-    if spec.kind is not ChainKind.EVM:
-        raise MpcBindingError("Phase 6E supports EVM root signing only")
-    wallet = source_wallet(attempt)
+    return _wallet_root_keyset(source_wallet(attempt), attempt.chain_id, attempt.from_address)
+
+
+def _wallet_root_keyset(wallet, chain_id, source_address):
+    spec = get_chain_spec(chain_id)
+    if spec.kind not in {ChainKind.EVM, ChainKind.TRON}:
+        raise MpcBindingError("only reviewed EVM/TRON root signing is supported")
     keyset = wallet.mpc_keyset
     if keyset is None:
         raise MpcBindingError("source wallet has no explicit MPC keyset binding")
@@ -59,7 +62,7 @@ def local_root_keyset(attempt):
         keyset.status != "ACTIVE"
         or keyset.algorithm != "CGGMP24_ECDSA"
         or keyset.curve != "secp256k1"
-        or keyset.scope != "EVM"
+        or keyset.scope != ("TRON" if spec.kind is ChainKind.TRON else "EVM")
         or (keyset.threshold, keyset.party_count) != (2, 3)
         or keyset.participant_identities != PARTICIPANTS
         or keyset.derivation_version != "cggmp_hd_v1"
@@ -67,10 +70,13 @@ def local_root_keyset(attempt):
         or len(keyset.dkg_result_fingerprint) != 64
         or len(keyset.public_key) != 66
     ):
-        raise MpcBindingError("keyset is not a reviewed active CGGMP24 EVM 2-of-3 root keyset")
+        raise MpcBindingError("keyset is not a reviewed active CGGMP24 2-of-3 root keyset")
     address = wallet.deposit_address if isinstance(wallet, UserWallet) else wallet.address
-    expected = address_from_public_key(attempt.chain_id, keyset.public_key)
-    if expected.lower() != address.lower() or expected.lower() != attempt.from_address.lower():
+    expected = address_from_public_key(chain_id, keyset.public_key)
+    normalize = str.lower if spec.kind is ChainKind.EVM else str
+    if normalize(expected) != normalize(address) or normalize(expected) != normalize(
+        source_address
+    ):
         raise MpcBindingError("DKG public key does not control the bound transaction source")
     return keyset
 
@@ -146,21 +152,28 @@ def validate_custody_intent(attempt):
     from .ledger import _require_withdrawal_reservation, lock_user_accounts
 
     spec = get_chain_spec(attempt.chain_id)
+    normalize = str.lower if spec.kind is ChainKind.EVM else str
     validate_chain_asset(attempt.chain_id, attempt.asset_key)
     asset = Asset.objects.get(asset_key=attempt.asset_key, chain_id=attempt.chain_id, enabled=True)
     if to_base_units(attempt.amount, asset.decimals) != int(attempt.base_unit_amount):
         raise MpcBindingError("attempt amount/base-unit mismatch")
     hot = HotWallet.objects.get(chain_id=attempt.chain_id)
+    reconciling = bool(attempt.signed_payload) and attempt.status in {
+        "BROADCASTED",
+        "RECONCILIATION_REQUIRED",
+    }
     if attempt.operation_type == "WITHDRAWAL":
         operation = WithdrawalRequest.objects.get(pk=attempt.operation_id)
-        if operation.status not in {"APPROVED", "PROCESSING", "RECONCILIATION_REQUIRED"}:
+        if operation.status not in {"APPROVED", "PROCESSING", "RECONCILIATION_REQUIRED"} | (
+            {"BROADCASTED"} if reconciling else set()
+        ):
             raise MpcBindingError("withdrawal is not approved for signing")
         if (operation.chain_id, operation.asset_key, operation.to_address, operation.amount) != (
             attempt.chain_id,
             attempt.asset_key,
             attempt.to_address,
             attempt.amount,
-        ) or hot.address.lower() != attempt.from_address.lower():
+        ) or normalize(hot.address) != normalize(attempt.from_address):
             raise MpcBindingError("withdrawal intent mismatch")
         approval = (
             AdminActionLog.objects.filter(
@@ -194,10 +207,13 @@ def validate_custody_intent(attempt):
             or wallet.chain_id != attempt.chain_id
             or wallet.asset_key != attempt.asset_key
             or operation.asset_key != attempt.asset_key
-            or wallet.deposit_address.lower() != attempt.from_address.lower()
-            or hot.address.lower() != attempt.to_address.lower()
+            or normalize(wallet.deposit_address) != normalize(attempt.from_address)
+            or normalize(hot.address) != normalize(attempt.to_address)
             or operation.status
-            not in {"CREATED", "SWEEP_PROCESSING", "GAS_TOPUP_CONFIRMED", "RECONCILIATION_REQUIRED"}
+            not in (
+                {"CREATED", "SWEEP_PROCESSING", "GAS_TOPUP_CONFIRMED", "RECONCILIATION_REQUIRED"}
+                | ({"SWEEP_BROADCASTED"} if reconciling else set())
+            )
             or operation.balance_snapshot is None
             or operation.balance_snapshot <= effective_deposit_threshold(asset, spec)
             or attempt.amount > operation.balance_snapshot
@@ -208,23 +224,41 @@ def validate_custody_intent(attempt):
             raise MpcBindingError("sweep gas grant is not confirmed")
     elif attempt.operation_type == "GAS_TOPUP":
         operation = GasTopupIntent.objects.get(pk=attempt.operation_id)
-        known = (
-            UserWallet.objects.filter(
-                chain_id=attempt.chain_id,
-                deposit_address__iexact=attempt.to_address,
-                status="ACTIVE",
-            ).exists()
-            or hot.address.lower() == attempt.to_address.lower()
-        )
+        known = UserWallet.objects.filter(
+            chain_id=attempt.chain_id,
+            **(
+                {"deposit_address__iexact": attempt.to_address}
+                if spec.kind is ChainKind.EVM
+                else {"deposit_address": attempt.to_address}
+            ),
+            status="ACTIVE",
+        ).exists() or normalize(hot.address) == normalize(attempt.to_address)
+        maximum_grant = spec.gas_topup_amount * 10
+        if spec.kind is ChainKind.TRON:
+            maximum_grant = spec.gas_topup_amount
+            recipients = UserWallet.objects.select_related("mpc_keyset").filter(
+                chain_id=attempt.chain_id, deposit_address=attempt.to_address, status="ACTIVE"
+            )
+            if normalize(hot.address) == normalize(attempt.to_address):
+                _wallet_root_keyset(hot, attempt.chain_id, attempt.to_address)
+            elif not recipients.exists():
+                raise MpcBindingError("TRON resource grant destination is not a bound wallet")
+            else:
+                for recipient in recipients:
+                    _wallet_root_keyset(recipient, attempt.chain_id, attempt.to_address)
         if (
-            operation.status not in {"PROCESSING", "RECONCILIATION_REQUIRED"}
+            operation.status
+            not in (
+                {"PROCESSING", "RECONCILIATION_REQUIRED"}
+                | ({"BROADCASTED"} if reconciling else set())
+            )
             or (operation.chain_id, operation.to_address, operation.amount)
             != (attempt.chain_id, attempt.to_address, attempt.amount)
             or not asset.is_native
             or asset.asset_key != spec.native_asset_key
             or not known
-            or hot.address.lower() != attempt.from_address.lower()
-            or attempt.amount > spec.gas_topup_amount * 10
+            or normalize(hot.address) != normalize(attempt.from_address)
+            or attempt.amount > maximum_grant
         ):
             raise MpcBindingError("gas top-up policy or intent mismatch")
     else:
@@ -236,6 +270,10 @@ def transaction_identity(attempt, keyset):
     from .token_metadata import assert_verified_token
 
     spec = get_chain_spec(attempt.chain_id)
+    if spec.kind is ChainKind.TRON:
+        from .tron_policy import tron_transaction_identity
+
+        return tron_transaction_identity(attempt, keyset)
     raw = attempt.prepared_metadata
     asset = Asset.objects.get(asset_key=attempt.asset_key)
     if (raw.get("chainId"), raw.get("nonce")) != (spec.evm_chain_id, attempt.sequence):

@@ -771,7 +771,12 @@ def test_integration_guards_fail_closed(context, settings, field, value):
 def test_non_evm_production_signing_remains_disabled(context, chain_id):
     from custody.signer_adapter import assert_mpc_backend_runtime_safe
 
-    with pytest.raises(ValueError, match="isolated EVM test chains only"):
+    message = (
+        "pinned isolated test validators only"
+        if chain_id == "TRX"
+        else "isolated EVM test chains only"
+    )
+    with pytest.raises(ValueError, match=message):
         assert_mpc_backend_runtime_safe(chain_id)
 
 

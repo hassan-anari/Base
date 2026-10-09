@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       full_crypto:
-        description: Run the required full CGGMP/FROST recovery and EVM acceptance gate
+        description: Run the full CGGMP/FROST recovery and EVM/TRON custody acceptance gate
         type: boolean
         default: true
   schedule:
@@ -69,8 +69,8 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
-      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
-      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
+      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
+      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
       - run: >-
           ruff format --check custody/admin.py custody/api.py custody/apps.py
           custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
@@ -207,6 +207,7 @@ jobs:
       CUSTODY_TX_MODE: stub
       CUSTODY_INDEXER_MODE: stub
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
+      PHASE6F_TRON_JAR: ${{ runner.temp }}/FullNode.jar
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,9 +234,17 @@ jobs:
           cache: npm
           cache-dependency-path: mpc-side/integration/evm/package-lock.json
       - run: npm ci --prefix mpc-side/integration/evm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+      - name: Fetch and verify pinned disposable java-tron validator
+        run: |
+          curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
       - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
       - run: pytest -x -v mpc-side/integration/test_cggmp.py
-      - run: pytest -x -v -s mpc-side/integration/test_cggmp_aux.py --junitxml=work/mpc-network.xml
+      - run: pytest -x -v -s mpc-side/integration/test_cggmp_aux.py --basetemp=work/full-crypto --junitxml=work/mpc-network.xml
       - run: pytest -v mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py
       - run: ruff format --check backend-side/custody/mpc_transport.py mpc-side/integration
       - run: ruff check backend-side/custody/mpc_transport.py mpc-side/integration
@@ -243,7 +252,9 @@ jobs:
         if: always()
         with:
           name: phase6-full-network-results
-          path: work/mpc-network.xml
+          path: |
+            work/mpc-network.xml
+            work/full-crypto/**/tron-evidence.json
 
   frontend:
     runs-on: ubuntu-latest
@@ -270,6 +281,7 @@ jobs:
         run: |
           npm ci --prefix ../mpc-side/integration/evm
           node ../mpc-side/integration/evm/compile.cjs "$RUNNER_TEMP/phase6e-token-bytecode"
+          node ../mpc-side/integration/tron/compile.cjs "$RUNNER_TEMP/phase6f-token-tvm"
       - run: npm run test:contract
       - run: npm run build
       - run: npm run build:sim

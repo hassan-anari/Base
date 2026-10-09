@@ -9,6 +9,8 @@ pyjwt>=2.9
 web3>=7.0
 eth-account>=0.13
 tronpy>=0.6
+# Independent generated-protobuf verification of TRON custody wire acceptance.
+protobuf>=6,<7
 solana>=0.36
 solders>=0.29
 # --- TON (indexer / address utils; signing delegated to MPC vendor) ---

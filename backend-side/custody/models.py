@@ -450,6 +450,11 @@ class OnchainTransactionAttempt(models.Model):
                 name="uq_onchain_attempt_number",
             ),
             models.UniqueConstraint(
+                fields=["chain_id", "network_tx_id"],
+                condition=models.Q(chain_id="TRX", network_tx_id__isnull=False),
+                name="uq_tron_attempt_txid",
+            ),
+            models.UniqueConstraint(
                 fields=["chain_id", "from_address", "sequence"],
                 condition=models.Q(sequence__isnull=False),
                 name="uq_onchain_source_sequence",

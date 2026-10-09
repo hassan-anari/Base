@@ -36,10 +36,9 @@ def exact_signing_payload(
     if kind is ChainKind.EVM:
         return evm_signing_digest(prepared_payload)
     if kind is ChainKind.TRON:
-        tx_id = prepared_payload.get("txID")
-        if not isinstance(tx_id, str) or len(tx_id) != 64:
-            raise ValueError("TRON MPC signing requires an exact 32-byte txID")
-        return "TRON_TXID", bytes.fromhex(tx_id)
+        from .tron_wire import validate_wire
+
+        return "TRON_TXID", validate_wire(prepared_payload)
     if kind is ChainKind.SOLANA:
         if not signing_payload and prepared_payload.get("message"):
             signing_payload = base64.b64decode(prepared_payload["message"], validate=True)

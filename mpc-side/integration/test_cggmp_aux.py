@@ -570,8 +570,14 @@ def test_aux_transport_accepts_distinct_same_round_and_rejects_sequence_replays(
         assert inject("signer-b", bind_wire(wire(44, 2) | mutation)) == 409
     assert inject("coordinator", wire(44, 2)) == 403
     assert inject("signer-b", wire(44, 2) | {"payload_digest": "00" * 32}) == 409
+    code, running = aux_control(net, "signer-a", "start", auxiliary)
+    assert code == 200 and running["status"] == "IN_PROGRESS"
+    time.sleep(0.1)
     net.stop("signer-a")
     net.start("signer-a")
+    code, interrupted = aux_control(net, "signer-a", "report", auxiliary)
+    assert code == 200 and interrupted["status"] == "RECONCILIATION_REQUIRED"
+    assert not interrupted["durable"]
     assert inject("signer-b", wire(44, 2)) == 409
     assert aux_control(net, "signer-a", "start", auxiliary)[0] == 409
     assert (
@@ -887,6 +893,13 @@ def test_partial_auxiliary_persistence_cannot_claim_readiness(tmp_path):
         auxiliary = state["auxiliary"]["request"]
         execution_id = auxiliary["execution_id"]
         artifact.unlink()
+        for role in ROLES[:4]:
+            net.stop(role)
+            net.start(role)
+        reopened = get_keyset(net, context)["auxiliary"]
+        assert reopened["status"] == "RECONCILIATION_REQUIRED"
+        assert not reopened["internally_signable"]
+        assert reopened["request"]["execution_id"] == execution_id
         assert advance_aux(net, context)[0] == 409
         assert advance_aux(net, context, "reconcile")[0] == 409
         assert get_keyset(net, context)["auxiliary"]["request"]["execution_id"] == execution_id

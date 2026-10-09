@@ -134,6 +134,25 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
     MUST only run for APPROVED requests. Idempotent on status transition.
     """
     req = WithdrawalRequest.objects.get(id=req_id)
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and req.status in {
+        "PROCESSING",
+        "RECONCILIATION_REQUIRED",
+        "BROADCASTED",
+        "CONFIRMED",
+    }:
+        from .models import OnchainTransactionAttempt
+        from .outbound import execute_attempt
+
+        attempt = (
+            OnchainTransactionAttempt.objects.filter(
+                operation_type="WITHDRAWAL", operation_id=req.pk
+            )
+            .order_by("-attempt_number")
+            .first()
+        )
+        if attempt and req.status in {"PROCESSING", "RECONCILIATION_REQUIRED"}:
+            execute_attempt(attempt.pk, admin_id)
+        return WithdrawalRequest.objects.get(pk=req.pk)
     if req.status != "APPROVED":
         raise ValueError("withdrawal must be APPROVED before broadcast")
     from .signer_adapter import assert_mpc_backend_runtime_safe
@@ -199,6 +218,8 @@ def process_withdrawal(admin_id: str, req_id: int) -> WithdrawalRequest:
                 WithdrawalRequest.objects.filter(pk=req.pk).update(
                     status="RECONCILIATION_REQUIRED", updated_at=timezone.now()
                 )
+                return WithdrawalRequest.objects.get(pk=req.pk)
+            if attempt.status not in {"BROADCASTED", "CONFIRMED"}:
                 return WithdrawalRequest.objects.get(pk=req.pk)
             WithdrawalRequest.objects.filter(pk=req.pk, status="PROCESSING").update(
                 status="BROADCASTED",

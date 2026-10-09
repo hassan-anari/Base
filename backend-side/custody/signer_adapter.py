@@ -24,17 +24,39 @@ from .crypto_utils import derive_scalar
 logger = logging.getLogger("custody.vault")
 
 SELF_HOSTED_MPC_DISABLED_MESSAGE = (
-    "Phase 6A foundation only: self_hosted_mpc service signing is not implemented; "
+    "self_hosted_mpc requires explicit Phase 6E isolated EVM integration enablement; "
     "production activation is disabled"
 )
 
 
-def assert_mpc_backend_runtime_safe() -> None:
+def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
     """Defense-in-depth guard used before any signing or outbound side effect."""
     from django.conf import settings
 
+    if settings.MPC_SIGNER_BACKEND == "local_key" and not settings.CUSTODY_DEMO_MODE:
+        raise RuntimeError("local_key signer is restricted to demo mode")
     if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
-        raise RuntimeError(SELF_HOSTED_MPC_DISABLED_MESSAGE)
+        if (
+            not settings.MPC_EVM_INTEGRATION_ENABLED
+            or settings.MPC_INTEGRATION_ENVIRONMENT not in {"development", "testnet"}
+            or settings.CUSTODY_DEMO_MODE
+            or settings.CUSTODY_TX_MODE != "live"
+        ):
+            raise RuntimeError(SELF_HOSTED_MPC_DISABLED_MESSAGE)
+        from .mpc_transport import coordinator_tls_context
+
+        coordinator_tls_context()
+        if chain_id is not None:
+            spec = get_chain_spec(chain_id)
+            if (
+                spec.kind is not ChainKind.EVM
+                or not spec.is_testnet
+                or spec.evm_chain_id in {1, 56, 137, 42161, 8453}
+                or not spec.evm_chain_id
+                or spec.evm_chain_id <= 0
+                or spec.chain_id not in {"ETH", "BSC", "MATIC", "ARB", "BASE"}
+            ):
+                raise RuntimeError("Phase 6E integration permits isolated EVM test chains only")
 
 
 class CoordinatorSessionNotFound(RuntimeError):
@@ -158,8 +180,13 @@ class SelfHostedMpcAdapter:
         )
 
     def get_derived_address(self, network: str, path: str) -> str:
-        data = self._request("GET", "/v1/derive", params={"chain": network, "path": path})
-        return data["address"]
+        del network, path
+        from .mpc_binding import UnsupportedMpcDerivation
+
+        raise UnsupportedMpcDerivation("MPC child derivation is unsupported; bind a root keyset")
+
+    def get_keyset(self, keyset_id: str) -> dict:
+        return self._request("GET", f"/v1/keysets/{keyset_id}")
 
     def create_signing_session(self, payload: dict) -> dict:
         """Idempotently create the durable coordinator operation."""
@@ -167,6 +194,12 @@ class SelfHostedMpcAdapter:
 
     def get_signing_session(self, session_id: str) -> dict:
         return self._request("GET", f"/v1/sign-sessions/{session_id}")
+
+    def execute_signing_session(self, session_id: str) -> dict:
+        return self._request("POST", f"/v1/sign-sessions/{session_id}/execute")
+
+    def reconcile_signing_session(self, session_id: str) -> dict:
+        return self._request("POST", f"/v1/sign-sessions/{session_id}/reconcile")
 
     def sign(self, network: str, raw: dict, path: str, idempotency_key: str) -> str:
         del network, raw, path, idempotency_key
@@ -183,6 +216,13 @@ _ADAPTER: Optional[Any] = None
 def get_adapter():
     """Returns the active signer adapter (LocalVault in demo, self-hosted MPC in production)."""
     global _ADAPTER
+    from django.conf import settings
+
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+        assert_mpc_backend_runtime_safe()
+        return SelfHostedMpcAdapter()
+    if settings.MPC_SIGNER_BACKEND != "local_key" or not settings.CUSTODY_DEMO_MODE:
+        raise RuntimeError("local_key signer is restricted to demo mode")
     if _ADAPTER is None:
         # Read from Django settings (single source of truth for config).
         try:

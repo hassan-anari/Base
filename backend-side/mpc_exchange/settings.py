@@ -140,6 +140,8 @@ MPC_CLIENT_CERT = config("MPC_CLIENT_CERT", default="")
 MPC_CLIENT_KEY = config("MPC_CLIENT_KEY", default="")
 MPC_CA_CERT = config("MPC_CA_CERT", default="")
 MPC_REQUEST_TIMEOUT_SECONDS = config("MPC_REQUEST_TIMEOUT_SECONDS", default=30, cast=int)
+MPC_EVM_INTEGRATION_ENABLED = config("MPC_EVM_INTEGRATION_ENABLED", default=False, cast=bool)
+MPC_INTEGRATION_ENVIRONMENT = config("MPC_INTEGRATION_ENVIRONMENT", default="disabled")
 # Local-key encryption passphrase for at-rest encrypted hot-wallet keys
 LOCAL_KEY_ENCRYPTION_PASSPHRASE = config("LOCAL_KEY_ENCRYPTION_PASSPHRASE", default="")
 

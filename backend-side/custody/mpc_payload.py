@@ -9,6 +9,12 @@ from .chain_registry import ChainKind, get_chain_spec
 
 def evm_signing_digest(unsigned_transaction: dict) -> tuple[str, bytes]:
     """Return the Ethereum signing hash without signing or double hashing."""
+    unsigned_transaction = dict(unsigned_transaction)
+    unsigned_transaction.pop("from", None)
+    if unsigned_transaction.get("type") not in (None, 0, "0x0", 2, "0x2"):
+        raise ValueError("unsupported EVM transaction type")
+    if unsigned_transaction.get("type") in (0, "0x0"):
+        unsigned_transaction.pop("type")
     if "maxFeePerGas" in unsigned_transaction or unsigned_transaction.get("type") in (2, "0x2"):
         from eth_account.typed_transactions import TypedTransaction
 
@@ -53,11 +59,18 @@ def assemble_evm_signature(unsigned_transaction: dict, signature: dict, expected
     from eth_account.typed_transactions import TypedTransaction
     from eth_utils import keccak
 
+    unsigned_transaction = dict(unsigned_transaction)
+    unsigned_transaction.pop("from", None)
+    if unsigned_transaction.get("type") in (0, "0x0"):
+        unsigned_transaction.pop("type")
+    evm_signing_digest(unsigned_transaction)
+    if type(signature["recovery_id"]) is not int:
+        raise ValueError("invalid recovery ID encoding")
     r = int(signature["r"], 16)
     s = int(signature["s"], 16)
     parity = int(signature["recovery_id"])
     if parity not in (0, 1) or not (
-        0 < r < 2**256
+        0 < r < int("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
         and 0 < s <= int("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", 16)
     ):
         raise ValueError("invalid or non-canonical ECDSA signature")

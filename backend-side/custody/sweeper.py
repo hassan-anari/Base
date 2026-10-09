@@ -227,7 +227,7 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
         job.status = (
             "RECONCILIATION_REQUIRED"
             if attempt.status == "RECONCILIATION_REQUIRED"
-            else "SWEEP_BROADCASTED"
+            else ("SWEEP_BROADCASTED" if attempt.status == "BROADCASTED" else "SWEEP_PROCESSING")
         )
         job.tx_hash = attempt.network_tx_id
         job.save(update_fields=["status", "tx_hash"])
@@ -496,7 +496,7 @@ def _execute_claimed_sweep(job_id, attempt, actor_id):
         job.status = (
             "RECONCILIATION_REQUIRED"
             if attempt.status == "RECONCILIATION_REQUIRED"
-            else "SWEEP_BROADCASTED"
+            else ("SWEEP_BROADCASTED" if attempt.status == "BROADCASTED" else "SWEEP_PROCESSING")
         )
         job.save(update_fields=["status", "tx_hash"])
         return job

@@ -11,6 +11,8 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from eth_keys.exceptions import BadSignature
+from eth_utils.exceptions import ValidationError
 
 from .models import HotWallet, MpcSigningSession, OnchainTransactionAttempt
 from .mpc_payload import exact_signing_payload
@@ -137,19 +139,64 @@ def create_attempt(
         )
 
 
+def sync_parent_state(attempt):
+    """Reflect durable attempt progress without settling funds before chain finality."""
+    from .models import GasTopupIntent, SweepJob, WithdrawalRequest
+
+    if attempt.operation_type == "WITHDRAWAL":
+        model, processing, broadcast = WithdrawalRequest, "PROCESSING", "BROADCASTED"
+    elif attempt.operation_type == "SWEEP":
+        model, processing, broadcast = SweepJob, "SWEEP_PROCESSING", "SWEEP_BROADCASTED"
+    else:
+        model, processing, broadcast = GasTopupIntent, "PROCESSING", "BROADCASTED"
+    if attempt.status in {"CONFIRMED", "FAILED"}:
+        return  # Authoritative reconciliation owns terminal settlement.
+    status = {
+        "BROADCASTING": "RECONCILIATION_REQUIRED",
+        "RECONCILIATION_REQUIRED": "RECONCILIATION_REQUIRED",
+        "BROADCASTED": broadcast,
+    }.get(attempt.status, processing)
+    model.objects.filter(pk=attempt.operation_id).exclude(
+        status__in=["CONFIRMED", "DENIED", "FAILED"]
+    ).update(status=status, tx_hash=attempt.network_tx_id if attempt.broadcast_started_at else None)
+
+
 def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = None):
-    """Prepare/sign/broadcast once; uncertainty is always non-retryable."""
+    from .mpc_signing import attempt_execution_lock
     from .signer_adapter import assert_mpc_backend_runtime_safe
 
     assert_mpc_backend_runtime_safe()
-    signer = signer or get_signer()
+    with attempt_execution_lock(attempt_id) as acquired:
+        if not acquired:
+            return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+        try:
+            return _execute_attempt(attempt_id, actor_id, signer)
+        finally:
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                sync_parent_state(OnchainTransactionAttempt.objects.get(pk=attempt_id))
+
+
+def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = None):
+    """Prepare/sign/broadcast once; uncertainty is always non-retryable."""
+    from .signer_adapter import assert_mpc_backend_runtime_safe
+
     attempt = OnchainTransactionAttempt.objects.get(pk=attempt_id)
+    assert_mpc_backend_runtime_safe(attempt.chain_id)
+    signer = signer or get_signer()
     executor = _executor(attempt.chain_id, attempt.asset_key)
     if attempt.status == "BROADCASTING":
         OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
             status="RECONCILIATION_REQUIRED", error_code="CRASH_DURING_BROADCAST"
         )
         return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+    if (
+        settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        and attempt.status in {"SIGNING", "RECONCILIATION_REQUIRED"}
+        and not attempt.signed_payload
+    ):
+        from .mpc_signing import advance_mpc_signing
+
+        return advance_mpc_signing(attempt.pk)
     if attempt.status in {"BROADCASTED", "RECONCILIATION_REQUIRED", "CONFIRMED", "FAILED"}:
         return attempt
     if attempt.status == "SIGNING":
@@ -158,6 +205,19 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
         prepared = _restore(attempt)
     if attempt.status == "PREPARING":
         try:
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                from .chain_registry import get_chain_spec, rpc_urls
+                from .mpc_binding import MpcBindingError, local_root_keyset
+                from .native_tx import _int
+
+                local_root_keyset(attempt)
+                reported_chain_id = _int(
+                    executor.transport.rpc(rpc_urls(attempt.chain_id)[0], "eth_chainId", [])
+                )
+                if reported_chain_id != get_chain_spec(attempt.chain_id).evm_chain_id:
+                    raise MpcBindingError(
+                        "EVM RPC chain ID does not match the reviewed runtime chain"
+                    )
             method = (
                 executor.prepare_sweep
                 if attempt.operation_type == "SWEEP" and hasattr(executor, "prepare_sweep")
@@ -212,7 +272,86 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
             attempt.save()
     else:
         prepared = _restore(attempt)
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and attempt.status == "PREPARED":
+        from .audit import AuditAction, write_audit_log
+        from .mpc_binding import (
+            identity_fingerprint,
+            local_root_keyset,
+            transaction_identity,
+            validate_custody_intent,
+        )
+        from .mpc_signing import advance_mpc_signing
+
+        with transaction.atomic():
+            attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
+            validate_custody_intent(attempt)
+            keyset = local_root_keyset(attempt)
+            identity = transaction_identity(attempt, keyset)
+            payload_type, payload = exact_signing_payload(
+                attempt.chain_id, attempt.prepared_metadata, b""
+            )
+            if MpcSigningSession.objects.filter(attempt=attempt).exists():
+                raise ValueError("attempt already owns an MPC session; reconciliation required")
+            tx = UnsignedTx(
+                attempt.chain_id,
+                attempt.asset_key,
+                attempt.from_address,
+                attempt.to_address,
+                attempt.amount,
+                f"keyset:{keyset.keyset_id}",
+                raw=attempt.prepared_metadata,
+            )
+            policy = SignPolicy(
+                "SWEEPER" if attempt.operation_type == "SWEEP" else attempt.operation_type
+            )
+            signer.authorize_request(actor_id, policy)
+            signer.validate_transaction(tx, policy)
+            signer.enforce_rate_limit(actor_id, policy)
+            MpcSigningSession.objects.create(
+                attempt=attempt,
+                session_id=uuid.uuid4(),
+                keyset=keyset,
+                algorithm=keyset.algorithm,
+                payload_type=payload_type,
+                signing_payload=payload,
+                message_fingerprint=hashlib.sha256(payload).hexdigest(),
+                transaction_identity=identity,
+                coordinator_request_id=identity_fingerprint(identity),
+            )
+            attempt.status = "SIGNING"
+            attempt.save(update_fields=["status", "updated_at"])
+            write_audit_log(
+                actor_id,
+                AuditAction.SIGN_REQUEST,
+                "OnchainTransactionAttempt",
+                str(attempt.pk),
+                {
+                    "operation_type": attempt.operation_type,
+                    "operation_id": attempt.operation_id,
+                    "chain": attempt.chain_id,
+                    "asset": attempt.asset_key,
+                },
+            )
+        return advance_mpc_signing(attempt.pk)
     if attempt.status == "SIGNED":
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .mpc_signing import _default_consumer
+
+            try:
+                with transaction.atomic():
+                    session = MpcSigningSession.objects.select_related("keyset").get(
+                        attempt=attempt
+                    )
+                    if session.status != "COMPLETED" or not session.signature_consumed_at:
+                        raise ValueError("signed attempt lacks a consumed verified MPC completion")
+                    payload, tx_id = _default_consumer(attempt, session)
+                    if (payload, tx_id) != (attempt.signed_payload, attempt.network_tx_id):
+                        raise ValueError("persisted signed transaction identity mismatch")
+            except (ValueError, KeyError, TypeError, BadSignature, ValidationError):
+                OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
+                    status="RECONCILIATION_REQUIRED", error_code="SIGNED_PAYLOAD_IDENTITY_MISMATCH"
+                )
+                return OnchainTransactionAttempt.objects.get(pk=attempt_id)
         signed = (
             json.loads(attempt.signed_payload)
             if attempt.prepared_metadata.get("txID")
@@ -226,41 +365,8 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
         )
         with transaction.atomic():
             attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
-            keyset = _signing_keyset(attempt)
-            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and keyset is None:
-                raise ValueError("production signing requires an explicit MPC keyset binding")
-            session = None
-            if keyset is not None:
-                payload_type, signing_payload = exact_signing_payload(
-                    prepared.chain_id, prepared.unsigned_payload, prepared.signing_payload
-                )
-                session = (
-                    MpcSigningSession.objects.filter(
-                        attempt=attempt, status__in=["CREATED", "STARTING", "IN_PROGRESS"]
-                    )
-                    .order_by("-session_number")
-                    .first()
-                )
-                if session is None:
-                    previous = (
-                        MpcSigningSession.objects.filter(attempt=attempt)
-                        .order_by("-session_number")
-                        .first()
-                    )
-                    if previous and previous.status != "DEFINITIVE_NO_SIGNATURE_FAILURE":
-                        raise ValueError("previous MPC session is not authoritatively retryable")
-                    session = MpcSigningSession.objects.create(
-                        attempt=attempt,
-                        session_number=(previous.session_number + 1 if previous else 1),
-                        session_id=uuid.uuid4(),
-                        keyset=keyset,
-                        algorithm=keyset.algorithm,
-                        message_fingerprint=hashlib.sha256(signing_payload).hexdigest(),
-                        payload_type=payload_type,
-                        signing_payload=signing_payload,
-                    )
-                if session.message_fingerprint != hashlib.sha256(signing_payload).hexdigest():
-                    raise ValueError("prepared signing content changed after MPC session creation")
+            if _signing_keyset(attempt) is not None:
+                raise ValueError("MPC-bound wallets cannot use the local demo signing path")
             attempt.status = "SIGNING"
             attempt.save(update_fields=["status", "updated_at"])
         tx = UnsignedTx(
@@ -272,15 +378,7 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
             derivation_path=ref,
             raw=prepared.unsigned_payload,
         )
-        signing_id = str(session.session_id) if session else f"attempt:{attempt.pk}"
-        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
-            from .mpc_signing import advance_mpc_signing
-
-            return advance_mpc_signing(attempt.pk)
-        if session:
-            MpcSigningSession.objects.filter(pk=session.pk).update(
-                status="IN_PROGRESS", started_at=timezone.now()
-            )
+        signing_id = f"attempt:{attempt.pk}"
         signed_ref = signer.sign(actor_id, tx, policy, idempotency_key=signing_id)
         signed = executor.assemble(prepared, signed_ref)
         if isinstance(signed, bytes):
@@ -292,13 +390,18 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
         OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
             signed_payload=payload, network_tx_id=tx_id, status="SIGNED"
         )
-        if session:
-            MpcSigningSession.objects.filter(pk=session.pk).update(
-                status="COMPLETED", completed_at=timezone.now()
-            )
     try:
         with transaction.atomic():
             attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
+            if attempt.status != "SIGNED":
+                return attempt
+            # Decode only the committed bytes, never an in-memory signing response.
+            signed = (
+                json.loads(attempt.signed_payload)
+                if attempt.prepared_metadata.get("txID")
+                else bytes.fromhex(attempt.signed_payload)
+            )
+            tx_id = attempt.network_tx_id
             attempt.status = "BROADCASTING"
             attempt.broadcast_started_at = timezone.now()
             attempt.save(update_fields=["status", "broadcast_started_at", "updated_at"])
@@ -313,13 +416,16 @@ def execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = N
     except SafePreBroadcastRejection as exc:
         # Preserve the owned nonce and prepared transaction. A safe retry must
         # fill this nonce rather than allocating a higher one.
-        OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
-            status="PREPARED",
-            signed_payload="",
-            network_tx_id=prepared.expected_tx_id,
-            error_code="BROADCAST_REJECTED",
-            error_message=str(exc)[:512],
-        )
+        updates = {
+            "status": "SIGNED",
+            "error_code": "BROADCAST_REJECTED",
+            "error_message": str(exc)[:512],
+        }
+        if settings.MPC_SIGNER_BACKEND != "self_hosted_mpc":
+            updates.update(
+                status="PREPARED", signed_payload="", network_tx_id=prepared.expected_tx_id
+            )
+        OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(**updates)
         raise
     except DeterministicBroadcastRejection as exc:
         # Rejections such as nonce-too-low are not safe proof of non-acceptance.

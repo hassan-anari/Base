@@ -489,6 +489,7 @@ class MpcSigningSession(models.Model):
     crypto_execution_id = models.UUIDField(null=True, blank=True, unique=True)
     selected_signers = models.JSONField(default=list, blank=True)
     signature_result = models.JSONField(default=dict, blank=True)
+    transaction_identity = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=32, choices=STATUSES, default="CREATED")
     coordinator_request_id = models.CharField(max_length=128, blank=True, default="")
     error_code = models.CharField(max_length=64, blank=True, default="")

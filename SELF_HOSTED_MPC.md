@@ -1,4 +1,4 @@
-# Self-hosted MPC — Phase 6A Foundation Baseline Only
+# Self-hosted MPC
 
 Phase 6C.1 adds real FROST Ed25519 2-of-3 DKG over Phase 6B's TLS 1.3 mTLS
 transport. Each independently running signer exchanges private directed packages
@@ -10,15 +10,19 @@ Phase 6C.2 adds real two-signer FROST signing, public aggregation material,
 single-use nonces and durable result recovery over that transport. See
 [SIGNING.md](mpc-side/SIGNING.md) for the authenticated service API and acceptance gate.
 
-Phase 6D work in progress adds direct distributed CGGMP key generation, fresh-prime
-auxiliary generation, full interactive prehashed ECDSA signing, and encrypted
-core and auxiliary artifacts for EVM/TRON. The complete acceptance and final
-CI gate remain in progress; see [CGGMP.md](mpc-side/CGGMP.md).
+Phase 6D delivers direct distributed CGGMP key generation, fresh-prime auxiliary
+generation, interactive exact-prehash ECDSA signing, encrypted core/auxiliary
+artifacts, and real-process recovery coverage for EVM/TRON; see
+[CGGMP.md](mpc-side/CGGMP.md).
 
-**Production MPC signing remains disabled.** `custody.E011` and the runtime guard
-remain unchanged. This milestone adds no wallet provisioning, chain
-transaction assembly or production cutover. The Phase 6A sections below describe
-the historical foundation and future design, not a production deployment.
+Phase 6E integrates approved EVM custody operations through verified root-keyset
+signing, durable transaction assembly/broadcast and existing ledger/finality
+reconciliation. See [PHASE6E.md](PHASE6E.md) for the exact supported scope.
+
+**Production MPC signing remains disabled.** `custody.E011` and runtime guards
+fail closed except for explicit isolated EVM development/testnet integration.
+No general HD provisioning or production cutover is enabled. The Phase 6A
+sections below describe the historical foundation and future design.
 
 Implemented in Phase 6A:
 
@@ -141,3 +145,11 @@ import only public metadata into Django, validate addresses, then activate the k
 reviewed milestone with network, mTLS, persistence, and E2E gates.
 Drain/migrate legacy addresses as a separate reviewed operation; no automatic asset migration is
 provided. TON and Jettons remain disabled.
+
+## Phase 6E integration
+
+See [PHASE6E.md](PHASE6E.md) for explicit isolated EVM enablement, verified root
+wallet bindings, asynchronous custody signing/broadcast/reconciliation, and the
+required full cryptographic approval gate. The existing `cggmp_hd_v1` contract
+metadata does not implement child derivation. General HD provisioning and
+production/mainnet activation remain outside this phase.

@@ -1,0 +1,1 @@
+{"name":"wallet-mpc-evm-acceptance","private":true,"version":"0.0.0","dependencies":{"ganache":"7.9.2","solc":"0.8.30"}}

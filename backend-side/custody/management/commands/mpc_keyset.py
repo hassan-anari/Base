@@ -13,7 +13,9 @@ class Command(BaseCommand):
     help = "Create, inspect, activate, or retire public MPC keyset metadata"
 
     def add_arguments(self, parser):
-        parser.add_argument("action", choices=["create", "inspect", "activate", "retire"])
+        parser.add_argument(
+            "action", choices=["create", "import-dkg", "inspect", "activate", "retire"]
+        )
         parser.add_argument("--keyset-id")
         parser.add_argument("--algorithm", choices=["CGGMP24_ECDSA", "FROST_ED25519"])
         parser.add_argument("--scope", choices=["EVM", "TRON", "SOLANA"])
@@ -46,7 +48,25 @@ class Command(BaseCommand):
                 f"{keyset.keyset_id} {keyset.algorithm} "
                 f"{keyset.threshold}-of-{keyset.party_count} {keyset.status}"
             )
-        elif action == "activate":
+        elif action in {"import-dkg", "activate"}:
+            if keyset.scope == "EVM":
+                from custody.mpc_binding import verify_coordinator_keyset
+                from custody.signer_adapter import SelfHostedMpcAdapter
+
+                metadata = SelfHostedMpcAdapter().get_keyset(str(keyset.keyset_id))
+                if action == "import-dkg":
+                    if keyset.status != "CREATING":
+                        raise CommandError("only creating keysets can import DKG evidence")
+                    keyset.public_key = metadata.get("group_public_key", "")
+                    keyset.dkg_execution_id = metadata.get("execution_id")
+                    keyset.dkg_result_fingerprint = metadata.get("result_fingerprint", "")
+                    keyset.participant_identities = metadata.get("participants", [])
+                verify_coordinator_keyset(keyset, metadata)
+                if action == "import-dkg":
+                    keyset.save()
+                    return
+            elif action == "import-dkg":
+                raise CommandError("Phase 6E imports EVM CGGMP root keysets only")
             if not all(
                 [
                     keyset.public_key,
@@ -63,7 +83,7 @@ class Command(BaseCommand):
                     scope=keyset.scope, active_for_new_wallets=True
                 ).update(active_for_new_wallets=False)
                 keyset.status = "ACTIVE"
-                keyset.active_for_new_wallets = True
+                keyset.active_for_new_wallets = keyset.scope != "EVM"
                 keyset.full_clean()
                 keyset.save()
         else:

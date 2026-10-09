@@ -25,13 +25,12 @@ def custody_signer_configuration(app_configs, **kwargs):
             Error("SaaS MPC backends were removed; use self_hosted_mpc", id="custody.E002")
         )
     if backend == "self_hosted_mpc":
-        errors.append(
-            Error(
-                "Phase 6A is a foundation baseline only; self_hosted_mpc service signing is not "
-                "implemented and cannot be enabled for production funds",
-                id="custody.E011",
-            )
-        )
+        from .signer_adapter import assert_mpc_backend_runtime_safe
+
+        try:
+            assert_mpc_backend_runtime_safe()
+        except (RuntimeError, ValueError, OSError) as exc:
+            errors.append(Error(str(exc), id="custody.E011"))
         if demo:
             errors.append(Error("self_hosted_mpc requires demo mode disabled", id="custody.E007"))
         parsed = urlparse(settings.MPC_COORDINATOR_URL)

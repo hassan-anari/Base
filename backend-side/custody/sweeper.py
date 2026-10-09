@@ -52,7 +52,7 @@ from .gas_station import (
     get_or_create_gas_intent,
 )
 from .indexer.factory import get_indexer
-from .models import Asset, GasTopupIntent, SweepJob, UserWallet
+from .models import Asset, GasTopupIntent, OnchainTransactionAttempt, SweepJob, UserWallet
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 from .native_tx import SafePreBroadcastRejection
 from .rate_limit import rate_limiter
@@ -100,6 +100,59 @@ def _inflight_job(user_wallet: UserWallet):
         .order_by("-sweep_round")
         .first()
     )
+
+
+def _record_sweep_error(job_id: int) -> SweepJob:
+    """An exception is not evidence that an external operation failed."""
+    with transaction.atomic():
+        job = SweepJob.objects.select_for_update().get(pk=job_id)
+        if job.status in {"CONFIRMED", "FAILED"}:
+            return job
+        # Do not lock attempt rows after the parent: reconciliation locks the
+        # attempt first, then this row, and commits both terminal states together.
+        sweep_states = list(
+            OnchainTransactionAttempt.objects.filter(
+                operation_type="SWEEP", operation_id=job.pk
+            ).values_list("status", flat=True)
+        )
+        gas_failed = False
+        gas_resolved = True
+        intent = (
+            GasTopupIntent.objects.get(pk=job.gas_topup_intent_id)
+            if job.gas_topup_intent_id
+            else GasTopupIntent.objects.filter(idempotency_key=f"gas_topup:sweep:{job.pk}").first()
+        )
+        if intent is not None:
+            gas_states = list(
+                OnchainTransactionAttempt.objects.filter(
+                    operation_type="GAS_TOPUP", operation_id=intent.pk
+                ).values_list("status", flat=True)
+            )
+            gas_failed = intent.status == "FAILED" and all(s == "FAILED" for s in gas_states)
+            gas_resolved = gas_failed or (
+                intent.status == "CONFIRMED"
+                and all(s in {"CONFIRMED", "FAILED"} for s in gas_states)
+            )
+        # The legacy demo path can fail gas configuration before an intent is
+        # created and before invoking the sweep signer. Preserve that proven
+        # pre-effect failure, but never infer it for a live custody execution.
+        demo_preflight_failed = (
+            settings.CUSTODY_TX_MODE == "stub"
+            and job.status == "GAS_TOPUP_REQUIRED"
+            and not sweep_states
+            and intent is None
+        )
+        failed = demo_preflight_failed or (
+            gas_resolved
+            and (
+                (bool(sweep_states) and all(s == "FAILED" for s in sweep_states))
+                or (not sweep_states and gas_failed)
+            )
+        )
+        job.status = "FAILED" if failed else "RECONCILIATION_REQUIRED"
+        job.completed_at = timezone.now() if failed else None
+        job.save(update_fields=["status", "completed_at"])
+        return job
 
 
 def trigger_sweep(
@@ -182,12 +235,12 @@ def trigger_sweep(
             else:
                 advance_sweep(job.pk, actor_id)
         except AmbiguousBroadcastError:
-            SweepJob.objects.filter(pk=job.pk).update(status="RECONCILIATION_REQUIRED")
+            _record_sweep_error(job.pk)
             raise
         except SafePreBroadcastRejection:
             raise
         except Exception:
-            SweepJob.objects.filter(pk=job.pk).update(status="FAILED", completed_at=timezone.now())
+            _record_sweep_error(job.pk)
             raise
         return (True, job.id, "sweep started")
     finally:
@@ -201,8 +254,8 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
     amount = job.balance_snapshot
 
     if settings.CUSTODY_TX_MODE == "live":
-        from .native_tx import AmbiguousBroadcast, SafePreBroadcastRejection
-        from .outbound import create_attempt, execute_attempt
+        from .native_tx import AmbiguousBroadcast
+        from .outbound import create_attempt
 
         attempt = create_attempt(
             operation_type="SWEEP",
@@ -214,23 +267,9 @@ def _run_sweep(job: SweepJob, actor_id: str) -> None:
             amount=amount,
         )
         try:
-            attempt = execute_attempt(attempt.pk, actor_id)
+            _execute_claimed_sweep(job.pk, attempt, actor_id)
         except AmbiguousBroadcast as exc:
-            job.status = "RECONCILIATION_REQUIRED"
-            job.save(update_fields=["status"])
             raise AmbiguousBroadcastError(str(exc)) from exc
-        except SafePreBroadcastRejection:
-            job.status = "CREATED"
-            job.tx_hash = None
-            job.save(update_fields=["status", "tx_hash"])
-            raise
-        job.status = (
-            "RECONCILIATION_REQUIRED"
-            if attempt.status == "RECONCILIATION_REQUIRED"
-            else ("SWEEP_BROADCASTED" if attempt.status == "BROADCASTED" else "SWEEP_PROCESSING")
-        )
-        job.tx_hash = attempt.network_tx_id
-        job.save(update_fields=["status", "tx_hash"])
         return
 
     # Step A: optional gas top-up of the deposit EOA.
@@ -353,26 +392,21 @@ def _advance_sweep(job_id: int, actor_id: str) -> SweepJob:
 
     if recovering_attempt is not None:
         if recovering_attempt.status == "CONFIRMED":
-            SweepJob.objects.filter(pk=job_id).update(
+            SweepJob.objects.filter(pk=job_id).exclude(status__in={"CONFIRMED", "FAILED"}).update(
                 status="CONFIRMED",
                 tx_hash=recovering_attempt.network_tx_id,
                 completed_at=timezone.now(),
             )
             return SweepJob.objects.get(pk=job_id)
         if recovering_attempt.status == "FAILED":
-            SweepJob.objects.filter(pk=job_id).update(
-                status="FAILED",
-                tx_hash=recovering_attempt.network_tx_id,
-                completed_at=timezone.now(),
-            )
-            return SweepJob.objects.get(pk=job_id)
+            return _record_sweep_error(job_id)
         if recovering_attempt.status == "BROADCASTED":
-            SweepJob.objects.filter(pk=job_id).update(
+            SweepJob.objects.filter(pk=job_id).exclude(status__in={"CONFIRMED", "FAILED"}).update(
                 status="SWEEP_BROADCASTED", tx_hash=recovering_attempt.network_tx_id
             )
             return SweepJob.objects.get(pk=job_id)
         if recovering_attempt.status == "RECONCILIATION_REQUIRED":
-            SweepJob.objects.filter(pk=job_id).update(
+            SweepJob.objects.filter(pk=job_id).exclude(status__in={"CONFIRMED", "FAILED"}).update(
                 status="RECONCILIATION_REQUIRED", tx_hash=recovering_attempt.network_tx_id
             )
             return SweepJob.objects.get(pk=job_id)
@@ -384,8 +418,7 @@ def _advance_sweep(job_id: int, actor_id: str) -> SweepJob:
     if intent_id:
         intent = GasTopupIntent.objects.get(pk=intent_id)
         if intent.status == "FAILED":
-            SweepJob.objects.filter(pk=job_id).update(status="FAILED", completed_at=timezone.now())
-            return SweepJob.objects.get(pk=job_id)
+            return _record_sweep_error(job_id)
         if intent.status in {"CREATED", "PROCESSING"}:
             execute_gas_intent(intent.pk)
             intent.refresh_from_db()
@@ -458,7 +491,13 @@ def _advance_sweep(job_id: int, actor_id: str) -> SweepJob:
     # Claim token execution under the job lock. Concurrent workers observe PROCESSING.
     with transaction.atomic():
         job = SweepJob.objects.select_for_update().get(pk=job_id)
-        if job.status in {"SWEEP_PROCESSING", "SWEEP_BROADCASTED", "CONFIRMED"}:
+        if job.status in {
+            "SWEEP_PROCESSING",
+            "SWEEP_BROADCASTED",
+            "CONFIRMED",
+            "FAILED",
+            "RECONCILIATION_REQUIRED",
+        }:
             return job
         job.status = "SWEEP_PROCESSING"
         job.save(update_fields=["status"])
@@ -485,17 +524,18 @@ def _execute_claimed_sweep(job_id, attempt, actor_id):
     except SafePreBroadcastRejection:
         job = SweepJob.objects.select_related("gas_topup_intent").get(pk=job_id)
         retry_status = "GAS_TOPUP_CONFIRMED" if job.gas_topup_intent_id else "CREATED"
-        SweepJob.objects.filter(pk=job_id).update(status=retry_status, tx_hash=None)
+        SweepJob.objects.filter(pk=job_id).exclude(
+            status__in={"CONFIRMED", "FAILED", "RECONCILIATION_REQUIRED"}
+        ).update(status=retry_status, tx_hash=None)
         raise
     except Exception:
-        attempt.refresh_from_db()
-        SweepJob.objects.filter(pk=job_id, status="SWEEP_PROCESSING").update(
-            status=("FAILED" if attempt.status == "FAILED" else "RECONCILIATION_REQUIRED"),
-            completed_at=(timezone.now() if attempt.status == "FAILED" else None),
-        )
+        _record_sweep_error(job_id)
         raise
     with transaction.atomic():
         job = SweepJob.objects.select_for_update().get(pk=job_id)
+        if job.status in {"CONFIRMED", "FAILED"}:
+            return job
+        attempt.refresh_from_db()
         job.tx_hash = attempt.network_tx_id
         job.status = (
             "RECONCILIATION_REQUIRED"

@@ -32,6 +32,7 @@ def reconcile_tron_transfer(executor, prepared, tx_id, *, token=False):
     if prepared.unsigned_payload["txID"] != tx_id:
         raise ValueError("original TRON txID differs from reconciliation identity")
     last_error = None
+    missing_evidence = None
     for url in rpc_urls(prepared.chain_id):
         try:
 
@@ -41,8 +42,10 @@ def reconcile_tron_transfer(executor, prepared, tx_id, *, token=False):
             info = post("/walletsolidity/gettransactioninfobyid", {"value": tx_id})
             tx = post("/walletsolidity/gettransactionbyid", {"value": tx_id})
             if not info or not tx:
+                if (info and info.get("id") != tx_id) or (tx and tx.get("txID") != tx_id):
+                    raise ValueError("TRON partial solidified evidence identity mismatch")
                 expired = prepared.expires_at_ms <= int(time.time() * 1000)
-                return ReconciliationResult(
+                missing_evidence = ReconciliationResult(
                     ReconciliationState.RECONCILIATION_REQUIRED
                     if expired
                     else ReconciliationState.UNKNOWN,
@@ -53,6 +56,10 @@ def reconcile_tron_transfer(executor, prepared, tx_id, *, token=False):
                         "manual_non_inclusion_reconciliation_required": True,
                     },
                 )
+                # A lagging authorized endpoint does not establish non-inclusion.
+                # Never combine partial responses: another endpoint must provide
+                # the complete, independently validated solidified evidence.
+                continue
             evidence = _validate_inclusion(prepared, tx_id, info, tx, post)
             results = tx.get("ret")
             if not isinstance(results, list) or len(results) != 1:
@@ -85,6 +92,8 @@ def reconcile_tron_transfer(executor, prepared, tx_id, *, token=False):
             return ReconciliationResult(ReconciliationState.CONFIRMED, evidence)
         except (requests.Timeout, requests.ConnectionError) as exc:
             last_error = exc
+    if missing_evidence is not None:
+        return missing_evidence
     raise ValueError("TRON solidified evidence unavailable") from last_error
 
 

@@ -1,4 +1,5 @@
 name: CI
+run-name: CI ${{ github.event.pull_request.head.sha || github.sha }} (${{ github.event_name }} / ${{ github.event.action || 'run' }})
 
 permissions:
   contents: read
@@ -7,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       full_crypto:
@@ -15,6 +17,9 @@ on:
         default: true
   schedule:
     - cron: '0 3 * * 0'
+
+env:
+  REVIEWED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   backend:
@@ -47,6 +52,14 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -56,8 +69,8 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
-      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
-      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
+      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
+      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/tests
       - run: >-
           ruff format --check custody/admin.py custody/api.py custody/apps.py
           custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
@@ -107,6 +120,14 @@ jobs:
     defaults: {run: {working-directory: mpc-side}}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
         with: {toolchain: 1.90.0, components: "rustfmt, clippy"}
       - uses: Swatinem/rust-cache@v2
@@ -116,11 +137,19 @@ jobs:
       - run: cargo test --locked --workspace -- --skip cggmp_real_two_of_three_all_signer_pairs
 
   rust-crypto:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)
+    if: (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: mpc-side}}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
         with: {toolchain: 1.90.0}
       - uses: Swatinem/rust-cache@v2
@@ -132,6 +161,14 @@ jobs:
     defaults: {run: {working-directory: mpc-side}}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         id: cargo-audit-cache
@@ -144,7 +181,7 @@ jobs:
 
 
   mpc-network:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)
+    if: (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)
     timeout-minutes: 120
     services:
       postgres:
@@ -172,6 +209,14 @@ jobs:
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
         with: {toolchain: 1.90.0}
       - uses: Swatinem/rust-cache@v2
@@ -207,6 +252,14 @@ jobs:
         working-directory: front-side
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REVIEWED_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify and report exact reviewed head
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: %s\n' "$REVIEWED_HEAD_SHA"
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -216,3 +269,18 @@ jobs:
       - run: npm run test:contract
       - run: npm run build
       - run: npm run build:sim
+
+  full-crypto-gate:
+    needs: [rust-crypto, mpc-network]
+    if: always() && ((github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto))
+    runs-on: ubuntu-latest
+    env:
+      RUST_RESULT: ${{ needs.rust-crypto.result }}
+      NETWORK_RESULT: ${{ needs.mpc-network.result }}
+    steps:
+      - name: Require both full cryptographic jobs for this exact head
+        run: |
+          printf 'Reviewed head SHA: `%s`\n' "$REVIEWED_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'rust-crypto: %s; mpc-network: %s\n' "$RUST_RESULT" "$NETWORK_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          test "$RUST_RESULT" = success
+          test "$NETWORK_RESULT" = success

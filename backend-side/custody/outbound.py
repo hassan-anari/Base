@@ -206,18 +206,11 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
     if attempt.status == "PREPARING":
         try:
             if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
-                from .chain_registry import get_chain_spec, rpc_urls
-                from .mpc_binding import MpcBindingError, local_root_keyset
-                from .native_tx import _int
+                from .mpc_binding import local_root_keyset
+                from .mpc_evm_network import verify_evm_rpc_endpoints
 
                 local_root_keyset(attempt)
-                reported_chain_id = _int(
-                    executor.transport.rpc(rpc_urls(attempt.chain_id)[0], "eth_chainId", [])
-                )
-                if reported_chain_id != get_chain_spec(attempt.chain_id).evm_chain_id:
-                    raise MpcBindingError(
-                        "EVM RPC chain ID does not match the reviewed runtime chain"
-                    )
+                verify_evm_rpc_endpoints(attempt.chain_id, executor.transport)
             method = (
                 executor.prepare_sweep
                 if attempt.operation_type == "SWEEP" and hasattr(executor, "prepare_sweep")
@@ -391,6 +384,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             signed_payload=payload, network_tx_id=tx_id, status="SIGNED"
         )
     try:
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .mpc_evm_network import verify_evm_rpc_endpoints
+
+            verify_evm_rpc_endpoints(attempt.chain_id, executor.transport)
         with transaction.atomic():
             attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
             if attempt.status != "SIGNED":

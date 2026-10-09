@@ -4,6 +4,7 @@ Loads all configuration from environment variables (see .env.example).
 No secrets are hard-coded.
 """
 
+import json
 from pathlib import Path
 
 from decouple import Csv, config
@@ -130,7 +131,7 @@ ALLOW_DEV_STUB_AUTH = config("ALLOW_DEV_STUB_AUTH", default=False, cast=bool)
 # ----------------------------------------------------------------------------
 # MPC signer backend selection
 #   local_key  -> real local signing for ETH/BSC/TRX/SOL (demo/dev)
-#   self_hosted_mpc -> authenticated self-hosted coordinator (production)
+#   self_hosted_mpc -> authenticated coordinator, explicitly restricted Phase 6E integration
 # ----------------------------------------------------------------------------
 MPC_SIGNER_BACKEND = config("MPC_SIGNER_BACKEND", default="local_key")
 CUSTODY_DEMO_MODE = config("CUSTODY_DEMO_MODE", default=False, cast=bool)
@@ -142,6 +143,7 @@ MPC_CA_CERT = config("MPC_CA_CERT", default="")
 MPC_REQUEST_TIMEOUT_SECONDS = config("MPC_REQUEST_TIMEOUT_SECONDS", default=30, cast=int)
 MPC_EVM_INTEGRATION_ENABLED = config("MPC_EVM_INTEGRATION_ENABLED", default=False, cast=bool)
 MPC_INTEGRATION_ENVIRONMENT = config("MPC_INTEGRATION_ENVIRONMENT", default="disabled")
+MPC_EVM_DEVELOPMENT_CHAINS = config("MPC_EVM_DEVELOPMENT_CHAINS", default="{}", cast=json.loads)
 # Local-key encryption passphrase for at-rest encrypted hot-wallet keys
 LOCAL_KEY_ENCRYPTION_PASSPHRASE = config("LOCAL_KEY_ENCRYPTION_PASSPHRASE", default="")
 

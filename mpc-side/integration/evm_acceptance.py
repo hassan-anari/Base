@@ -192,6 +192,7 @@ def run_evm_acceptance(net, tmp_path):
             MPC_SIGNER_BACKEND="self_hosted_mpc",
             MPC_EVM_INTEGRATION_ENABLED=True,
             MPC_INTEGRATION_ENVIRONMENT="development",
+            MPC_EVM_DEVELOPMENT_CHAINS={"ETH": 31337, "BASE": 31338},
             CUSTODY_DEMO_MODE=False,
             CUSTODY_TX_MODE="live",
         ),

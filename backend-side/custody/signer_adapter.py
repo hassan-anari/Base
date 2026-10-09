@@ -51,16 +51,9 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
 
         coordinator_tls_context()
         if chain_id is not None:
-            spec = get_chain_spec(chain_id)
-            if (
-                spec.kind is not ChainKind.EVM
-                or not spec.is_testnet
-                or spec.evm_chain_id in {1, 56, 137, 42161, 8453}
-                or not spec.evm_chain_id
-                or spec.evm_chain_id <= 0
-                or spec.chain_id not in {"ETH", "BSC", "MATIC", "ARB", "BASE"}
-            ):
-                raise RuntimeError("Phase 6E integration permits isolated EVM test chains only")
+            from .mpc_evm_network import authorize_evm_network
+
+            authorize_evm_network(chain_id)
 
 
 class CoordinatorSessionNotFound(RuntimeError):

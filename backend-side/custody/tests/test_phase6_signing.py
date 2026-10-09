@@ -17,7 +17,7 @@ from django.db import close_old_connections, connection
 from eth_account import Account
 from eth_keys import keys
 from eth_utils import keccak
-from ops.models import Chain
+from ops.models import Chain, NodeEndpoint
 
 from custody.ledger import ensure_accounts, post_transaction, user_balances
 from custody.models import (
@@ -72,12 +72,15 @@ def integration_settings(settings, tmp_path):
     settings.MPC_SIGNER_BACKEND = "self_hosted_mpc"
     settings.MPC_EVM_INTEGRATION_ENABLED = True
     settings.MPC_INTEGRATION_ENVIRONMENT = "development"
+    settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": 31337}
     settings.CUSTODY_DEMO_MODE = False
     settings.CUSTODY_TX_MODE = "live"
     settings.MPC_COORDINATOR_URL = "https://localhost:8443"
     settings.MPC_CLIENT_CERT = str(identity / "tls.crt")
     settings.MPC_CLIENT_KEY = str(identity / "tls.key")
     settings.MPC_CA_CERT = str(identity / "ca.crt")
+    with patch("custody.native_tx.RequestsTransport.rpc", return_value="0x7a69"):
+        yield
 
 
 def metadata_for(keyset):
@@ -137,6 +140,12 @@ def metadata_for(keyset):
 
 @pytest.fixture
 def context(db, integration_settings):
+    NodeEndpoint.objects.filter(chain_id="ETH", kind="rpc").update(enabled=False)
+    NodeEndpoint.objects.update_or_create(
+        chain_id="ETH",
+        name="phase6e-loopback",
+        defaults={"kind": "rpc", "url": "http://127.0.0.1:18545", "enabled": True},
+    )
     Chain.objects.update_or_create(
         chain_id="ETH",
         defaults={
@@ -580,6 +589,7 @@ def test_crash_after_signed_persistence_and_ambiguous_broadcast_preserves_reserv
     context.attempt.refresh_from_db()
     payload = context.attempt.signed_payload
     with patch("custody.outbound._executor") as executor:
+        executor.return_value.transport.rpc.return_value = "0x7a69"
         executor.return_value.broadcast.side_effect = AmbiguousBroadcast("response lost")
         with pytest.raises(AmbiguousBroadcast):
             execute_attempt(context.attempt.pk, "worker")
@@ -761,7 +771,7 @@ def test_integration_guards_fail_closed(context, settings, field, value):
 def test_non_evm_production_signing_remains_disabled(context, chain_id):
     from custody.signer_adapter import assert_mpc_backend_runtime_safe
 
-    with pytest.raises(RuntimeError, match="isolated EVM test chains only"):
+    with pytest.raises(ValueError, match="isolated EVM test chains only"):
         assert_mpc_backend_runtime_safe(chain_id)
 
 
@@ -769,7 +779,7 @@ def test_mainnet_and_local_signer_production_guards(context, settings):
     from custody.signer_adapter import assert_mpc_backend_runtime_safe, get_adapter
 
     Chain.objects.filter(chain_id="ETH").update(evm_chain_id=1, is_testnet=True)
-    with pytest.raises(RuntimeError, match="isolated EVM test chains only"):
+    with pytest.raises(ValueError, match="testnet allowlist"):
         assert_mpc_backend_runtime_safe("ETH")
     settings.MPC_SIGNER_BACKEND = "local_key"
     with pytest.raises(RuntimeError, match="demo mode"):
@@ -852,6 +862,7 @@ def test_proven_prebroadcast_rejection_reuses_signed_bytes(context):
     context.attempt.refresh_from_db()
     signed, nonce = context.attempt.signed_payload, context.attempt.sequence
     with patch("custody.outbound._executor") as executor:
+        executor.return_value.transport.rpc.return_value = "0x7a69"
         executor.return_value.broadcast.side_effect = SafePreBroadcastRejection(
             "proven non-acceptance"
         )
@@ -881,7 +892,7 @@ def test_wrong_rpc_chain_is_rejected_before_nonce_or_signature(context):
     context.attempt.save()
     with patch("custody.outbound._executor") as executor:
         executor.return_value.transport.rpc.return_value = "0x1"
-        with pytest.raises(MpcBindingError, match="RPC chain ID"):
+        with pytest.raises(ValueError, match="RPC chain ID"):
             execute_attempt(context.attempt.pk, "reviewer")
         executor.return_value.prepare.assert_not_called()
     assert not MpcSigningSession.objects.filter(attempt=context.attempt).exists()

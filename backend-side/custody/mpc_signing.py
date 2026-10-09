@@ -260,6 +260,10 @@ def advance_mpc_signing(attempt_id: int, client=None):
         try:
             with transaction.atomic():
                 request = coordinator_request(snapshot, session)
+            from .mpc_evm_network import verify_evm_rpc_endpoints
+            from .native_tx import RequestsTransport
+
+            verify_evm_rpc_endpoints(snapshot.chain_id, RequestsTransport())
             verify_coordinator_keyset(
                 session.keyset, client.get_keyset(str(session.keyset.keyset_id))
             )

@@ -9,11 +9,21 @@ mTLS identities, encrypted share storage, or randomness. Phase 6F has not begun.
 Supported: explicitly bound **root-keyset** EVM addresses, native transfers and
 reviewed ERC20 transfers, legacy EIP-155 and EIP-1559 transactions. The runtime
 chain identifiers accepted by the Phase 6D contract remain ETH, BSC, MATIC, ARB,
-and BASE. Their actual numeric EVM chain IDs come from Django's runtime registry.
-The integration requires `is_testnet=true` and rejects numeric mainnet IDs
-1, 56, 137, 42161, and 8453. Use disposable isolated development or testnet funds.
-The chain registry and node endpoints remain trusted operator configuration;
-mislabeling another live network as a testnet is not authorized by this phase.
+and BASE. Their actual numeric EVM chain IDs come from Django's runtime registry;
+an operator alias is never a numeric network identity. Public integration accepts
+only the reviewed pairs below, with `is_testnet=true` additionally required:
+
+| Custody alias | Reviewed public testnet | Numeric EVM chain ID |
+| --- | --- | --- |
+| ETH | Ethereum Sepolia | 11155111 |
+| BSC | BNB Smart Chain testnet | 97 |
+| MATIC | Polygon Amoy | 80002 |
+| ARB | Arbitrum Sepolia | 421614 |
+| BASE | Base Sepolia | 84532 |
+
+Other numeric identities, including Optimism mainnet 10, are rejected regardless
+of an operator's `is_testnet` label. Disposable custom identities require separate
+explicit development authorization; this does not authorize a production RPC.
 
 Default configuration remains disabled (`custody.E011` and runtime guards):
 
@@ -21,6 +31,7 @@ Default configuration remains disabled (`custody.E011` and runtime guards):
 MPC_SIGNER_BACKEND=self_hosted_mpc
 MPC_EVM_INTEGRATION_ENABLED=true
 MPC_INTEGRATION_ENVIRONMENT=development
+MPC_EVM_DEVELOPMENT_CHAINS={"ETH":31337,"BASE":31338}
 CUSTODY_DEMO_MODE=false
 CUSTODY_TX_MODE=live
 MPC_COORDINATOR_URL=https://localhost:8443
@@ -29,6 +40,24 @@ MPC_CLIENT_CERT=/path/to/custody.crt
 MPC_CLIENT_KEY=/path/to/custody.key
 MPC_REQUEST_TIMEOUT_SECONDS=5
 ```
+
+`MPC_EVM_DEVELOPMENT_CHAINS` defaults to `{}`. This optional JSON mapping authorizes
+the exact custom numeric identity for each permitted custody alias **only** in
+the `development` environment. All enabled primary and fallback RPC endpoints
+must use HTTP(S) URLs with a port and literal IPv4/IPv6 loopback addresses
+(for example `http://127.0.0.1:8545` or `http://[::1]:8545`). DNS names, including
+`localhost`, credentials and fragments are rejected for this mode. Custom remote
+RPCs and custom identities in `testnet` mode remain disabled. Use only disposable
+chains; a loopback proxy to a production network is not authorized development.
+
+Before preparation/nonce allocation and before coordinator execution, all enabled
+RPC endpoints must report the authorized numeric `eth_chainId`. Each native/ERC20
+RPC operation independently checks its actual endpoint immediately before use,
+including broadcast failover and reconciliation receipt/finality reads. A changed
+or mismatched endpoint fails closed; no mismatched fallback receives signed bytes
+or supplies settlement evidence. HTTP redirects are not followed. An ambiguous
+primary send followed by a mismatched fallback remains reconciliation-required
+with the original signed bytes, nonce, session and reserved funds preserved.
 
 `MPC_INTEGRATION_ENVIRONMENT` permits only `development` or `testnet`. The guard
 loads and validates the TLS configuration; all requests still require TLS 1.3,
@@ -199,9 +228,25 @@ tests, existing Rust dependency audit, frontend contract tests and both builds.
 Test-only local signatures in deterministic tests do not establish MPC acceptance.
 
 The **full cryptographic gate is mandatory before Phase 6E approval**, on the exact
-reviewed PR head. CI schedules it weekly or runs it explicitly through
-`workflow_dispatch` with `full_crypto=true`. Skipped full jobs are not a passing
-approval gate. The full gate retains all Phase 6D tests without reducing protocol,
+reviewed PR head. **Before merge**, a reviewer with label permission adds
+`run-full-crypto` to the PR. The `pull_request: labeled` event executes the PR's
+workflow without requiring it to exist on the default branch. It uses read-only
+contents permissions, no deployment secrets, and never `pull_request_target`.
+Every job checks out the immutable event's `pull_request.head.sha`, verifies
+`git rev-parse HEAD`, and prints that SHA in its logs and step summary.
+
+Ordinary opened/reopened/synchronize events retain fast checks and skip the full
+jobs, even if the label remains attached. To verify a later head, remove and
+reapply the label after the final push. In Actions, select the **labeled** run,
+compare its reported SHA with the current PR head, and require successful
+`rust-crypto`, `mpc-network`, and `full-crypto-gate` jobs, plus the fast jobs.
+The aggregate gate fails if either full job fails, is cancelled, or is skipped.
+Skipped full jobs on ordinary runs are not a passing approval gate.
+
+Weekly schedules cover default-branch regression only, not an unmerged PR.
+`workflow_dispatch full_crypto=true` remains an additional option once that
+trigger exists on the default branch; it is not the pre-merge trigger for PR #30.
+The full gate retains all Phase 6D tests without reducing protocol,
 fresh-prime, replay, restart, fault-injection, FROST or TRON regression coverage:
 
 ```sh

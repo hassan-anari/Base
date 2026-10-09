@@ -31,13 +31,16 @@ class Erc20Executor(EvmNativeExecutor):
         url = rpc_urls(chain_id)[0]
         balance_data = "0x70a08231" + source.lower().removeprefix("0x").rjust(64, "0")
         token_balance = _int(
-            self.transport.rpc(
-                url, "eth_call", [{"to": asset.contract_address, "data": balance_data}, "latest"]
+            self._rpc(
+                chain_id,
+                url,
+                "eth_call",
+                [{"to": asset.contract_address, "data": balance_data}, "latest"],
             )
         )
         if token_balance < units:
             raise InsufficientBalance("source token balance is insufficient")
-        pending = _int(self.transport.rpc(url, "eth_getTransactionCount", [source, "pending"]))
+        pending = _int(self._rpc(chain_id, url, "eth_getTransactionCount", [source, "pending"]))
         calldata = (
             "0xa9059cbb"
             + destination.lower().removeprefix("0x").rjust(64, "0")
@@ -51,12 +54,12 @@ class Erc20Executor(EvmNativeExecutor):
             "value": 0,
             "data": calldata,
         }
-        gas = _int(self.transport.rpc(url, "eth_estimateGas", [tx]))
+        gas = _int(self._rpc(chain_id, url, "eth_estimateGas", [tx]))
         if gas > _cap(spec.gas_settings, "max_gas_limit"):
             raise FeePolicyError("estimated gas exceeds max_gas_limit")
-        latest = self.transport.rpc(url, "eth_getBlockByNumber", ["latest", False]) or {}
+        latest = self._rpc(chain_id, url, "eth_getBlockByNumber", ["latest", False]) or {}
         if latest.get("baseFeePerGas") is not None:
-            priority = _int(self.transport.rpc(url, "eth_maxPriorityFeePerGas", []))
+            priority = _int(self._rpc(chain_id, url, "eth_maxPriorityFeePerGas", []))
             if priority > _cap(spec.gas_settings, "max_priority_fee_per_gas"):
                 raise FeePolicyError("priority fee exceeds configured cap")
             max_fee = _int(latest["baseFeePerGas"]) * 2 + priority
@@ -71,13 +74,13 @@ class Erc20Executor(EvmNativeExecutor):
             }
             worst = gas * max_fee
         else:
-            price = _int(self.transport.rpc(url, "eth_gasPrice", []))
+            price = _int(self._rpc(chain_id, url, "eth_gasPrice", []))
             if price > _cap(spec.gas_settings, "max_legacy_gas_price"):
                 raise FeePolicyError("gas price exceeds configured cap")
             tx.update(gas=gas, gasPrice=price)
             fees = {"mode": "legacy", "gas": str(gas), "gas_price": str(price)}
             worst = gas * price
-        if _int(self.transport.rpc(url, "eth_getBalance", [source, "pending"])) < worst:
+        if _int(self._rpc(chain_id, url, "eth_getBalance", [source, "pending"])) < worst:
             raise InsufficientBalance("source native balance cannot fund token gas")
         fees["worst_case_base_units"] = str(worst)
         fees["token_contract"] = asset.contract_address

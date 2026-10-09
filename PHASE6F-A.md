@@ -164,8 +164,11 @@ never proves non-inclusion. No operator override for arbitrary signing is added.
 The TRON MPC indexer uses pinned solidified RPCs and bounded resumable block scans,
 actual block/transaction IDs and execution evidence, exact native or verified
 token effects, and stable contract/log event identities. Genesis allocations
-are excluded. Stub balances are explicitly forbidden with TRON MPC. Initial
-lookback and backfill cursor policy must be configured for historical ingestion;
+are excluded. Stub balances are explicitly forbidden with TRON MPC.
+Incoming transfers matching a consumed, completed MPC gas-funding attempt are
+excluded from customer deposit credits, including shared native/token root
+addresses. Ordinary withdrawals into customer deposit wallets remain attributable.
+Initial lookback and backfill cursor policy must be configured for historical ingestion;
 unsupported transaction shapes and internal native contract transfers are not
 credited. Public network/indexer operational readiness remains outside this gate.
 

@@ -635,7 +635,15 @@ def test_mpc_indexer_rejects_environment_stub(tron_context, monkeypatch):
 
 @pytest.mark.parametrize("problem", ["unbound", "wrong_key", "oversized", None])
 def test_resource_grant_requires_owned_destination_and_bounded_amount(tron_context, problem):
-    c = tron_context
+    c = resource_grant(tron_context, problem)
+    if problem:
+        with pytest.raises(ValueError):
+            validate_custody_intent(c.attempt)
+    else:
+        validate_custody_intent(c.attempt)
+
+
+def resource_grant(c, problem=None):
     target = MpcKeyset.objects.get(pk=c.keyset.pk)
     target.pk = None
     target.keyset_id = uuid.uuid4()
@@ -661,7 +669,7 @@ def test_resource_grant_requires_owned_destination_and_bounded_amount(tron_conte
         amount=Decimal(61 if problem == "oversized" else 60),
         status="PROCESSING",
     )
-    attempt = create_attempt(
+    c.attempt = create_attempt(
         operation_type="GAS_TOPUP",
         operation_id=intent.pk,
         chain_id="TRX",
@@ -670,11 +678,28 @@ def test_resource_grant_requires_owned_destination_and_bounded_amount(tron_conte
         destination=c.destination,
         amount=intent.amount,
     )
-    if problem:
-        with pytest.raises(ValueError):
-            validate_custody_intent(attempt)
-    else:
-        validate_custody_intent(attempt)
+    return c
+
+
+def test_internal_mpc_gas_grant_cannot_credit_customer_deposit(tron_context, monkeypatch):
+    from custody.indexer.base import IndexerUnavailable
+    from custody.indexer.trx import TrxIndexer
+
+    c = resource_grant(tron_context)
+    c.client = CoordinatorClient(c)
+    with patch("custody.signer_adapter.get_adapter", return_value=c.client):
+        execute_attempt(c.attempt.pk, "system:gas_station")
+    c.session = MpcSigningSession.objects.get(attempt=c.attempt)
+    signed(c)
+    execute_attempt(c.attempt.pk, "worker")
+    monkeypatch.setenv("CUSTODY_INDEXER_MODE", "live")
+    observation = TrxIndexer().get_balance(c.destination, asset_key="TRX")
+    assert observation.deposit_events == []
+    assert reconcile_attempt(c.attempt.pk).status == "CONFIRMED"
+    assert TrxIndexer().get_balance(c.destination, asset_key="TRX").deposit_events == []
+    MpcSigningSession.objects.filter(pk=c.session.pk).update(signature_consumed_at=None)
+    with pytest.raises(IndexerUnavailable):
+        TrxIndexer().get_balance(c.destination, asset_key="TRX")
 
 
 @pytest.mark.parametrize("token", [False, True])

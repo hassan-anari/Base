@@ -404,6 +404,17 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                 execute_attempt(gas.pk, "worker")
                 gas = settle(validator, gas)
                 assert GasTopupIntent.objects.get(pk=job.gas_topup_intent_id).status == "CONFIRMED"
+                native_observation = TrxIndexer().get_balance(
+                    deposit, asset_key="TRX", after_block=native_deposit.block
+                )
+                assert all(
+                    event.tx_hash != gas.network_tx_id
+                    for event in native_observation.deposit_events
+                )
+                for event in native_observation.deposit_events:
+                    ingest_event(native_wallet, event)
+                assert user_balances(native_wallet.user_id, "TRX")["available"] == Decimal("20")
+                evidence["gas_grant_customer_credit_count"] = 0
                 execute_gas_intent(job.gas_topup_intent_id)
                 evidence["transactions"].append(
                     {

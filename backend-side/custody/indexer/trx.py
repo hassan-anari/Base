@@ -246,7 +246,10 @@ class TrxIndexer(IndexerClient):
         """Bounded solidified backfill; balance observations alone never credit the ledger."""
         import hashlib
 
+        import base58
+
         from ..chain_registry import get_chain_spec
+        from ..models import OnchainTransactionAttempt
         from ..mpc_tron_network import guarded_tron_post, verify_tron_rpc_endpoints
         from ..native_tx import RequestsTransport
         from ..token_metadata import assert_verified_token
@@ -344,7 +347,36 @@ class TrxIndexer(IndexerClient):
                         if asset.is_native:
                             value = contracts[0]["parameter"]["value"]
                             if address_bytes(value["to_address"]) == owner:
-                                effects.append(("contract:0", value["amount"]))
+                                # Treasury gas funding is not a customer deposit, including
+                                # when native/token wallets share this owned root address.
+                                internal_grant = (
+                                    OnchainTransactionAttempt.objects.filter(
+                                        chain_id=self.chain_id,
+                                        asset_key=asset.asset_key,
+                                        operation_type="GAS_TOPUP",
+                                        network_tx_id=txid,
+                                        from_address=base58.b58encode_check(
+                                            address_bytes(value["owner_address"])
+                                        ).decode(),
+                                        to_address=address,
+                                        base_unit_amount=value["amount"],
+                                        prepared_metadata__raw_data_hex=raw.hex(),
+                                        mpc_sessions__status="COMPLETED",
+                                        mpc_sessions__signature_consumed_at__isnull=False,
+                                    )
+                                    .exclude(signed_payload="")
+                                    .exists()
+                                )
+                                if not internal_grant:
+                                    if OnchainTransactionAttempt.objects.filter(
+                                        chain_id=self.chain_id,
+                                        operation_type="GAS_TOPUP",
+                                        network_tx_id=txid,
+                                    ).exists():
+                                        raise ValueError(
+                                            "TRON gas grant has incomplete custody provenance"
+                                        )
+                                    effects.append(("contract:0", value["amount"]))
                         else:
                             if (
                                 info.get("receipt", {}).get("result") != "SUCCESS"

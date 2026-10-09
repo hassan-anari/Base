@@ -1,5 +1,7 @@
 """Solidified inclusion and exact transfer evidence; absence never proves non-inclusion."""
 
+import time
+
 import requests
 from eth_keys import keys
 
@@ -39,9 +41,14 @@ def reconcile_tron_transfer(executor, prepared, tx_id, *, token=False):
             info = post("/walletsolidity/gettransactioninfobyid", {"value": tx_id})
             tx = post("/walletsolidity/gettransactionbyid", {"value": tx_id})
             if not info or not tx:
+                expired = prepared.expires_at_ms <= int(time.time() * 1000)
                 return ReconciliationResult(
-                    ReconciliationState.UNKNOWN,
+                    ReconciliationState.RECONCILIATION_REQUIRED
+                    if expired
+                    else ReconciliationState.UNKNOWN,
                     {
+                        "outcome": "UNKNOWN",
+                        **({"error": "TRON_EXPIRED_OUTCOME_UNKNOWN"} if expired else {}),
                         "expiration_ms": prepared.expires_at_ms,
                         "manual_non_inclusion_reconciliation_required": True,
                     },

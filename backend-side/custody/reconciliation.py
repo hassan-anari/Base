@@ -46,7 +46,20 @@ def reconcile_attempt(attempt_id: int):
     with attempt_execution_lock(attempt_id) as acquired:
         if not acquired:
             return OnchainTransactionAttempt.objects.get(pk=attempt_id)
-        return _reconcile_attempt(attempt_id)
+        try:
+            return _reconcile_attempt(attempt_id)
+        except Exception:
+            from django.conf import settings
+
+            from .outbound import sync_parent_state
+
+            snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id == "TRX":
+                OnchainTransactionAttempt.objects.filter(pk=attempt_id).exclude(
+                    status__in=["CONFIRMED", "FAILED"]
+                ).update(status="RECONCILIATION_REQUIRED", error_code="TRON_EVIDENCE_UNVERIFIED")
+                sync_parent_state(OnchainTransactionAttempt.objects.get(pk=attempt_id))
+            raise
 
 
 def _reconcile_attempt(attempt_id: int):
@@ -87,13 +100,20 @@ def _reconcile_attempt(attempt_id: int):
     }:
         updates = {"confirmation_metadata": {"state": result.state.value, **result.evidence}}
         if result.state is ReconciliationState.RECONCILIATION_REQUIRED:
-            updates.update(status="RECONCILIATION_REQUIRED", error_code="TOKEN_EFFECT_MISMATCH")
+            updates.update(
+                status="RECONCILIATION_REQUIRED",
+                error_code=result.evidence.get("error", "TOKEN_EFFECT_MISMATCH"),
+            )
             if snapshot.operation_type == "WITHDRAWAL":
                 WithdrawalRequest.objects.filter(pk=snapshot.operation_id).update(
                     status="RECONCILIATION_REQUIRED"
                 )
             elif snapshot.operation_type == "SWEEP":
                 SweepJob.objects.filter(pk=snapshot.operation_id).update(
+                    status="RECONCILIATION_REQUIRED"
+                )
+            else:
+                GasTopupIntent.objects.filter(pk=snapshot.operation_id).update(
                     status="RECONCILIATION_REQUIRED"
                 )
         OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(**updates)

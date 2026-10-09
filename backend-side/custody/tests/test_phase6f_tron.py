@@ -353,6 +353,9 @@ def test_bad_solidified_evidence_preserves_reservation(tron_context, fault):
     else:
         with pytest.raises(ValueError):
             reconcile_attempt(c.attempt.pk)
+    c.attempt.refresh_from_db()
+    c.withdrawal.refresh_from_db()
+    assert c.attempt.status == c.withdrawal.status == "RECONCILIATION_REQUIRED"
     assert user_balances("phase6f", c.attempt.asset_key)["reserved"] == Decimal("1.25")
 
 
@@ -365,6 +368,27 @@ def test_absent_expired_transaction_is_unknown(tron_context):
         assert reconcile_attempt(c.attempt.pk).status == "RECONCILIATION_REQUIRED"
     assert len(c.client.executes) == 1 and not c.rpc.submissions
     assert user_balances("phase6f", "TRX")["reserved"] == Decimal("1.25")
+
+
+@pytest.mark.parametrize("token", [False, True])
+def test_expired_broadcast_with_unknown_inclusion_requires_reconciliation(tron_context, token):
+    c = signed(approved(tron_context, token=token))
+    execute_attempt(c.attempt.pk, "worker")
+    c.rpc.receipts.clear()
+    c.rpc.transactions.clear()
+    with patch("time.time", return_value=time.time() + 3600):
+        result = reconcile_attempt(c.attempt.pk)
+        assert result.status == "RECONCILIATION_REQUIRED"
+        assert result.confirmation_metadata["outcome"] == "UNKNOWN"
+        assert result.error_code == "TRON_EXPIRED_OUTCOME_UNKNOWN"
+        assert execute_attempt(c.attempt.pk, "worker").status == "RECONCILIATION_REQUIRED"
+    c.withdrawal.refresh_from_db()
+    assert c.withdrawal.status == "RECONCILIATION_REQUIRED"
+    assert len(c.client.executes) == len(c.rpc.submissions) == 1
+    assert user_balances("phase6f", c.attempt.asset_key)["reserved"] == Decimal("1.25")
+    assert not LedgerTransaction.objects.filter(
+        event_key=f"withdrawal:{c.withdrawal.pk}:release"
+    ).exists()
 
 
 def test_signing_timeout_and_restart_reuses_original_result(tron_context):

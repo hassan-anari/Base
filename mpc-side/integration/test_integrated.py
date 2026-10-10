@@ -775,6 +775,10 @@ def adversarial(h):
     from custody.signer_adapter import SelfHostedMpcAdapter
 
     observed = SelfHostedMpcAdapter().get_signing_session(str(s.session_id))
+    deadline = time.monotonic() + 10
+    while observed["status"] == "STARTING" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        observed = SelfHostedMpcAdapter().get_signing_session(str(s.session_id))
     assert observed["status"] == "IN_PROGRESS"
     h.net.stop("coordinator")
     h.net.start("coordinator")

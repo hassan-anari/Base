@@ -344,7 +344,7 @@ impl DurableStore {
                     && request.curve == "secp256k1"
                     && request.derivation_version == "cggmp_hd_v1"
             }
-            "SOLANA" => {
+            "SOLANA" | "TON" => {
                 request.algorithm == "FROST_ED25519"
                     && request.curve == "ed25519"
                     && request.derivation_version == "frost_keyset_v1"
@@ -441,7 +441,11 @@ pub enum StoreError {
 fn validate_sign_request(request: &SignRequest) -> Result<(), StoreError> {
     if !matches!(
         request.payload_type.as_str(),
-        "EVM_LEGACY_DIGEST" | "EVM_EIP1559_DIGEST" | "TRON_TXID" | "SOLANA_MESSAGE"
+        "EVM_LEGACY_DIGEST"
+            | "EVM_EIP1559_DIGEST"
+            | "TRON_TXID"
+            | "SOLANA_MESSAGE"
+            | "TON_V5R1_CELL_HASH"
     ) || request.operation_type.is_empty()
         || request.chain.is_empty()
         || request.asset.is_empty()
@@ -622,6 +626,7 @@ mod tests {
             asset: "ETH".into(),
             expected_source: "0x123".into(),
             derivation_reference: Some("cggmp_hd_v1/1/2/0".into()),
+            ton_authorization: None,
         }
     }
     fn dkg_request(id: Uuid) -> DkgRequest {

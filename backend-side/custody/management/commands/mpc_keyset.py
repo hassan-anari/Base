@@ -18,7 +18,7 @@ class Command(BaseCommand):
         )
         parser.add_argument("--keyset-id")
         parser.add_argument("--algorithm", choices=["CGGMP24_ECDSA", "FROST_ED25519"])
-        parser.add_argument("--scope", choices=["EVM", "TRON", "SOLANA"])
+        parser.add_argument("--scope", choices=["EVM", "TRON", "SOLANA", "TON"])
         parser.add_argument("--threshold", type=int, default=2)
         parser.add_argument("--parties", type=int, default=3)
 
@@ -33,7 +33,7 @@ class Command(BaseCommand):
                 scope=options["scope"],
                 curve="secp256k1" if options["algorithm"] == "CGGMP24_ECDSA" else "ed25519",
                 derivation_version=(
-                    "frost_keyset_v1" if options["scope"] == "SOLANA" else "cggmp_hd_v1"
+                    "frost_keyset_v1" if options["scope"] in {"SOLANA", "TON"} else "cggmp_hd_v1"
                 ),
                 threshold=options["threshold"],
                 party_count=options["parties"],
@@ -49,7 +49,7 @@ class Command(BaseCommand):
                 f"{keyset.threshold}-of-{keyset.party_count} {keyset.status}"
             )
         elif action in {"import-dkg", "activate"}:
-            if keyset.scope in {"EVM", "TRON", "SOLANA"}:
+            if keyset.scope in {"EVM", "TRON", "SOLANA", "TON"}:
                 from custody.mpc_binding import verify_coordinator_keyset
                 from custody.signer_adapter import SelfHostedMpcAdapter
 
@@ -69,7 +69,7 @@ class Command(BaseCommand):
                     keyset.participant_identities = metadata.get("participants", [])
                 verify_coordinator_keyset(keyset, metadata)
                 if action == "import-dkg":
-                    if keyset.scope == "SOLANA":
+                    if keyset.scope in {"SOLANA", "TON"}:
                         keyset.dkg_public_evidence = metadata
                     keyset.save()
                     return

@@ -20,6 +20,7 @@ impl DurableStore {
         if dkg.status != SessionStatus::Completed
             || !dkg::unanimous(&dkg.request, &dkg.participant_agreement)
             || dkg.participant_agreement[0].group_public_key.as_deref() != Some(group)
+            || (dkg.request.scope == "TON") != (request.payload_type == "TON_V5R1_CELL_HASH")
             || request.frost_message(group).is_err()
         {
             return Err(StoreError::Invalid);

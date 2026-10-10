@@ -120,18 +120,10 @@ class LiveFinalityTests(TestCase):
 
         return get
 
-    @patch("custody.indexer.ton.requests.get")
-    def test_ton_real_provider_shape_remains_pending_without_finality(self, get):
-        get.side_effect = self._ton_get()
-        result = TonIndexer().get_balance(self.ton_wallet.deposit_address, memo="memo-1")
-        event = result.deposit_events[0]
-        self.assertEqual((event.block, event.confirmations), (0, 0))
-        self.assertEqual(result.confirmed_balance, Decimal("0"))
-        self.assertEqual(result.pending_balance, Decimal("1"))
+    def test_ton_legacy_provider_cannot_credit_without_contract_and_finality(self):
+        from custody.indexer.base import IndexerUnavailable
 
-        # TON deposit capability is disabled, so ingestion fails before a
-        # Deposit or ledger posting can be created.
-        with self.assertRaisesMessage(ValueError, "deposit is not supported"):
-            ingest_event(self.ton_wallet, event)
+        with self.assertRaises(IndexerUnavailable):
+            TonIndexer().get_balance(self.ton_wallet.deposit_address, memo="memo-1")
         self.assertFalse(Deposit.objects.filter(tx_hash="ton-deposit").exists())
         self.assertEqual(user_balances("ton-user", "TON")["available"], Decimal("0"))

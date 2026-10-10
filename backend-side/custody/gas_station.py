@@ -2,7 +2,9 @@
 Gas Station: top-up a user's deposit EOA with native gas so it can broadcast
 the sweep transaction (some UTXO/account models require the sending EOA to pay
 gas). For account-based chains (ETH/BSC/TRX) the deposit EOA must hold gas to
-emit the sweep; for SOL/TON the custody hot wallet can pay fees instead.
+emit the sweep. TON V5 owner contracts also need their own native TON reserve;
+funding requires a proof-bound original FROST recipient. Solana supports its
+reviewed fee-funding path.
 
 This is triggered by the sweeper when a gas check fails.
 

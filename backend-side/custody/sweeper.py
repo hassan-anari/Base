@@ -342,6 +342,8 @@ def _token_native_requirement(job: SweepJob) -> Decimal:
             units += int(settings["max_bandwidth_bytes"]) * int(settings["max_bandwidth_price_sun"])
     elif cfg.kind.value == "solana":
         units = int(settings["max_fee_lamports"]) + int(settings["max_ata_rent_lamports"])
+    elif cfg.kind.value == "ton":
+        units = 130_000_000
     else:
         raise ValueError("token gas policy is unsupported for this chain")
     return Decimal(units) / (Decimal(10) ** cfg.native_decimals)

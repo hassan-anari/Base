@@ -30,6 +30,7 @@ class Command(BaseCommand):
                 ChainKind.EVM: "EVM",
                 ChainKind.TRON: "TRON",
                 ChainKind.SOLANA: "SOLANA",
+                ChainKind.TON: "TON",
             }.get(kind)
             if expected_scope is None or keyset.scope != expected_scope:
                 raise CommandError(
@@ -63,7 +64,7 @@ class Command(BaseCommand):
             else:
                 wallet.signing_key_ref = f"keyset:{keyset.keyset_id}"
                 wallet.save(update_fields=["mpc_keyset", "signing_key_ref"])
-            if kind is ChainKind.SOLANA:
+            if kind in {ChainKind.SOLANA, ChainKind.TON}:
                 from custody.mpc_binding import _wallet_root_keyset, verify_coordinator_keyset
                 from custody.signer_adapter import SelfHostedMpcAdapter
 

@@ -21,6 +21,8 @@ pub struct SignRequest {
     pub asset: String,
     pub expected_source: String,
     pub derivation_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ton_authorization: Option<crate::ton::TonAuthorization>,
 }
 
 pub fn decode_hex(value: &str) -> Option<Vec<u8>> {
@@ -37,8 +39,12 @@ impl SignRequest {
     pub fn frost_message(&self, group: &str) -> Result<Vec<u8>> {
         ensure!(
             self.algorithm == ALGORITHM
-                && self.payload_type == "SOLANA_MESSAGE"
-                && self.chain == "SOL"
+                && ((self.payload_type == "SOLANA_MESSAGE"
+                    && self.chain == "SOL"
+                    && self.ton_authorization.is_none())
+                    || (self.payload_type == "TON_V5R1_CELL_HASH"
+                        && self.chain == "TON"
+                        && self.ton_authorization.is_some()))
                 && !self.asset.trim().is_empty()
                 && ["WITHDRAWAL", "SWEEP", "GAS_TOPUP"].contains(&self.operation_type.as_str())
                 && self.attempt_id > 0
@@ -55,6 +61,13 @@ impl SignRequest {
                 && hex(&Sha256::digest(&message)) == self.message_fingerprint,
             "message/fingerprint mismatch"
         );
+        if let Some(authorization) = &self.ton_authorization {
+            ensure!(
+                message == authorization.signing_hash(group, &self.expected_source, &self.asset)?,
+                "TON cell signing input mismatch"
+            );
+            return Ok(message);
+        }
         let public = decode_hex(group).context("invalid group key")?;
         ensure!(
             public.len() == 32 && bs58::encode(public).into_string() == self.expected_source,
@@ -93,6 +106,9 @@ impl SigningExecution {
     pub fn validate(&self) -> Result<Vec<u8>> {
         ensure!(
             self.dkg.is_frost()
+                && ((self.dkg.scope == "SOLANA" && self.request.payload_type == "SOLANA_MESSAGE")
+                    || (self.dkg.scope == "TON"
+                        && self.request.payload_type == "TON_V5R1_CELL_HASH"))
                 && self.dkg.keyset_id == self.request.keyset_id
                 && !self.crypto_execution_id.is_nil()
                 && self.crypto_execution_id != self.dkg.execution_id

@@ -81,6 +81,10 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
             expected_ata = derive_ata(user_wallet.deposit_address, asset.contract_address)
             if user_wallet.asset_account_address != expected_ata:
                 raise ValueError("stored SPL asset account is not the canonical ATA")
+        if user_wallet.chain_id == "TON" and user_wallet.mpc_keyset_id:
+            from .ton_indexer import scan_ton_wallet
+
+            return scan_ton_wallet(user_wallet)
         cfg = get_chain(user_wallet.chain_id)
         threshold = effective_deposit_threshold(asset, cfg)
     except ValueError as exc:

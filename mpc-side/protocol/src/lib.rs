@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub mod cggmp;
 pub mod dkg;
 pub mod sign;
+pub mod ton;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExecutionId(Uuid);

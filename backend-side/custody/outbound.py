@@ -252,6 +252,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
                     expires_at_ms=prepared.expires_at_ms,
                     last_valid_block=prepared.last_valid_block,
                 )
+            if attempt.chain_id == "TON":
+                from .ton_policy import own_sequence
+
+                own_sequence(attempt.pk, prepared.sequence)
             attempt.sequence = prepared.sequence
             attempt.prepared_metadata = prepared.unsigned_payload
             attempt.fee_metadata = prepared.fee_metadata
@@ -359,6 +363,10 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
                     payload, tx_id = _default_consumer(attempt, session)
                     if (payload, tx_id) != (attempt.signed_payload, attempt.network_tx_id):
                         raise ValueError("persisted signed transaction identity mismatch")
+                    if attempt.chain_id == "TON":
+                        from .ton_policy import require_fresh_authorization
+
+                        require_fresh_authorization(attempt)
             except (ValueError, KeyError, TypeError, BadSignature, ValidationError):
                 OnchainTransactionAttempt.objects.filter(pk=attempt_id).update(
                     status="RECONCILIATION_REQUIRED", error_code="SIGNED_PAYLOAD_IDENTITY_MISMATCH"

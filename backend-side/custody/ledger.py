@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from contextlib import contextmanager
+from decimal import Decimal, localcontext
 
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
@@ -11,6 +12,19 @@ from django.db.models.functions import Coalesce
 from .models import LedgerAccount, LedgerPosting, LedgerTransaction
 
 ZERO = Decimal("0")
+
+
+@contextmanager
+def financial_precision():
+    """Preserve all ledger field digits, including 18-decimal Jetton amounts.
+
+    Decimal's default 28-digit context can round unary negation and sums before
+    PostgreSQL sees a valid 40-digit posting. Use the same existing journals with
+    enough local precision; do not change the process-wide decimal context.
+    """
+    with localcontext() as context:
+        context.prec = 80
+        yield
 
 
 class InsufficientFunds(ValueError):
@@ -72,6 +86,7 @@ def account_balance(account: LedgerAccount) -> Decimal:
     return account.postings.aggregate(total=Coalesce(Sum("amount"), ZERO))["total"]
 
 
+@financial_precision()
 def user_balances(user_id: str, asset_key: str) -> dict[str, Decimal]:
     ensure_accounts(user_id, asset_key)
     accounts = LedgerAccount.objects.filter(
@@ -84,6 +99,7 @@ def user_balances(user_id: str, asset_key: str) -> dict[str, Decimal]:
 
 
 @transaction.atomic
+@financial_precision()
 def post_transaction(
     *,
     event_key: str,
@@ -176,6 +192,7 @@ def _require_withdrawal_reservation(req, accounts):
         ) from exc
 
 
+@financial_precision()
 def credit_deposit(deposit):
     accounts = lock_user_accounts(deposit.user_wallet.user_id, deposit.asset_key)
     return post_transaction(
@@ -191,6 +208,7 @@ def credit_deposit(deposit):
     )
 
 
+@financial_precision()
 def reverse_deposit_posting(deposit):
     accounts = lock_user_accounts(deposit.user_wallet.user_id, deposit.asset_key)
     return post_transaction(
@@ -206,6 +224,7 @@ def reverse_deposit_posting(deposit):
     )
 
 
+@financial_precision()
 def reserve_withdrawal(req):
     accounts = lock_user_accounts(req.user_id, req.asset_key)
     if account_balance(accounts["AVAILABLE"]) < req.amount:
@@ -220,6 +239,7 @@ def reserve_withdrawal(req):
     )
 
 
+@financial_precision()
 def release_withdrawal(req):
     accounts = lock_user_accounts(req.user_id, req.asset_key)
     _require_withdrawal_reservation(req, accounts)
@@ -233,6 +253,7 @@ def release_withdrawal(req):
     )
 
 
+@financial_precision()
 def settle_withdrawal(req):
     accounts = lock_user_accounts(req.user_id, req.asset_key)
     _require_withdrawal_reservation(req, accounts)

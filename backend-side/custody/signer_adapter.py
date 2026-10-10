@@ -3,10 +3,9 @@ Signer adapter layer — the concrete implementation behind `MpcSigner`.
 
 This module owns local-development key material. `LocalVault` is explicitly a
 demo signer: it derives complete keys deterministically from a passphrase
-and produces real EOA addresses + real signatures for ETH/BSC/TRX/SOL. For TON
-it produces a deterministic raw EOA address and a stubbed signature so the demo
-flow (including memo attribution) can be exercised. Production TON outbound is
-disabled and is outside Phase 6.
+and produces local demo addresses/signatures for ETH/BSC/TRX/SOL. TON
+requires the separately scoped FROST keyset and reviewed V5R1 contract boundary;
+its legacy deterministic address and local signing placeholders are rejected.
 
 Production uses the separately deployed self-hosted MPC coordinator.
 """
@@ -41,6 +40,7 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
                 settings.MPC_EVM_INTEGRATION_ENABLED
                 or settings.MPC_TRON_INTEGRATION_ENABLED
                 or settings.MPC_SOLANA_INTEGRATION_ENABLED
+                or settings.MPC_TON_INTEGRATION_ENABLED
             )
             or settings.MPC_INTEGRATION_ENVIRONMENT not in {"development", "testnet"}
             or settings.CUSTODY_DEMO_MODE
@@ -66,6 +66,10 @@ def assert_mpc_backend_runtime_safe(chain_id=None) -> None:
                 authorize_solana_network(chain_id)
                 if settings.CUSTODY_INDEXER_MODE != "live":
                     raise RuntimeError("Solana MPC requires genuine live deposit indexing")
+            elif get_chain_spec(chain_id).kind is ChainKind.TON:
+                from .mpc_ton_network import authorize_ton_network
+
+                authorize_ton_network(chain_id)
             elif (
                 get_chain_spec(chain_id).kind is ChainKind.EVM
                 and settings.MPC_EVM_INTEGRATION_ENABLED
@@ -93,15 +97,6 @@ def _seed() -> bytes:
     return hashlib.sha256(passphrase.encode("utf-8")).digest()
 
 
-def _ton_raw_address(scalar: bytes) -> str:
-    """Deterministic TON raw EOA: '0:' + 64 hex of the scalar.
-
-    This stand-in keeps TON deposit-address generation runnable for the demo. The user is
-    still attributed via the TON memo, never via a contract address.
-    """
-    return "0:" + scalar.hex()
-
-
 def _trx_address(pub_hex: str) -> str:
     """Convert an uncompressed secp256k1 pubkey hex to a TRX base58 T-address."""
     from tronpy.keys import PublicKey
@@ -113,7 +108,7 @@ def _trx_address(pub_hex: str) -> str:
 class LocalVault:
     """Derives EOAs + signs locally. NEVER used in production custody."""
 
-    # ---- TON produces a deterministic EOA + stubbed signature ----
+    # TON has no local/demo custody signing path.
     def get_derived_address(self, network: str, path: str) -> str:
         kind = get_chain_spec(network).kind
         scalar = derive_scalar(network, path, _seed())
@@ -130,7 +125,7 @@ class LocalVault:
             kp = Keypair.from_seed(scalar)
             return str(kp.pubkey())
         if kind is ChainKind.TON:
-            return _ton_raw_address(scalar)
+            raise ValueError("TON demo address placeholder is not a custody contract")
         raise NotImplementedError("Unknown network for address derivation")
 
     def sign(self, network: str, raw: dict, path: str, idempotency_key: str) -> str:
@@ -171,7 +166,7 @@ class LocalVault:
             return "signed:" + base64.b64encode(sig_bytes).decode()
         if kind is ChainKind.TON:
             # STUB: production TON outbound is disabled.
-            return "signed:ton:" + hashlib.sha256(f"{path}:{idempotency_key}".encode()).hexdigest()
+            raise ValueError("TON local placeholder signing is unsupported")
         raise NotImplementedError("Unknown network for signing")
 
     def broadcast(self, network: str, signed_ref: str) -> str:

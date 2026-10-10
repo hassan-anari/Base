@@ -788,4 +788,8 @@ def get_native_executor(chain_id: str, transport: RpcTransport | None = None):
         return TronNativeExecutor(transport)
     if kind is ChainKind.SOLANA:
         return SolanaNativeExecutor(transport)
-    raise UnsupportedNativeTransaction("TON outbound custody is not supported")
+    if kind is ChainKind.TON:
+        from .ton_tx import TonNativeExecutor
+
+        return TonNativeExecutor(transport)
+    raise UnsupportedNativeTransaction("unsupported native custody chain")

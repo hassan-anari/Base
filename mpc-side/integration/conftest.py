@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 
-SUITES = ("evm", "tron", "solana", "aux-persistence", "network")
+SUITES = ("evm", "tron", "solana", "ton", "aux-persistence", "network")
 NETWORK_MODULES = {"test_cggmp.py", "test_network.py", "test_dkg.py", "test_signing.py"}
 
 
 def crypto_suite(item):
+    if item.path.name in {"test_ton.py", "test_ton_network.py", "test_ton_django.py"}:
+        return "ton"
     if item.path.name == "test_solana.py":
         return "solana"
     if item.path.name in NETWORK_MODULES:
@@ -49,7 +51,7 @@ class CryptoRun:
         if len(inventory) != len(set(inventory)):
             raise pytest.UsageError("Duplicate crypto scenario in inventory")
         if any(not ids for ids in self.groups.values()):
-            raise pytest.UsageError("Collect the complete six-module crypto inventory")
+            raise pytest.UsageError("Collect the complete crypto crypto inventory")
         selected, deselected = [], []
         for item in items:
             (

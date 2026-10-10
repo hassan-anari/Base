@@ -146,6 +146,8 @@ MPC_TRON_INTEGRATION_ENABLED = config("MPC_TRON_INTEGRATION_ENABLED", default=Fa
 MPC_TRON_NETWORK = config("MPC_TRON_NETWORK", default="{}", cast=json.loads)
 MPC_SOLANA_INTEGRATION_ENABLED = config("MPC_SOLANA_INTEGRATION_ENABLED", default=False, cast=bool)
 MPC_SOLANA_NETWORK = config("MPC_SOLANA_NETWORK", default="{}", cast=json.loads)
+MPC_TON_INTEGRATION_ENABLED = config("MPC_TON_INTEGRATION_ENABLED", default=False, cast=bool)
+MPC_TON_NETWORK = config("MPC_TON_NETWORK", default="{}", cast=json.loads)
 MPC_INTEGRATION_ENVIRONMENT = config("MPC_INTEGRATION_ENVIRONMENT", default="disabled")
 MPC_EVM_DEVELOPMENT_CHAINS = config("MPC_EVM_DEVELOPMENT_CHAINS", default="{}", cast=json.loads)
 # Local-key encryption passphrase for at-rest encrypted hot-wallet keys

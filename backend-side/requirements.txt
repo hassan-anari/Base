@@ -14,7 +14,8 @@ protobuf>=6,<7
 solana>=0.36
 solders>=0.29
 # --- TON (indexer / address utils; signing delegated to MPC vendor) ---
-ton-core>=0.3
+pytoniq-core==0.1.46
+pytoniq==0.1.43
 requests>=2.32
 # --- Crypto for HD derivation & local-key encryption-at-rest ---
 cryptography>=44.0

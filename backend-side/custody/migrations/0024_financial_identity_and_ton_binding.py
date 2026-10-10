@@ -188,4 +188,12 @@ class Migration(migrations.Migration):
             ),
         ),
         migrations.RunPython(install, uninstall),
+        migrations.AddConstraint(
+            model_name="asset",
+            constraint=models.UniqueConstraint(
+                fields=["chain_id", "contract_address", "token_standard"],
+                condition=models.Q(is_native=False, financial_identity_locked=True),
+                name="uq_populated_token_identity",
+            ),
+        ),
     ]

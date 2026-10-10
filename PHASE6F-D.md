@@ -45,6 +45,12 @@ Demonstrated integration defects and narrow fixes:
   identity per chain, including disabled rows; disabling a former identity does
   not authorize a replacement alias. Existing duplicate native identities abort
   migration for reconciliation rather than silently consolidating balances.
+  A disabled populated token could similarly acquire a second financial alias
+  for the same chain/contract/standard. A targeted PostgreSQL regression proved
+  that account creation succeeded. A separate partial uniqueness constraint on
+  populated token identities now rejects this at the first account freeze,
+  including concurrently and while the original asset is disabled. Unpopulated
+  disabled metadata records retain their existing configuration semantics.
 * Root ownership checks verified current scope and network but did not durably
   prevent rebinding original roots after configuration changes. The existing
   keyset now holds append-only chain/network/DKG snapshots. PostgreSQL prevents

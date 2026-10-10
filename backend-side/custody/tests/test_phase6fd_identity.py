@@ -254,6 +254,24 @@ def test_unregistered_asset_cannot_acquire_ledger_accounts():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_disabled_populated_token_cannot_acquire_a_second_financial_alias():
+    asset = credited_asset()
+    Asset.objects.filter(pk=asset.pk).update(enabled=False)
+    alias = Asset.objects.create(
+        asset_key="SECOND-FINANCIAL-ALIAS",
+        chain_id=asset.chain_id,
+        symbol=asset.symbol,
+        decimals=asset.decimals,
+        token_standard=asset.token_standard,
+        contract_address=asset.contract_address,
+    )
+    with pytest.raises(IntegrityError, match="uq_populated_token_identity"), transaction.atomic():
+        ensure_accounts("integrated-customer", alias.asset_key)
+    assert user_balances("integrated-customer", asset.asset_key)["available"] == 2
+    assert not LedgerAccount.objects.filter(asset_key=alias.asset_key).exists()
+
+
+@pytest.mark.django_db(transaction=True)
 def test_native_alias_cannot_duplicate_one_deposit_into_two_ledger_assets():
     from custody.deposits import ingest_event
     from custody.indexer.base import DepositEvent

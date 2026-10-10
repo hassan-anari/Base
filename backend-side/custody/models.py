@@ -71,6 +71,9 @@ class Asset(models.Model):
                 condition=Q(is_native=False, enabled=True),
                 name="uq_active_token_identity",
             ),
+            models.UniqueConstraint(
+                fields=["chain_id"], condition=Q(is_native=True), name="uq_native_asset_per_chain"
+            ),
         ]
 
     def clean(self):

@@ -13,9 +13,11 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from custody.deposits import ingest_event
@@ -51,7 +53,8 @@ from custody.ton_wire import (
 from custody.withdrawals import approve, create_request, process_withdrawal
 from django.conf import settings
 from django.core.management import call_command
-from django.db import close_old_connections, connection
+from django.db import DatabaseError, close_old_connections, connection, transaction
+from django.db.models import Q
 from django.test import override_settings
 from environment import REPO, ROLES, Processes
 from evm_acceptance import CAPS as EVM_CAPS
@@ -233,15 +236,24 @@ class Integrated:
         return self.wallet(chain, asset.asset_key)
 
     def credit(self, wallet, minimum):
-        if wallet.chain_id == "TON":
+        if wallet.chain_id in {"TON", "SOL"}:
             for _ in range(100):
                 wallet.refresh_from_db()
                 result = scan_wallet(wallet)
-                assert result["outcome"] in {"backfill", "confirmed"}, result
-                if result["outcome"] == "confirmed":
+                terminal = {"confirmed"} if wallet.chain_id == "TON" else {"sweep", "scanned"}
+                assert result["outcome"] in {"backfill", *terminal}, result
+                if result["outcome"] in terminal:
                     break
             else:
-                pytest.fail("complete TON deposit history unavailable")
+                pytest.fail("complete finalized deposit history unavailable")
+            if wallet.chain_id == "SOL":
+                assert wallet.last_scanned_block
+                for event in (
+                    get_indexer("SOL")
+                    .get_balance(wallet.deposit_address, asset_key=wallet.asset_key, after_block=0)
+                    .deposit_events
+                ):
+                    ingest_event(wallet, event)
         else:
             if wallet.chain_id == "ETH":
                 for _ in range(3):
@@ -265,6 +277,9 @@ class Integrated:
                     "txid": d.tx_hash,
                     "event": d.event_index,
                     "amount": str(d.amount),
+                    "block": d.block,
+                    "block_hash": d.block_hash,
+                    "confirmations": d.confirmations,
                     "finality": d.chain_evidence,
                     "credit": f"deposit:{d.pk}:credit",
                 }
@@ -305,7 +320,13 @@ class Integrated:
 
     def record(self, attempt):
         session = MpcSigningSession.objects.select_related("keyset").get(attempt=attempt)
-        assert session.status == "COMPLETED" and session.signature_consumed_at
+        if attempt.status == "CONFIRMED":
+            assert session.status == "COMPLETED" and session.signature_consumed_at
+        financial_reference = {
+            "WITHDRAWAL": "WithdrawalRequest",
+            "SWEEP": "SweepJob",
+            "GAS_TOPUP": "GasTopupIntent",
+        }[attempt.operation_type]
         self.evidence["operations"].append(
             {
                 "attempt": attempt.pk,
@@ -313,25 +334,35 @@ class Integrated:
                 "operation_id": attempt.operation_id,
                 "chain": attempt.chain_id,
                 "asset": attempt.asset_key,
+                "status": attempt.status,
+                "error_code": attempt.error_code,
                 "session": str(session.session_id),
+                "session_status": session.status,
+                "signature_consumed": bool(session.signature_consumed_at),
                 "execution": str(session.crypto_execution_id),
                 "keyset": str(session.keyset.keyset_id),
                 "signers": session.selected_signers,
                 "transaction_identity": session.transaction_identity,
                 "txid": attempt.network_tx_id,
                 "signed_bytes_sha256": hashlib.sha256(
-                    bytes.fromhex(attempt.signed_payload)
-                ).hexdigest(),
+                    attempt.signed_payload.encode()
+                    if attempt.chain_id == "TRX"
+                    else bytes.fromhex(attempt.signed_payload)
+                ).hexdigest()
+                if attempt.signed_payload
+                else None,
+                "signed_payload_encoding": "canonical-json" if attempt.chain_id == "TRX" else "hex",
                 "finality": attempt.confirmation_metadata,
                 "journals": list(
                     LedgerTransaction.objects.filter(
-                        ref_type="OnchainTransactionAttempt", ref_id=str(attempt.pk)
+                        Q(ref_type="OnchainTransactionAttempt", ref_id=str(attempt.pk))
+                        | Q(ref_type=financial_reference, ref_id=str(attempt.operation_id))
                     ).values_list("event_key", flat=True)
                 ),
             }
         )
         print(
-            f"Integrated {attempt.chain_id} {attempt.operation_type} {attempt.pk} finalized",
+            f"Integrated {attempt.chain_id} {attempt.operation_type} {attempt.pk} {attempt.status}",
             flush=True,
         )
 
@@ -372,12 +403,18 @@ class Integrated:
             attempt = self.signed(execute_attempt(attempt.pk, "integrated-worker"))
             execute_attempt(attempt.pk, "integrated-worker")
             return self.settle(attempt)
-        result = get_indexer(wallet.chain_id).get_balance(
-            wallet.deposit_address, asset_key=wallet.asset_key
+        job = (
+            SweepJob.objects.filter(user_wallet=wallet)
+            .exclude(status__in={"CONFIRMED", "FAILED"})
+            .first()
         )
-        triggered, job_id, reason = trigger_sweep(wallet, "integrated-balance-check", result)
-        assert triggered, reason
-        job = SweepJob.objects.get(pk=job_id)
+        if job is None:
+            result = get_indexer(wallet.chain_id).get_balance(
+                wallet.deposit_address, asset_key=wallet.asset_key
+            )
+            triggered, job_id, reason = trigger_sweep(wallet, "integrated-balance-check", result)
+            assert triggered, reason
+            job = SweepJob.objects.get(pk=job_id)
         if job.gas_topup_intent_id:
             gas = self.signed(
                 OnchainTransactionAttempt.objects.get(
@@ -415,7 +452,22 @@ class Integrated:
         return attempt
 
     def overlap(self, left, right, label):
+        from custody.signer_adapter import SelfHostedMpcAdapter
+
         barrier = threading.Barrier(2)
+        dispatch_barrier = threading.Barrier(2)
+        local = threading.local()
+        dispatches = {}
+        original_execute = SelfHostedMpcAdapter.execute_signing_session
+
+        def coordinated_dispatch(adapter, session_id):
+            # Finish genuine network preparation independently, then dispatch
+            # both original MPC requests together. All protocol/RPC work is real.
+            if not getattr(local, "dispatched", False):
+                local.dispatched = True
+                dispatch_barrier.wait(timeout=60)
+                dispatches[session_id] = datetime.now(timezone.utc).isoformat()
+            return original_execute(adapter, session_id)
 
         def worker(arg):
             close_old_connections()
@@ -431,14 +483,19 @@ class Integrated:
                     "end": time.monotonic(),
                     "signing_start": session.started_at.isoformat(),
                     "signing_end": session.completed_at.isoformat(),
+                    "mpc_dispatch": dispatches[str(session.session_id)],
                 }
             finally:
                 close_old_connections()
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with (
+            patch.object(SelfHostedMpcAdapter, "execute_signing_session", coordinated_dispatch),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
             windows = list(pool.map(worker, (left, right)))
         assert max(w["start"] for w in windows) < min(w["end"] for w in windows)
         assert max(w["signing_start"] for w in windows) < min(w["signing_end"] for w in windows)
+        assert max(w["mpc_dispatch"] for w in windows) < min(w["signing_end"] for w in windows)
         self.evidence["overlap"].append({"label": label, "windows": windows})
 
     def conservation(self):
@@ -446,6 +503,15 @@ class Integrated:
             postings = list(journal.postings.select_related("account"))
             assert postings and all(p.account.asset_key == journal.asset_key for p in postings)
             assert sum((p.amount for p in postings), Decimal(0)) == 0
+            if journal.event_type in {"NETWORK_FEE", "ATA_RENT", "TOKEN_GAS"}:
+                if journal.ref_type == "OnchainTransactionAttempt":
+                    attempt = OnchainTransactionAttempt.objects.get(pk=journal.ref_id)
+                    assert (
+                        journal.asset_key
+                        == Chain.objects.get(chain_id=attempt.chain_id).native_asset_key
+                    )
+                elif journal.ref_type == "TON_TRANSACTION":
+                    assert journal.asset_key == "TON"
         assert (
             not LedgerPosting.objects.filter(account__bucket="RESERVED")
             .values("account_id")
@@ -457,6 +523,35 @@ class Integrated:
 
 def adversarial(h):
     """Faults act on genuine operations in the shared environment."""
+    from custody.ledger import InsufficientFunds
+
+    token_balances = {
+        key: user_balances(CUSTOMER, key)
+        for key in ("INTEGRATED-ETH", "INTEGRATED-TRX", "INTEGRATED-SOL", "INTEGRATED-TON")
+    }
+    for key in token_balances:
+        chain = Asset.objects.get(asset_key=key).chain_id
+        with pytest.raises(InsufficientFunds):
+            create_request(
+                CUSTOMER,
+                chain,
+                h.destinations[chain],
+                Decimal("1.5"),
+                asset_key=key,
+                idempotency_key=f"same-symbol-rejected:{key}",
+            )
+        assert user_balances(CUSTOMER, key) == token_balances[key]
+    with pytest.raises(DatabaseError, match="financial identity"), transaction.atomic():
+        Asset.objects.filter(asset_key="INTEGRATED-ETH").update(chain_id="TRX", decimals=18)
+    h.withdrawal("SOL", Decimal("0.001"), "during-other-asset-financial-failure")
+    assert all(user_balances(CUSTOMER, key) == balance for key, balance in token_balances.items())
+    h.evidence["faults"].append(
+        {
+            "fault": "CROSS_ASSET_SPEND_AND_REGISTRY_REASSIGNMENT",
+            "all_same_symbol_assets_separate": True,
+            "unrelated_chain_continues": True,
+        }
+    )
     from custody.mpc_binding import local_root_keyset
     from custody.mpc_signing import _consume_completed
     from test_dkg import request
@@ -475,6 +570,16 @@ def adversarial(h):
         execute_attempt(lost.pk, "lost-response-worker")
     assert user_balances(CUSTOMER, "SOL")["reserved"] == lost.amount
     h.withdrawal("ETH", Decimal("0.001"), "during-solana-ambiguity")
+    h.validators["SOL"].wait(lost.network_tx_id)
+
+    def withhold_finalized_history(transport, url, method, params):
+        response = original_rpc(transport, url, method, params)
+        return None if method == "getTransaction" and url == h.validators["SOL"].url else response
+
+    with patch.object(RequestsTransport, "rpc", withhold_finalized_history):
+        assert reconcile_attempt(lost.pk).status == "RECONCILIATION_REQUIRED"
+        assert user_balances(CUSTOMER, "SOL")["reserved"] == lost.amount
+        h.withdrawal("ETH", Decimal("0.001"), "during-missing-solana-finalized-history")
     h.settle(lost)
     session = MpcSigningSession.objects.get(attempt=lost)
     journals = LedgerTransaction.objects.count()
@@ -488,6 +593,7 @@ def adversarial(h):
             "fault": "SOLANA_LOST_RESPONSE_DUPLICATE_COMPLETION",
             "attempt": lost.pk,
             "same_bytes_and_once_settlement": True,
+            "missing_finalized_history_preserved_reservation": True,
         }
     )
 
@@ -521,10 +627,27 @@ def adversarial(h):
             h.net, "coordinator", "custody", f"/v1/sign-sessions/{s.session_id}", method="GET"
         )
         assert code == 200
-        from custody.mpc_signing import coordinator_request
-
-        authorization = coordinator_request(s.attempt, s)
-        assert all(stored.get(k) == v for k, v in authorization.items())
+        fields = (
+            "session_id",
+            "attempt_id",
+            "keyset_id",
+            "algorithm",
+            "payload_type",
+            "payload_hex",
+            "message_fingerprint",
+            "operation_type",
+            "chain",
+            "asset",
+            "expected_source",
+            "derivation_reference",
+        )
+        authorization = {k: stored[k] for k in fields}
+        if chain == "TON":
+            authorization["ton_authorization"] = stored["ton_authorization"]
+        assert authorization["session_id"] == str(s.session_id)
+        assert authorization["keyset_id"] == str(s.keyset.keyset_id)
+        assert authorization["payload_hex"] == bytes(s.signing_payload).hex()
+        assert authorization["attempt_id"] == s.attempt_id
         assert (
             request(h.net, "coordinator", "custody", "/v1/sign-sessions", authorization)[0] == 200
         )
@@ -584,13 +707,15 @@ def adversarial(h):
     assert (a.signed_payload, a.network_tx_id, a.sequence) == original_bytes
     assert user_balances(CUSTOMER, "ETH")["reserved"] == req.amount
     connection.close()
-    replacement = ctx.Process(target=worker, args=(False,))
-    replacement.start()
-    replacement.join(timeout=30)
-    if replacement.is_alive():
-        replacement.kill()
-        replacement.join(timeout=10)
-    assert replacement.exitcode == 0
+    replacements = [ctx.Process(target=worker, args=(False,)) for _ in range(2)]
+    for replacement in replacements:
+        replacement.start()
+    for replacement in replacements:
+        replacement.join(timeout=30)
+        if replacement.is_alive():
+            replacement.kill()
+            replacement.join(timeout=10)
+        assert replacement.exitcode == 0
     a.refresh_from_db()
     assert (a.signed_payload, a.network_tx_id, a.sequence) == original_bytes
     assert MpcSigningSession.objects.get(attempt=a).session_id == original_session.session_id
@@ -600,7 +725,36 @@ def adversarial(h):
             "fault": "DJANGO_WORKER_SIGKILL_AFTER_SIGNED_BEFORE_BROADCAST",
             "attempt": a.pk,
             "same_session_and_bytes": True,
+            "duplicate_replacement_workers": 2,
             "settled_once": True,
+        }
+    )
+
+    expired = h.withdrawal("SOL", Decimal("0.001"), "real-blockhash-expiry", broadcast=False)
+    original_expired = (expired.signed_payload, expired.network_tx_id, expired.last_valid_block)
+    h.withdrawal("ETH", Decimal("0.001"), "during-solana-expiry")
+    deadline = time.monotonic() + 180
+    while (
+        h.validators["SOL"].rpc("getBlockHeight", [{"commitment": "finalized"}])
+        <= expired.last_valid_block
+    ):
+        assert time.monotonic() < deadline, "original Solana blockhash did not actually expire"
+        time.sleep(0.5)
+    assert reconcile_attempt(expired.pk).status == "RECONCILIATION_REQUIRED"
+    expired.refresh_from_db()
+    assert (
+        expired.signed_payload,
+        expired.network_tx_id,
+        expired.last_valid_block,
+    ) == original_expired
+    assert user_balances(CUSTOMER, "SOL")["reserved"] == expired.amount
+    h.evidence["faults"].append(
+        {
+            "fault": "SOLANA_ACTUAL_BLOCKHASH_EXPIRY_WITHOUT_FINALIZED_EXECUTION",
+            "attempt": expired.pk,
+            "last_valid_block": expired.last_valid_block,
+            "reserved": str(expired.amount),
+            "no_replacement_authorization": True,
         }
     )
 
@@ -618,6 +772,10 @@ def adversarial(h):
     s = MpcSigningSession.objects.get(attempt=a)
     original = (s.session_id, s.crypto_execution_id, s.transaction_identity, a.sequence)
     assert s.crypto_execution_id and a.status == "SIGNING"
+    from custody.signer_adapter import SelfHostedMpcAdapter
+
+    observed = SelfHostedMpcAdapter().get_signing_session(str(s.session_id))
+    assert observed["status"] == "IN_PROGRESS"
     h.net.stop("coordinator")
     h.net.start("coordinator")
     execute_attempt(a.pk, "restart-worker")
@@ -625,13 +783,14 @@ def adversarial(h):
     a.refresh_from_db()
     assert (s.session_id, s.crypto_execution_id, s.transaction_identity, a.sequence) == original
     assert user_balances(CUSTOMER, "ETH")["reserved"] == req.amount
-    h.withdrawal("SOL", Decimal("0.001"), "after-coordinator-restart")
+    h.withdrawal("TON", Decimal("0.005"), "after-coordinator-restart")
     h.evidence["faults"].append(
         {
             "fault": "COORDINATOR_RESTART_DURING_SIGNING",
             "attempt": a.pk,
             "execution": str(s.crypto_execution_id),
             "status": a.status,
+            "coordinator_status_before_restart": observed["status"],
             "reservation_preserved": str(req.amount),
         }
     )
@@ -641,10 +800,10 @@ def adversarial(h):
     try:
         req = create_request(
             CUSTOMER,
-            "SOL",
-            h.destinations["SOL"],
+            "TON",
+            h.destinations["TON"],
             Decimal("0.001"),
-            asset_key="SOL",
+            asset_key="TON",
             idempotency_key="insufficient-quorum",
         )
         approve("integrated-reviewer", req.pk)
@@ -654,7 +813,7 @@ def adversarial(h):
             execute_attempt(a.pk, "duplicate-quorum-worker")
         a.refresh_from_db()
         assert not a.signed_payload
-        assert user_balances(CUSTOMER, "SOL")["reserved"] == req.amount
+        assert user_balances(CUSTOMER, "TON")["reserved"] == req.amount
         h.evidence["faults"].append(
             {
                 "fault": "INSUFFICIENT_QUORUM",
@@ -712,7 +871,9 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
         },
     }
     h = Integrated(tmp_path, net, ton)
+    validator_root = tmp_path / "validator-runs" / str(uuid4())
     admin = None
+    completed = False
     try:
         for role in ROLES[:4]:
             net.start(role)
@@ -794,7 +955,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
 
             h.roots_for("TRX", "TRON")
             hot, deposit = [item[1] for item in h.roots["TRX"]]
-            tron = TronValidator(tmp_path / "tron", [(hot, 10000000000)])
+            tron = TronValidator(validator_root / "tron", [(hot, 10000000000)])
             h.validators["TRX"] = tron
             settings.MPC_TRON_NETWORK = tron.policy
             tw = h.configure("TRX", "tron", "TRX", tron.url, TRON_CAPS, tron.policy)
@@ -884,7 +1045,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
             del h.validators["TRX"]
 
             h.roots_for("SOL", "SOLANA")
-            sol = SolanaValidator(tmp_path / "solana")
+            sol = SolanaValidator(validator_root / "solana")
             h.validators["SOL"] = sol
             settings.MPC_SOLANA_NETWORK = sol.policy
             sw = h.configure(
@@ -908,8 +1069,8 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
             sol.mint_to(str(sol.faucet.pubkey()), 1000000)
             sol.token_transfer(sw.deposit_address, 1000000)
             h.credit(sw, Decimal("0.2"))
-            h.credit(st, Decimal(1))
             h.sweep(sw)
+            h.credit(st, Decimal(1))
             h.sweep(st)
             h.overlap(("ETH", Decimal("0.001")), ("SOL", Decimal("0.001")), "EVM_SOLANA")
             h.withdrawal("INTEGRATED-SOL", Decimal("0.1"), "spl")
@@ -939,8 +1100,6 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
 
             fixture = command("identity")
             h.destinations["TON"] = fixture["admin"]
-            for target in (h.roots["TON"][0][1], fixture["admin"]):
-                fund(container, target, 5)
 
             def wait_account(address, predicate):
                 deadline = time.monotonic() + 90
@@ -951,6 +1110,16 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                         return block
                     time.sleep(0.2)
                 pytest.fail("TON actual account effect did not finalize")
+
+            # Fixture faucet calls return before finality. Do not race its
+            # original wallet sequence when funding two independent accounts.
+            for target in (h.roots["TON"][0][1], fixture["admin"]):
+                cp, _ = ton.checkpoint()
+                previous = ton.account(target, cp)["balance"]
+                fund(container, target, 5)
+                wait_account(
+                    target, lambda s: s["balance"] >= max(5_000_000_000, previous + 4_900_000_000)
+                )
 
             seqno = 0
 
@@ -1011,6 +1180,9 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
             h.sweep(nt)
             h.overlap(("ETH", Decimal("0.001")), ("TON", Decimal("0.05")), "EVM_TON")
             h.withdrawal("INTEGRATED-TON", Decimal("0.1"), "jetton")
+            assert MpcKeyset.objects.count() == 8
+            assert MpcKeyset.objects.values("public_key").distinct().count() == 8
+            assert MpcKeyset.objects.values("dkg_result_fingerprint").distinct().count() == 8
             adversarial(h)
             # Preserve every family simultaneously while all service processes
             # restart. Finalized original bytes and financial outcomes are stable.
@@ -1025,6 +1197,17 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                 )
             )
             journals = LedgerTransaction.objects.count()
+            cursors = list(
+                UserWallet.objects.values(
+                    "id",
+                    "chain_id",
+                    "asset_key",
+                    "last_scanned_block",
+                    "solana_scan_cursor",
+                    "ton_scan_cursor",
+                )
+            )
+            root_pins = list(MpcKeyset.objects.values("keyset_id", "network_bindings"))
             for role in ROLES[:4]:
                 net.stop(role)
             for role in ROLES[:4]:
@@ -1040,6 +1223,19 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                     "pk", "signed_payload", "network_tx_id", "sequence"
                 )
             )
+            assert cursors == list(
+                UserWallet.objects.values(
+                    "id",
+                    "chain_id",
+                    "asset_key",
+                    "last_scanned_block",
+                    "solana_scan_cursor",
+                    "ton_scan_cursor",
+                )
+            )
+            assert root_pins == list(MpcKeyset.objects.values("keyset_id", "network_bindings"))
+            h.evidence["durable_cursors"] = cursors
+            h.evidence["original_root_network_bindings"] = root_pins
             for a in OnchainTransactionAttempt.objects.filter(status="CONFIRMED"):
                 reconcile_attempt(a.pk)
             assert LedgerTransaction.objects.count() == journals
@@ -1051,6 +1247,35 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                 }
             )
             h.conservation()
+            recorded = {row["attempt"] for row in h.evidence["operations"]}
+            for a in OnchainTransactionAttempt.objects.exclude(pk__in=recorded):
+                h.record(a)
+                if a.operation_type == "WITHDRAWAL" and a.status != "CONFIRMED":
+                    assert (
+                        LedgerTransaction.objects.filter(
+                            event_key=f"withdrawal:{a.operation_id}:reserve"
+                        ).count()
+                        == 1
+                    )
+                    assert not LedgerTransaction.objects.filter(
+                        event_key__in=[
+                            f"withdrawal:{a.operation_id}:release",
+                            f"withdrawal:{a.operation_id}:settle",
+                        ]
+                    ).exists()
+            h.evidence["assets"] = list(
+                Asset.objects.filter(asset_key__in=h.wallets).values(
+                    "asset_key",
+                    "chain_id",
+                    "symbol",
+                    "is_native",
+                    "token_standard",
+                    "contract_address",
+                    "decimals",
+                    "metadata_fingerprint",
+                    "financial_identity_locked",
+                )
+            )
             h.evidence["ledger"] = {
                 "transactions": LedgerTransaction.objects.count(),
                 "postings": LedgerPosting.objects.count(),
@@ -1065,11 +1290,13 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                     )
                 ),
             }
-            h.evidence["wall_seconds"] = time.monotonic() - h.started
-            destination = REPO / "work/integrated-review/public-evidence.json"
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(json.dumps(h.evidence, indent=2, default=str))
+            completed = True
     finally:
+        h.evidence["completed"] = completed
+        h.evidence["wall_seconds"] = time.monotonic() - h.started
+        destination = REPO / "work/integrated-review/public-evidence.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(h.evidence, indent=2, default=str))
         for validator in h.validators.values():
             validator.close()
         net.close()

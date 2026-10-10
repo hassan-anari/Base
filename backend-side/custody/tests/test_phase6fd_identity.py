@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from django.db import DatabaseError, close_old_connections, connection, transaction
+from django.db import DatabaseError, IntegrityError, close_old_connections, connection, transaction
 from ops.models import Chain
 
 from custody.account_chain_costs import post_execution_costs
@@ -240,3 +240,38 @@ def test_spendable_asset_cannot_be_deleted_and_recreated():
         Asset.objects.filter(pk=asset.pk).delete()
     Asset.objects.filter(pk=asset.pk).update(symbol="DISPLAY-ONLY", enabled=False)
     assert user_balances("integrated-customer", asset.asset_key)["available"] == Decimal("2")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unregistered_asset_cannot_acquire_ledger_accounts():
+    assert connection.vendor == "postgresql"
+    with (
+        pytest.raises(IntegrityError, match="registered asset financial identity"),
+        transaction.atomic(),
+    ):
+        ensure_accounts("integrated-customer", "UNREGISTERED")
+    assert not LedgerAccount.objects.filter(asset_key="UNREGISTERED").exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_native_alias_cannot_duplicate_one_deposit_into_two_ledger_assets():
+    from custody.deposits import ingest_event
+    from custody.indexer.base import DepositEvent
+    from custody.models import UserWallet
+
+    with pytest.raises(IntegrityError, match="uq_native_asset_per_chain"), transaction.atomic():
+        Asset.objects.create(
+            asset_key="DUPLICATE-ETH", chain_id="ETH", symbol="ETH", decimals=18, is_native=True
+        )
+        # Before the fix this real ingestion path credited both keys for the
+        # same financial event. This is a financial regression, not MPC proof.
+        for key in ("ETH", "DUPLICATE-ETH"):
+            wallet = UserWallet.objects.create(
+                user_id="native-alias-customer",
+                chain_id="ETH",
+                asset_key=key,
+                deposit_address="0x" + "89" * 20,
+                derivation_path="m/native-alias",
+            )
+            ingest_event(wallet, DepositEvent("0xone-financial-event", Decimal(1), 100, 12))
+            assert user_balances(wallet.user_id, key)["available"] == 1

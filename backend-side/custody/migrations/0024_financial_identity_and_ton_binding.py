@@ -174,6 +174,14 @@ class Migration(migrations.Migration):
             field=models.JSONField(default=dict, blank=True, editable=False),
         ),
         migrations.AddConstraint(
+            model_name="asset",
+            constraint=models.UniqueConstraint(
+                fields=["chain_id"],
+                condition=models.Q(is_native=True),
+                name="uq_native_asset_per_chain",
+            ),
+        ),
+        migrations.AddConstraint(
             model_name="tonwalletbinding",
             constraint=models.UniqueConstraint(
                 fields=["keyset"], name="uq_ton_keyset_network_binding"

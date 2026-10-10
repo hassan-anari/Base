@@ -123,6 +123,7 @@ def evm_get_balance(chain_id: str, address: str) -> BalanceResult:
                             amount=Decimal(int(tx["value"], 16)) / divisor,
                             block=n,
                             confirmations=max(0, head - n),
+                            block_hash=blk.get("hash"),
                         )
                     )
     except Exception as e:  # noqa: BLE001 - balance still valid without events

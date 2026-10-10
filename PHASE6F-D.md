@@ -39,6 +39,12 @@ Demonstrated integration defects and narrow fixes:
   row; validation cannot precede an intervening identity mutation. Display
   symbols and capability switches remain editable. No balance is rewritten and
   no competing ledger is added. Direct bulk updates cannot bypass the trigger.
+* A second native asset key could credit the same native chain/address/event
+  into another spendable balance. A PostgreSQL reproduction credited both keys
+  once for one financial event. Migration `0024` now requires one native asset
+  identity per chain, including disabled rows; disabling a former identity does
+  not authorize a replacement alias. Existing duplicate native identities abort
+  migration for reconciliation rather than silently consolidating balances.
 * Root ownership checks verified current scope and network but did not durably
   prevent rebinding original roots after configuration changes. The existing
   keyset now holds append-only chain/network/DKG snapshots. PostgreSQL prevents
@@ -67,6 +73,11 @@ Demonstrated integration defects and narrow fixes:
 * EVM indexer and token-metadata reads did not consistently use MPC endpoint
   guards. They now check runtime network identity; native deposit ingestion also
   requires a matching successful receipt in MPC mode.
+* Genuine interleaved withdrawal execution exposed valid lowercase EVM
+  recipients rejected by the serialization library after reservation. Digest
+  and signature assembly now normalize only the serialization copy to checksum
+  form. The approved recipient and immutable persisted identity are unchanged;
+  both representations encode the same original 20 address bytes.
 
 Migration does not repair historical financial corruption or invent missing
 original cryptographic evidence. Conflicting historical bindings abort the
@@ -107,7 +118,7 @@ chain acceptance tests a second time. All stages must execute and pass.
 | Sweeps/funding | Actual eligible native/token sweeps; bounded MPC gas/resource funding and existing Solana rent/TON Jetton gas policies |
 | Concurrency | Overlapping EVM/TRON, EVM/Solana and EVM/TON operations; separate PostgreSQL connections and recorded signing start/completion intervals |
 | Isolation | Real TRON RPC process stop while EVM continues; changed TON genesis and wrong Solana FROST root rejected; cross-chain/session authorization replay rejected by original coordinator |
-| Uncertainty | Lost Solana broadcast response retains reservation until the original transaction finalizes; TRON RPC uncertainty remains reserved; no timeout-based release |
+| Uncertainty | Lost Solana broadcast response and withheld finalized history retain the original reservation; actual blockhash expiry remains reconciliation-required; TRON RPC uncertainty remains reserved; no timeout-based release |
 | Quorum | One signer stopped with genuine B/C quorum; two signers stopped with no signature/local-key fallback |
 | Recovery | Coordinator restart during an original execution; actual Django worker SIGKILL after signed-byte persistence and replacement broadcast; all MPC processes restart with original identities |
 | Financial state | Same-symbol token balances stay separate; every journal conserves one asset; costs use native assets; duplicate completion/reconciliation does not post twice; unknown outcomes remain reserved |
@@ -117,6 +128,9 @@ Solana starts subsequently and remains live during TON/fault tests. TON's pinned
 Docker network is retained throughout. PostgreSQL and encrypted MPC stores are
 not replaced between stages. This is staged validator acceptance with recorded
 two-network overlaps, not a claim that four validators execute simultaneously.
+The harness aligns the two original MPC dispatches after each chain finishes
+genuine preparation. It records dispatch and signature-completion timestamps
+and requires positive overlap; the barrier produces no signatures or RPC success.
 
 The isolated EVM gas-funding fixture grants `0.03` ETH because the existing
 conservative token requirement is `200000 * 100 gwei = 0.02` ETH. The independent

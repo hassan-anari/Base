@@ -63,3 +63,23 @@ def test_local_legacy_and_eip1559_assembly_from_normalized_components():
         assert raw
         assert len(tx_hash) == 66
         assert Account.recover_transaction(bytes.fromhex(raw)) == expected
+
+
+def test_lowercase_recipient_preserves_digest_signed_bytes_and_original_identity():
+    from eth_keys import keys
+    from eth_utils import to_checksum_address
+
+    from custody.mpc_payload import assemble_evm_signature
+
+    private = keys.PrivateKey(bytes.fromhex("01".rjust(64, "0")))
+    lower = "0xe0873d4317f0a1e48a7e53c719cb90448c7bbd5a"
+    for template in (LEGACY, EIP1559):
+        original = {**template, "to": lower}
+        canonical = {**original, "to": to_checksum_address(lower)}
+        assert evm_signing_digest(original) == evm_signing_digest(canonical)
+        signature = private.sign_msg_hash(evm_signing_digest(original)[1])
+        components = {"r": hex(signature.r), "s": hex(signature.s), "recovery_id": signature.v}
+        assert assemble_evm_signature(
+            original, components, private.public_key.to_checksum_address()
+        ) == assemble_evm_signature(canonical, components, private.public_key.to_checksum_address())
+        assert original["to"] == lower

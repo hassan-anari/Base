@@ -58,6 +58,9 @@ An external audit report's correspondence to this exact V5R1 artifact has not
 been independently established in this workspace. Standard-version identity,
 source recompilation and contract execution are established; the report-to-code
 correspondence is an outstanding P1 review input, not an asserted audit result.
+Its proposed limited-development disposition and pending project-owner approval
+are recorded in the [risk decision](acceptance/phase6fc/limited-development-disposition.md).
+The external audit requirement remains **OPEN** as a production-readiness blocker.
 
 Initial data is `is_signature_allowed:1 = 1`, `seqno:uint32 = 0`,
 `wallet_id:uint32`, original authenticated DKG public key `uint256`, and empty
@@ -331,8 +334,9 @@ run `38049401737`, observed first-job-to-final-gate span approximately 27m11s.
 
 No unresolved P0 was found by the implemented checks. This is not an independent
 security audit. Independent review
-of the new authorization, native proof interface, asynchronous accounting and
-recovery boundaries is required before any operational use. The explicit P1
+of the TON wallet, FROST authorization, proof verification, Jetton settlement,
+accounting and recovery boundaries remains a prerequisite for production
+activation or use with customer assets. The explicit P1
 input is external audit-report correspondence to the exact wallet artifact.
 Missing/pruned history is a fail-closed deterministic regression; this does not
 claim a live validator-pruning acceptance experiment. Automatic recovery from
@@ -345,4 +349,29 @@ Feature flag defaults remain `MPC_TON_INTEGRATION_ENABLED=false` and empty
 development environment, non-demo operation, test-only TON registry, original
 authenticated roots and independently established local network artifacts.
 Nothing in this milestone enables public-network or production funds. Keep the
-PR Draft and unmerged, and stop for independent security review.
+PR Draft and unmerged pending written project-owner approval of the limited
+isolated-development acceptance below. No production activation is authorized.
+
+## Limited isolated-development acceptance
+
+The project instruction dated 2026-10-10 permits proposing that the open external
+audit correspondence gap be retained as a production-readiness blocker instead
+of indefinitely blocking acceptance of isolated-development code. This does not
+resolve or complete the audit requirement. The reviewed implementation SHA is
+`3fdb6fa2b75a4de436f7435582bebc957f733f8f`, with the V5R1 code hash listed above.
+
+The [written risk decision and approval record](acceptance/phase6fc/limited-development-disposition.md)
+identifies **@hassan-anari** as project risk owner and preserves the requester's
+written instruction. Risk-owner acknowledgement and final project-owner approval
+are **PENDING**; no approval is inferred. PR #33 remains Draft and unmerged until
+the owner explicitly approves this limited acceptance.
+
+The scope is the isolated validator development environment only, with no
+mainnet, public testnet funds, production deployment, customer assets or claim
+that the exact artifact passed an independent external audit. **Do not reuse a
+TON root keyset across distinct genesis instances sharing the same global ID.**
+The open audit requirement and targeted independent security review remain
+explicit prerequisites for production activation. No later roadmap phase is
+authorized. This documentation-only disposition changes no implementation or
+activation flags and does not require repeating the cryptographic gate; passing
+implementation evidence remains attached to its original reviewed SHA.

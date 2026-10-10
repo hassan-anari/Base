@@ -28,3 +28,8 @@ transaction hashes. The fixture establishes the new trust root from local
 artifacts before accepting running-network claims, then executes the same
 verification. The exact final-SHA CI results are linked in the Draft PR.
 Neither these captures nor passing CI establish production readiness.
+
+The [limited-development risk disposition](limited-development-disposition.md)
+retains external audit correspondence as an **OPEN production blocker**, names
+the project risk owner and preserves the written instruction. Project-owner
+approval remains pending; PR #33 stays Draft and unmerged until that approval.

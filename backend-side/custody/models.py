@@ -118,6 +118,7 @@ class MpcKeyset(models.Model):
     dkg_execution_id = models.UUIDField(null=True, blank=True, unique=True)
     dkg_result_fingerprint = models.CharField(max_length=64, blank=True, default="")
     participant_identities = models.JSONField(default=list, blank=True)
+    dkg_public_evidence = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=16, choices=STATUSES, default="CREATING")
     active_for_new_wallets = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -151,6 +152,10 @@ class MpcKeyset(models.Model):
                     )
                 ),
                 name="mpc_keyset_scope_algorithm_shape",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(scope="SOLANA", active_for_new_wallets=True),
+                name="solana_root_no_auto_provisioning",
             ),
         ]
 
@@ -214,6 +219,7 @@ class UserWallet(models.Model):
     # Indexer scan metadata
     last_scanned_at = models.DateTimeField(null=True, blank=True)
     last_scanned_block = models.BigIntegerField(null=True, blank=True)
+    solana_scan_cursor = models.JSONField(default=dict, blank=True)
     # SPL ATA. The signing authority remains deposit_address.
     asset_account_address = models.CharField(max_length=128, null=True, blank=True)
     mpc_keyset = models.ForeignKey(
@@ -562,6 +568,9 @@ class LedgerAccount(models.Model):
         ("AVAILABLE", "AVAILABLE"),
         ("RESERVED", "RESERVED"),
         ("CUSTODY_CLEARING", "CUSTODY_CLEARING"),
+        ("TREASURY_ASSET", "TREASURY_ASSET"),
+        ("NETWORK_FEE_EXPENSE", "NETWORK_FEE_EXPENSE"),
+        ("ATA_RENT_ASSET", "ATA_RENT_ASSET"),
     ]
     owner_type = models.CharField(max_length=16, choices=OWNER_TYPES)
     owner_id = models.CharField(max_length=64)
@@ -582,7 +591,12 @@ class LedgerAccount(models.Model):
                     | models.Q(
                         owner_type="SYSTEM",
                         owner_id="custody",
-                        bucket="CUSTODY_CLEARING",
+                        bucket__in=[
+                            "CUSTODY_CLEARING",
+                            "TREASURY_ASSET",
+                            "NETWORK_FEE_EXPENSE",
+                            "ATA_RENT_ASSET",
+                        ],
                     )
                 ),
                 name="ledger_account_valid_shape",
@@ -605,7 +619,8 @@ class LedgerAccount(models.Model):
         valid_system = (
             self.owner_type == "SYSTEM"
             and self.owner_id == "custody"
-            and self.bucket == "CUSTODY_CLEARING"
+            and self.bucket
+            in {"CUSTODY_CLEARING", "TREASURY_ASSET", "NETWORK_FEE_EXPENSE", "ATA_RENT_ASSET"}
         )
         if not (valid_user or valid_system):
             raise ValidationError("invalid ledger account identity shape")
@@ -624,6 +639,8 @@ class LedgerTransaction(models.Model):
         ("WITHDRAWAL_RESERVE", "WITHDRAWAL_RESERVE"),
         ("WITHDRAWAL_RELEASE", "WITHDRAWAL_RELEASE"),
         ("WITHDRAWAL_SETTLE", "WITHDRAWAL_SETTLE"),
+        ("NETWORK_FEE", "NETWORK_FEE"),
+        ("ATA_RENT", "ATA_RENT"),
     ]
     event_key = models.CharField(max_length=160, unique=True)
     event_type = models.CharField(max_length=32, choices=TYPES)

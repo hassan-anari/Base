@@ -369,6 +369,14 @@ class SplTokenExecutor:
         self.transport = transport or RequestsTransport()
 
     def prepare(self, chain_id, asset_key, source, destination, amount, *, sweep=False):
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .solana_policy import prepare_solana
+
+            return prepare_solana(
+                self.transport, chain_id, asset_key, source, destination, amount, sweep=sweep
+            )
         import base64
         import struct
 
@@ -512,6 +520,12 @@ class SplTokenExecutor:
         return SolanaNativeExecutor(self.transport).broadcast(chain_id, signed, expected)
 
     def reconcile(self, prepared, tx_id):
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .solana_settlement import reconcile_solana_transfer
+
+            return reconcile_solana_transfer(self.transport, prepared, tx_id)
         from .token_metadata import CLASSIC_TOKEN_PROGRAM
 
         urls = rpc_urls(prepared.chain_id)

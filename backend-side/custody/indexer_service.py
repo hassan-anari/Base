@@ -99,7 +99,11 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
             )
         except TypeError as exc:
             # Temporary compatibility for externally supplied Phase 4 clients.
-            if "unexpected keyword argument" not in str(exc) or not asset.is_native:
+            if (
+                "unexpected keyword argument" not in str(exc)
+                or not asset.is_native
+                or user_wallet.mpc_keyset_id
+            ):
                 raise
             bal = indexer.get_balance(
                 user_wallet.deposit_address,
@@ -119,34 +123,50 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
     confirmed = Decimal(str(bal.confirmed_balance))
     result["confirmed_balance"] = confirmed
 
-    # Concrete events, rather than aggregate address balance, back credits.
-    for ev in bal.deposit_events:
-        deposit, created = ingest_event(user_wallet, ev)
-        if created:
-            result["new_deposits"] += 1
-            logger.info(
-                "new deposit: wallet=%s tx=%s amount=%s conf=%s",
-                user_wallet.id,
-                ev.tx_hash,
-                ev.amount,
-                ev.confirmations,
-            )
-            write_audit_log(
-                SYSTEM_ACTOR,
-                AuditAction.DEPOSIT_DETECTED,
-                "Deposit",
-                str(deposit.id),
-                {
-                    "wallet": user_wallet.deposit_address,
-                    "tx_hash": ev.tx_hash,
-                    "amount": str(ev.amount),
-                },
-            )
+    # Commit event journals and cursor together; a crash cannot skip uncredited history.
     with transaction.atomic():
+        locked = UserWallet.objects.select_for_update().get(pk=user_wallet.pk)
+        if (
+            locked.solana_scan_cursor != user_wallet.solana_scan_cursor
+            or locked.last_scanned_block != user_wallet.last_scanned_block
+        ):
+            result["reason"] = "another scanner advanced this wallet; retry from durable cursor"
+            return result
+        for ev in bal.deposit_events:
+            deposit, created = ingest_event(user_wallet, ev)
+            if created:
+                result["new_deposits"] += 1
+                logger.info(
+                    "new deposit: wallet=%s tx=%s amount=%s conf=%s",
+                    user_wallet.id,
+                    ev.tx_hash,
+                    ev.amount,
+                    ev.confirmations,
+                )
+                write_audit_log(
+                    SYSTEM_ACTOR,
+                    AuditAction.DEPOSIT_DETECTED,
+                    "Deposit",
+                    str(deposit.id),
+                    {
+                        "wallet": user_wallet.deposit_address,
+                        "tx_hash": ev.tx_hash,
+                        "amount": str(ev.amount),
+                    },
+                )
         user_wallet.last_scanned_at = timezone.now()
         if bal.last_scanned_block:
             user_wallet.last_scanned_block = bal.last_scanned_block
-        user_wallet.save(update_fields=["last_scanned_at", "last_scanned_block"])
+        if hasattr(bal, "scan_cursor"):
+            user_wallet.solana_scan_cursor = bal.scan_cursor
+        user_wallet.save(
+            update_fields=["last_scanned_at", "last_scanned_block", "solana_scan_cursor"]
+        )
+
+    if not getattr(bal, "scan_complete", True):
+        result["reason"] = "bounded historical backfill continues from durable cursor"
+        result["outcome"] = "backfill"
+        return result
 
     # Check threshold and trigger sweep pipeline
     if confirmed > threshold:

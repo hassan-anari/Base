@@ -46,8 +46,8 @@ def local_root_keyset(attempt):
 
 def _wallet_root_keyset(wallet, chain_id, source_address):
     spec = get_chain_spec(chain_id)
-    if spec.kind not in {ChainKind.EVM, ChainKind.TRON}:
-        raise MpcBindingError("only reviewed EVM/TRON root signing is supported")
+    if spec.kind not in {ChainKind.EVM, ChainKind.TRON, ChainKind.SOLANA}:
+        raise MpcBindingError("unsupported root signing family")
     keyset = wallet.mpc_keyset
     if keyset is None:
         raise MpcBindingError("source wallet has no explicit MPC keyset binding")
@@ -58,19 +58,24 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
         )
     if isinstance(wallet, UserWallet) and wallet.derivation_version != "mpc_root_v1":
         raise UnsupportedMpcDerivation("deposit wallet must explicitly select mpc_root_v1")
+    solana = spec.kind is ChainKind.SOLANA
     if (
         keyset.status != "ACTIVE"
-        or keyset.algorithm != "CGGMP24_ECDSA"
-        or keyset.curve != "secp256k1"
-        or keyset.scope != ("TRON" if spec.kind is ChainKind.TRON else "EVM")
+        or keyset.algorithm != ("FROST_ED25519" if solana else "CGGMP24_ECDSA")
+        or keyset.curve != ("ed25519" if solana else "secp256k1")
+        or keyset.scope
+        != ("SOLANA" if solana else "TRON" if spec.kind is ChainKind.TRON else "EVM")
         or (keyset.threshold, keyset.party_count) != (2, 3)
         or keyset.participant_identities != PARTICIPANTS
-        or keyset.derivation_version != "cggmp_hd_v1"
+        or keyset.derivation_version != ("frost_keyset_v1" if solana else "cggmp_hd_v1")
         or not keyset.dkg_execution_id
         or len(keyset.dkg_result_fingerprint) != 64
-        or len(keyset.public_key) != 66
+        or len(keyset.public_key) != (64 if solana else 66)
+        or (solana and (keyset.active_for_new_wallets or not keyset.dkg_public_evidence))
     ):
-        raise MpcBindingError("keyset is not a reviewed active CGGMP24 2-of-3 root keyset")
+        raise MpcBindingError("keyset is not a reviewed active 2-of-3 root keyset")
+    if solana:
+        verify_coordinator_keyset(keyset, keyset.dkg_public_evidence)
     address = wallet.deposit_address if isinstance(wallet, UserWallet) else wallet.address
     expected = address_from_public_key(chain_id, keyset.public_key)
     normalize = str.lower if spec.kind is ChainKind.EVM else str
@@ -96,8 +101,9 @@ def verify_coordinator_keyset(keyset, metadata):
     }
     if any(metadata.get(k) != v for k, v in expected.items()):
         raise MpcBindingError("coordinator DKG identity mismatch")
+    frost = keyset.algorithm == "FROST_ED25519"
     if (
-        metadata.get("status") != "KEYGEN_COMPLETED"
+        metadata.get("status") != ("COMPLETED" if frost else "KEYGEN_COMPLETED")
         or metadata.get("group_public_key") != keyset.public_key
         or metadata.get("result_fingerprint") != keyset.dkg_result_fingerprint
     ):
@@ -110,13 +116,63 @@ def verify_coordinator_keyset(keyset, metadata):
         if (
             report.get("request") != dkg
             or report.get("party_id") != party
-            or report.get("status") != "KEYGEN_COMPLETED"
+            or report.get("status") != ("COMPLETED" if frost else "KEYGEN_COMPLETED")
             or report.get("durable") is not True
             or report.get("group_public_key") != keyset.public_key
             or report.get("share_format_version") != 1
             or report.get("public_key_package") != reports[0].get("public_key_package")
         ):
             raise MpcBindingError("DKG participant receipt mismatch")
+    if frost:
+        if (keyset.threshold, keyset.party_count) != (2, 3):
+            raise MpcBindingError("FROST root threshold must be exactly 2-of-3")
+        if (keyset.scope, keyset.curve, keyset.derivation_version) != (
+            "SOLANA",
+            "ed25519",
+            "frost_keyset_v1",
+        ):
+            raise MpcBindingError("invalid FROST root shape")
+        try:
+            if (
+                len(bytes.fromhex(keyset.public_key)) != 32
+                or bytes.fromhex(keyset.public_key).hex() != keyset.public_key
+            ):
+                raise ValueError
+            package = reports[0]["public_key_package"]
+            if (
+                not isinstance(package, list)
+                or not package
+                or any(type(b) is not int or not 0 <= b <= 255 for b in package)
+            ):
+                raise ValueError
+            for report in reports:
+                share = report["verification_share"]
+                if (
+                    not isinstance(share, list)
+                    or len(share) != 32
+                    or any(type(b) is not int or not 0 <= b <= 255 for b in share)
+                ):
+                    raise ValueError
+            import uuid
+
+            if (
+                uuid.UUID(metadata["session_id"]).int == 0
+                or uuid.UUID(str(keyset.dkg_execution_id)).int == 0
+            ):
+                raise ValueError
+            if (
+                len(bytes.fromhex(keyset.dkg_result_fingerprint)) != 32
+                or bytes.fromhex(keyset.dkg_result_fingerprint).hex()
+                != keyset.dkg_result_fingerprint
+            ):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise MpcBindingError("incomplete canonical FROST DKG public evidence") from None
+        if keyset.dkg_public_evidence and metadata != keyset.dkg_public_evidence:
+            raise MpcBindingError("FROST DKG differs from imported authenticated evidence")
+        # Rust validates the serialized PublicKeyPackage and all public shares.
+        # No auxiliary ceremony is part of FROST. CGGMP checks below are unchanged.
+        return
     auxiliary = metadata.get("auxiliary") or {}
     request = auxiliary.get("request") or {}
     if (
@@ -270,6 +326,10 @@ def transaction_identity(attempt, keyset):
     from .token_metadata import assert_verified_token
 
     spec = get_chain_spec(attempt.chain_id)
+    if spec.kind is ChainKind.SOLANA:
+        from .solana_policy import solana_transaction_identity
+
+        return solana_transaction_identity(attempt, keyset)
     if spec.kind is ChainKind.TRON:
         from .tron_policy import tron_transaction_identity
 

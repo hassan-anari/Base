@@ -63,4 +63,12 @@ class Command(BaseCommand):
             else:
                 wallet.signing_key_ref = f"keyset:{keyset.keyset_id}"
                 wallet.save(update_fields=["mpc_keyset", "signing_key_ref"])
+            if kind is ChainKind.SOLANA:
+                from custody.mpc_binding import _wallet_root_keyset, verify_coordinator_keyset
+                from custody.signer_adapter import SelfHostedMpcAdapter
+
+                _wallet_root_keyset(wallet, wallet.chain_id, expected)
+                verify_coordinator_keyset(
+                    keyset, SelfHostedMpcAdapter().get_keyset(str(keyset.keyset_id))
+                )
             self.stdout.write(f"bound {wallet.chain_id} to {keyset.keyset_id}")

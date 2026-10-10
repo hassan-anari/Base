@@ -1,4 +1,4 @@
-"""SOL (devnet) indexer client. System-account EOA deposits.
+"""SOL indexer: isolated root-bound MPC evidence or legacy demo indexing.
 
 LIVE mode (default): real Solana JSON-RPC via the editable node registry
 (ops dashboard -> Nodes). Balance = getBalance (lamports -> SOL, 1e9).
@@ -57,6 +57,24 @@ class SolIndexer(IndexerClient):
     def get_balance(
         self, address: str, *, asset_key=None, after_block=None, memo=None
     ) -> BalanceResult:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from ..models import UserWallet
+            from ..signer_adapter import assert_mpc_backend_runtime_safe
+            from ..solana_deposits import scan_root_wallet
+
+            assert_mpc_backend_runtime_safe(self.chain_id)
+            if (
+                asset_key == "SOL"
+                and not UserWallet.objects.filter(
+                    chain_id="SOL", deposit_address=address, asset_key="SOL"
+                ).exists()
+            ):
+                from ..solana_deposits import root_native_balance
+
+                return root_native_balance(address)
+            return scan_root_wallet(self.chain_id, address, asset_key, after_block)
         if self._stub_enabled():
             return self._stub_balance(asset_key=asset_key)
         from ..models import Asset

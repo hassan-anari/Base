@@ -1,4 +1,4 @@
-"""Resumable advancement of one durable CGGMP execution for an approved EVM attempt."""
+"""Resumable advancement of one owned CGGMP/FROST execution for custody."""
 
 from __future__ import annotations
 
@@ -56,7 +56,11 @@ def coordinator_request(attempt, session) -> dict:
     identity = transaction_identity(attempt, keyset)
     payload_type, digest = exact_signing_payload(attempt.chain_id, attempt.prepared_metadata, b"")
     if (
-        len(payload) != 32
+        (
+            not 0 < len(payload) <= 1167
+            if keyset.algorithm == "FROST_ED25519"
+            else len(payload) != 32
+        )
         or digest != payload
         or payload_type != session.payload_type
         or identity != session.transaction_identity
@@ -77,7 +81,7 @@ def coordinator_request(attempt, session) -> dict:
         else attempt.chain_id,
         "asset": attempt.asset_key,
         "expected_source": attempt.from_address
-        if session.payload_type == "TRON_TXID"
+        if session.payload_type in {"TRON_TXID", "SOLANA_MESSAGE"}
         else attempt.from_address.lower(),
         "derivation_reference": None,
     }
@@ -150,7 +154,8 @@ def _default_consumer(attempt, session):
         "verified": True,
     }
     if (
-        any(result.get(k) != v for k, v in expected.items())
+        result.get("verified") is not True
+        or any(result.get(k) != v for k, v in expected.items())
         or not _execution_identity_matches(
             session,
             {
@@ -159,7 +164,20 @@ def _default_consumer(attempt, session):
                 "selected_signers": session.selected_signers,
             },
         )
-        or type(result.get("recovery_id")) is not int
+    ):
+        raise ValueError("completed signature identity mismatch")
+    if session.algorithm == "FROST_ED25519":
+        from .solana_wire import assemble_signature
+
+        if session.payload_type != "SOLANA_MESSAGE" or set(result) != set(expected) | {
+            "signature_hex"
+        }:
+            raise ValueError("invalid FROST output contract")
+        return assemble_signature(
+            attempt.prepared_metadata["message"], session.keyset.public_key, result["signature_hex"]
+        )
+    if (
+        type(result.get("recovery_id")) is not int
         or result.get("y_parity") != result.get("recovery_id")
         or len(result.get("r", "")) != 64
         or len(result.get("s", "")) != 64
@@ -282,6 +300,7 @@ def advance_mpc_signing(attempt_id: int, client=None):
             from .signer_adapter import CoordinatorSessionNotFound
 
             if session.status == "CREATED":
+                _require_solana_fresh(snapshot, session)
                 if session.payload_type == "TRON_TXID":
                     from .tron_policy import require_fresh
 
@@ -300,9 +319,11 @@ def advance_mpc_signing(attempt_id: int, client=None):
                         from .tron_policy import require_fresh
 
                         require_fresh(snapshot.prepared_metadata, signing=True)
+                    _require_solana_fresh(snapshot, session)
                     result = client.create_signing_session(request)
             session = _persist_result(attempt_id, session.pk, request, result)
             if session.status == "CREATED":
+                _require_solana_fresh(snapshot, session)
                 if session.payload_type == "TRON_TXID":
                     from .tron_policy import require_fresh
 
@@ -330,3 +351,16 @@ def advance_mpc_signing(attempt_id: int, client=None):
             # Do not persist external payload/error details in logs or error_message.
             return mark_signing_uncertain(attempt_id, "MPC_RECONCILIATION_REQUIRED")
         return OnchainTransactionAttempt.objects.get(pk=attempt_id)
+
+
+def _require_solana_fresh(attempt, session):
+    if session.payload_type == "SOLANA_MESSAGE":
+        from .mpc_solana_network import require_fresh
+        from .native_tx import RequestsTransport
+
+        require_fresh(
+            attempt.chain_id,
+            attempt.last_valid_block,
+            RequestsTransport(),
+            blockhash=attempt.prepared_metadata["recentBlockhash"],
+        )

@@ -703,6 +703,11 @@ def test_preparation_rejects_nonzero_source_below_rent_minimum(sol_context, rema
         SolanaNativeExecutor(ctx.rpc).prepare(
             "SOL", "SOL", ctx.source, ctx.destination, Decimal("1")
         )
+    swept = SolanaNativeExecutor(ctx.rpc).prepare(
+        "SOL", "SOL", ctx.source, ctx.destination, Decimal("1"), sweep=True
+    )
+    assert swept.base_unit_amount == 1_000_000_000 + remaining - 890880
+    assert swept.fee_metadata["source_rent_minimum_lamports"] == "890880"
 
 
 @pytest.mark.parametrize(

@@ -81,6 +81,7 @@ def prepare_solana(transport, chain_id, asset_key, source, destination, amount, 
     source_info = account(source)
     account_data(source_info, SYSTEM_PROGRAM, 0)
     balance = uint(source_info["lamports"])
+    system_rent = uint(rpc("getMinimumBalanceForRentExemption", [0]))
     destination_info = None
     rent = 0
     create = False
@@ -92,7 +93,7 @@ def prepare_solana(transport, chain_id, asset_key, source, destination, amount, 
         destination_info = account(destination)
         if destination_info is not None:
             account_data(destination_info, SYSTEM_PROGRAM, 0)
-        elif units < uint(rpc("getMinimumBalanceForRentExemption", [0])):
+        elif units < system_rent:
             raise InsufficientBalance(
                 "native recipient transfer is below system-account rent minimum"
             )
@@ -148,6 +149,9 @@ def prepare_solana(transport, chain_id, asset_key, source, destination, amount, 
             units = min(
                 to_base_units(amount, asset.decimals, maximum=U64_MAX), balance - fee - reserve
             )
+            remainder = balance - fee - units
+            if 0 < remainder < system_rent:
+                units = min(units, balance - fee - max(reserve, system_rent))
             if units <= 0:
                 raise InsufficientBalance("source cannot fund safe native sweep")
         message = build_message(source, destination, units, block["blockhash"], **token)
@@ -166,7 +170,6 @@ def prepare_solana(transport, chain_id, asset_key, source, destination, amount, 
     if balance < (units if asset.is_native else 0) + fee + rent + reserve:
         raise InsufficientBalance("source cannot fund transfer, fee, rent and reserve")
     remainder = balance - (units if asset.is_native else 0) - fee - rent
-    system_rent = uint(rpc("getMinimumBalanceForRentExemption", [0]))
     if remainder and remainder < system_rent:
         raise InsufficientBalance("source remainder is below system-account rent minimum")
     if asset.is_native:
@@ -177,6 +180,7 @@ def prepare_solana(transport, chain_id, asset_key, source, destination, amount, 
         "fee_lamports": str(fee),
         "ata_rent_lamports": str(rent),
         "reserve_lamports": str(reserve),
+        "source_rent_minimum_lamports": str(system_rent),
         "compute_budget": "none",
         "policy": dict(spec.gas_settings),
         "network": network,

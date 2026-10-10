@@ -133,6 +133,8 @@ reserve. Message/fee convergence happens before identity freezing. New recipient
 accounts must receive enough lamports to meet the System account rent minimum.
 The source remainder must be zero or meet that minimum too; SPL fee/rent funding
 must leave a valid System account balance.
+If a sweep's approved snapshot cap would leave a nonzero rent-deficient balance,
+preparation reduces the transfer before freezing to retain the required rent.
 
 Classic SPL uses one exact `TransferChecked` instruction, reviewed mint/decimals,
 canonical source/destination ATAs derived from owner + Classic Token Program +

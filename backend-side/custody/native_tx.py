@@ -559,6 +559,14 @@ class SolanaNativeExecutor:
         *,
         sweep: bool = False,
     ):
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .solana_policy import prepare_solana
+
+            return prepare_solana(
+                self.transport, chain_id, asset_key, source, destination, amount, sweep=sweep
+            )
         spec = get_chain_spec(chain_id)
         if spec.kind is not ChainKind.SOLANA:
             raise UnsupportedNativeTransaction("Solana executor requires a Solana chain")
@@ -672,11 +680,33 @@ class SolanaNativeExecutor:
         return str(Transaction.from_bytes(signed).signatures[0])
 
     def broadcast(self, chain_id: str, signed: bytes, expected: str) -> str:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from solders.transaction import Transaction
+
+            from .mpc_solana_network import guarded_solana_rpc
+
+            tx = Transaction.from_bytes(signed)
+            tx.sanitize()
+            if (
+                bytes(tx) != signed
+                or len(tx.signatures) != 1
+                or str(tx.signatures[0]) != expected
+                or not all(tx.verify_with_results())
+            ):
+                raise ValueError("committed Solana broadcast wire/signature mismatch")
+
+        def rpc(url, method, params):
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                return guarded_solana_rpc(chain_id, url, self.transport, method, params)
+            return self.transport.rpc(url, method, params)
+
         encoded = base64.b64encode(signed).decode()
         ambiguous = False
         for url in rpc_urls(chain_id):
             try:
-                result = self.transport.rpc(
+                result = rpc(
                     url,
                     "sendTransaction",
                     [encoded, {"encoding": "base64", "skipPreflight": False}],
@@ -684,6 +714,10 @@ class SolanaNativeExecutor:
                 if str(result) != expected:
                     raise DeterministicBroadcastRejection("RPC returned an unexpected signature")
                 return expected
+            except DeterministicBroadcastRejection as exc:
+                raise AmbiguousBroadcast(
+                    "Solana rejection does not prove original non-acceptance"
+                ) from exc
             except (requests.Timeout, requests.ConnectionError):
                 ambiguous = True
         if ambiguous:
@@ -691,6 +725,12 @@ class SolanaNativeExecutor:
         raise DeterministicBroadcastRejection("all Solana endpoints rejected transaction")
 
     def reconcile(self, prepared: PreparedNativeTransaction, tx_id: str) -> ReconciliationResult:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .solana_settlement import reconcile_solana_transfer
+
+            return reconcile_solana_transfer(self.transport, prepared, tx_id)
         urls = rpc_urls(prepared.chain_id)
         response, url = self._read(
             urls, "getSignatureStatuses", [[tx_id], {"searchTransactionHistory": True}]
@@ -706,7 +746,12 @@ class SolanaNativeExecutor:
                 height = _int(height)
                 if height > prepared.last_valid_block:
                     return ReconciliationResult(
-                        ReconciliationState.EXPIRED, {"block_height": height}
+                        ReconciliationState.RECONCILIATION_REQUIRED,
+                        {
+                            "block_height": height,
+                            "non_inclusion_proven": False,
+                            "manual_reconciliation_required": True,
+                        },
                     )
             return ReconciliationResult(ReconciliationState.UNKNOWN)
         evidence = {

@@ -49,7 +49,7 @@ class Command(BaseCommand):
                 f"{keyset.threshold}-of-{keyset.party_count} {keyset.status}"
             )
         elif action in {"import-dkg", "activate"}:
-            if keyset.scope in {"EVM", "TRON"}:
+            if keyset.scope in {"EVM", "TRON", "SOLANA"}:
                 from custody.mpc_binding import verify_coordinator_keyset
                 from custody.signer_adapter import SelfHostedMpcAdapter
 
@@ -57,12 +57,20 @@ class Command(BaseCommand):
                 if action == "import-dkg":
                     if keyset.status != "CREATING":
                         raise CommandError("only creating keysets can import DKG evidence")
+                    if keyset.dkg_execution_id and (
+                        str(keyset.dkg_execution_id) != metadata.get("execution_id")
+                        or keyset.public_key != metadata.get("group_public_key")
+                        or keyset.dkg_result_fingerprint != metadata.get("result_fingerprint")
+                    ):
+                        raise CommandError("import cannot replace original DKG identity")
                     keyset.public_key = metadata.get("group_public_key", "")
                     keyset.dkg_execution_id = metadata.get("execution_id")
                     keyset.dkg_result_fingerprint = metadata.get("result_fingerprint", "")
                     keyset.participant_identities = metadata.get("participants", [])
                 verify_coordinator_keyset(keyset, metadata)
                 if action == "import-dkg":
+                    if keyset.scope == "SOLANA":
+                        keyset.dkg_public_evidence = metadata
                     keyset.save()
                     return
             elif action == "import-dkg":
@@ -83,7 +91,7 @@ class Command(BaseCommand):
                     scope=keyset.scope, active_for_new_wallets=True
                 ).update(active_for_new_wallets=False)
                 keyset.status = "ACTIVE"
-                keyset.active_for_new_wallets = keyset.scope not in {"EVM", "TRON"}
+                keyset.active_for_new_wallets = False
                 keyset.full_clean()
                 keyset.save()
         else:

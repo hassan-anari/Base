@@ -286,6 +286,15 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             validate_custody_intent(attempt)
             keyset = local_root_keyset(attempt)
             identity = transaction_identity(attempt, keyset)
+            if keyset.scope == "SOLANA":
+                from .mpc_solana_network import require_fresh
+
+                require_fresh(
+                    attempt.chain_id,
+                    attempt.last_valid_block,
+                    executor.transport,
+                    blockhash=attempt.prepared_metadata["recentBlockhash"],
+                )
             if keyset.scope == "TRON":
                 from .tron_policy import require_fresh
 
@@ -398,6 +407,15 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             from .mpc_tron_network import verify_mpc_rpc_endpoints
 
             verify_mpc_rpc_endpoints(attempt.chain_id, executor.transport)
+            if attempt.chain_id == "SOL":
+                from .mpc_solana_network import require_fresh
+
+                require_fresh(
+                    attempt.chain_id,
+                    attempt.last_valid_block,
+                    executor.transport,
+                    blockhash=attempt.prepared_metadata["recentBlockhash"],
+                )
         with transaction.atomic():
             attempt = OnchainTransactionAttempt.objects.select_for_update().get(pk=attempt_id)
             if attempt.status != "SIGNED":

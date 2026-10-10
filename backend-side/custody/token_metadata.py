@@ -82,6 +82,13 @@ def metadata_fingerprint(asset: Asset | Any, *, program: str = "") -> str:
         "standard": asset.token_standard,
         "program": program or (CLASSIC_TOKEN_PROGRAM if asset.token_standard == "SPL" else ""),
     }
+    if spec.kind is ChainKind.SOLANA:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+            from .mpc_solana_network import network_identity
+
+            body["network"] = network_identity(asset.chain_id)
     return hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -112,6 +119,12 @@ def _hex_uint(value: Any) -> int:
 
 
 def _rpc(transport, url: str, method: str, params: list[Any]):
+    from django.conf import settings
+
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and method == "getAccountInfo":
+        from .mpc_solana_network import guarded_solana_rpc
+
+        return guarded_solana_rpc("SOL", url, transport, method, params)
     return transport.rpc(url, method, params)
 
 
@@ -200,6 +213,20 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 raise TokenVerificationError("TRC20 constant contract call failed") from exc
         else:
+            from django.conf import settings
+
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                from .mpc_solana_network import guarded_solana_rpc
+                from .solana_policy import validate_mint
+
+                account = guarded_solana_rpc(
+                    spec.chain_id,
+                    url,
+                    transport,
+                    "getAccountInfo",
+                    [asset.contract_address, {"encoding": "base64", "commitment": "finalized"}],
+                )["value"]
+                validate_mint(account, asset.decimals)
             info = _rpc(
                 transport,
                 url,

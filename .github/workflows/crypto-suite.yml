@@ -45,6 +45,7 @@ jobs:
       CUSTODY_INDEXER_MODE: stub
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
       PHASE6F_TRON_JAR: /tmp/phase6f-FullNode.jar
+      PHASE6FB_SOLANA_BIN: /tmp/phase6fb-solana/solana-release/bin
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,11 +84,27 @@ jobs:
         run: |
           curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
           echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
+      - name: Cache pinned disposable Solana validator
+        if: inputs.suite == 'solana'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/phase6fb-solana/solana-release
+          key: agave-2.1.21-linux-5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397
+      - name: Fetch and verify pinned isolated Solana validator
+        if: inputs.suite == 'solana'
+        run: |
+          mkdir -p /tmp/phase6fb-solana
+          if [ ! -x "$PHASE6FB_SOLANA_BIN/solana-test-validator" ]; then
+            curl --fail --location --silent --show-error https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o /tmp/phase6fb-solana/release.tar.bz2
+            echo "5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397  /tmp/phase6fb-solana/release.tar.bz2" | sha256sum --check
+            tar -xjf /tmp/phase6fb-solana/release.tar.bz2 -C /tmp/phase6fb-solana
+          fi
+          "$PHASE6FB_SOLANA_BIN/solana-test-validator" --version
       - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
       - name: Run every selected original scenario with private fixtures local to this job
         run: |
           mkdir -p work/crypto
-          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
+          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -97,4 +114,5 @@ jobs:
             work/crypto/manifest.json
             work/crypto/results.xml
             work/crypto/fixtures/**/tron-evidence.json
+            work/crypto/fixtures/**/solana-evidence.json
 

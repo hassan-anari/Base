@@ -54,10 +54,16 @@ def reconcile_attempt(attempt_id: int):
             from .outbound import sync_parent_state
 
             snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
-            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id == "TRX":
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id in {
+                "TRX",
+                "SOL",
+            }:
                 OnchainTransactionAttempt.objects.filter(pk=attempt_id).exclude(
                     status__in=["CONFIRMED", "FAILED"]
-                ).update(status="RECONCILIATION_REQUIRED", error_code="TRON_EVIDENCE_UNVERIFIED")
+                ).update(
+                    status="RECONCILIATION_REQUIRED",
+                    error_code=f"{snapshot.chain_id}_EVIDENCE_UNVERIFIED",
+                )
                 sync_parent_state(OnchainTransactionAttempt.objects.get(pk=attempt_id))
             raise
 
@@ -72,10 +78,9 @@ def _reconcile_attempt(attempt_id: int):
 
     from .chain_registry import ChainKind, get_chain_spec
 
-    if (
-        settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
-        and get_chain_spec(snapshot.chain_id).kind is ChainKind.TRON
-    ):
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and get_chain_spec(
+        snapshot.chain_id
+    ).kind in {ChainKind.TRON, ChainKind.SOLANA}:
         from .models import MpcSigningSession
         from .mpc_signing import _default_consumer
 
@@ -93,6 +98,16 @@ def _reconcile_attempt(attempt_id: int):
     result = _executor(snapshot.chain_id, snapshot.asset_key).reconcile(
         _prepared(snapshot), snapshot.network_tx_id
     )
+    if (
+        get_chain_spec(snapshot.chain_id).kind is ChainKind.SOLANA
+        and result.state is ReconciliationState.EXPIRED
+    ):
+        from .native_tx import ReconciliationResult
+
+        result = ReconciliationResult(
+            ReconciliationState.RECONCILIATION_REQUIRED,
+            {**result.evidence, "error": "SOLANA_NON_INCLUSION_UNPROVEN"},
+        )
     if result.state not in {
         ReconciliationState.CONFIRMED,
         ReconciliationState.FAILED,
@@ -147,6 +162,13 @@ def _reconcile_attempt(attempt_id: int):
             )
             operation.tx_hash = attempt.network_tx_id
             operation.save(update_fields=["status", "tx_hash", "updated_at"])
+        if (
+            get_chain_spec(attempt.chain_id).kind is ChainKind.SOLANA
+            and settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        ):
+            from .solana_costs import post_execution_costs
+
+            post_execution_costs(attempt, result.evidence)
         attempt.status = "CONFIRMED" if result.state is ReconciliationState.CONFIRMED else "FAILED"
         attempt.confirmation_metadata = {"state": result.state.value, **result.evidence}
         attempt.save(update_fields=["status", "confirmation_metadata", "updated_at"])

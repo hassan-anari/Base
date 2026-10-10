@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 import requests
 from custody.deposits import ingest_event
-from custody.gas_station import execute_gas_intent
+from custody.gas_station import admin_topup, execute_gas_intent
 from custody.indexer.sol import SolIndexer
 from custody.ledger import ensure_accounts, post_transaction, user_balances
 from custody.models import (
@@ -214,6 +214,35 @@ def test_genuine_solana_frost_custody_and_recovery(tmp_path):
             recipient = str(Keypair().pubkey())
             validator.fund(hot, 50 * 10**9)
             validator.fund(recipient, 10**9)
+            # A registered address with a local key is not FROST custody authority.
+            UserWallet.objects.create(
+                user_id="unbound-gas-recipient",
+                chain_id="SOL",
+                asset_key="SOL",
+                deposit_address=recipient,
+                derivation_path="unbound",
+            )
+            sessions_before = MpcSigningSession.objects.count()
+            with (
+                patch.object(SelfHostedMpcAdapter, "create_signing_session") as create_session,
+                patch.object(SelfHostedMpcAdapter, "execute_signing_session") as execute_session,
+                patch("custody.native_tx.SolanaNativeExecutor.broadcast") as broadcast,
+            ):
+                with pytest.raises(ValueError, match="no explicit MPC keyset"):
+                    admin_topup("admin", "SOL", recipient, Decimal("0.01"), "unbound-gas")
+                create_session.assert_not_called()
+                execute_session.assert_not_called()
+                broadcast.assert_not_called()
+            assert MpcSigningSession.objects.count() == sessions_before
+            assert not MpcSigningSession.objects.filter(
+                attempt__operation_type="GAS_TOPUP"
+            ).exists()
+            evidence["unauthorized_gas_funding"] = {
+                "registered_unbound_destination_rejected": True,
+                "signing_session_count": 0,
+                "mpc_execution_count": 0,
+                "broadcast_count": 0,
+            }
             # Genuine Django signing verifies every independent pair.
             original_execute = SelfHostedMpcAdapter.execute_signing_session
             signing_calls = []
@@ -446,6 +475,7 @@ def test_genuine_solana_frost_custody_and_recovery(tmp_path):
             )
             execute_attempt(gas.pk, "worker")
             gas = settle(validator, gas)
+            evidence["authorized_gas_funding"] = public_signing(gas)
             execute_gas_intent(job.gas_topup_intent_id)
             funding_observation = SolIndexer().get_balance(deposit, asset_key="SOL")
             assert all(ev.tx_hash != gas.network_tx_id for ev in funding_observation.deposit_events)

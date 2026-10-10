@@ -150,6 +150,13 @@ The root source must have native lamports to cover fees and rent; token sweeps u
 the existing confirmed gas-grant lifecycle when funding is needed. No separate
 fee payer or independent signature is silently introduced.
 
+The final `GAS_TOPUP` authorization boundary verifies the destination's original
+FROST root evidence using the same ownership verifier as withdrawals and sweeps.
+Every matching ACTIVE UserWallet record and, when applicable, the HotWallet must
+have a valid explicit root binding and agree on the keyset. Solana Base58 matching
+is case-sensitive. Registration alone cannot authorize administrative or automatic
+funding; rejected ownership creates no signing session, execution or broadcast.
+
 Reviewed gas settings include `max_fee_lamports`, `max_ata_rent_lamports`, optional
 `native_reserve_lamports`, and a bounded `topup_amount` for sweeps. This initial
 shape permits **no compute-budget instructions or priority fees**. The identity

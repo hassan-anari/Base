@@ -302,6 +302,28 @@ def validate_custody_intent(attempt):
             else:
                 for recipient in recipients:
                     _wallet_root_keyset(recipient, attempt.chain_id, attempt.to_address)
+        elif spec.kind is ChainKind.SOLANA:
+            recipients = list(
+                UserWallet.objects.select_related("mpc_keyset").filter(
+                    chain_id=attempt.chain_id,
+                    deposit_address=attempt.to_address,
+                    status="ACTIVE",
+                )
+            )
+            is_hot = hot.address == attempt.to_address
+            if not recipients and not is_hot:
+                raise MpcBindingError("Solana gas grant destination is not a bound wallet")
+            owner_keysets = set()
+            if is_hot:
+                owner_keysets.add(_wallet_root_keyset(hot, attempt.chain_id, attempt.to_address).pk)
+            # Every active record must agree, including records at the hot address.
+            # Base58 addresses are case-sensitive; registration alone is not ownership.
+            for recipient in recipients:
+                owner_keysets.add(
+                    _wallet_root_keyset(recipient, attempt.chain_id, attempt.to_address).pk
+                )
+            if len(owner_keysets) != 1:
+                raise MpcBindingError("Solana gas grant destination has conflicting root bindings")
         if (
             operation.status
             not in (

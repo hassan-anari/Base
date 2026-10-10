@@ -104,6 +104,7 @@ def test_mainnet_override_cannot_execute_session_or_broadcast(context, settings,
 def test_reviewed_public_testnet_identity_accepted(context, settings, alias, numeric):
     settings.MPC_INTEGRATION_ENVIRONMENT = "testnet"
     settings.MPC_EVM_DEVELOPMENT_CHAINS = {}
+    settings.MPC_EVM_GENESIS_HASHES = {}
     key = f"TEST-{alias}"
     Asset.objects.create(asset_key=key, chain_id=alias, symbol=alias, is_native=True, enabled=True)
     Chain.objects.update_or_create(
@@ -174,8 +175,37 @@ def test_explicit_loopback_development_chain_accepted(context, settings, url, nu
     NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url=url)
     assert_mpc_backend_runtime_safe("ETH")
     transport = Mock()
-    transport.rpc.return_value = hex(numeric)
+    transport.rpc.side_effect = lambda url, method, params: (
+        {"hash": "0x" + "11" * 32} if method == "eth_getBlockByNumber" else hex(numeric)
+    )
     verify_evm_rpc_endpoints("ETH", transport)
+
+
+@pytest.mark.parametrize("genesis", [None, "0x0", "0x" + "00" * 32, "0x" + "AA" * 32])
+def test_isolated_evm_unknown_genesis_fails_closed(context, settings, genesis):
+    settings.MPC_EVM_GENESIS_HASHES = {} if genesis is None else {"ETH": genesis}
+    with pytest.raises(MpcNetworkError, match="approved genesis"):
+        verify_evm_rpc_endpoints("ETH", Mock())
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+def test_same_numeric_evm_changed_genesis_cannot_rebind_root(context, settings):
+    from custody.mpc_binding import MpcBindingError, local_root_keyset
+
+    local_root_keyset(context.attempt)
+    settings.MPC_EVM_GENESIS_HASHES = {"ETH": "0x" + "22" * 32}
+    with pytest.raises(MpcBindingError, match="cannot be replaced"):
+        local_root_keyset(context.attempt)
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+def test_matching_numeric_evm_wrong_rpc_genesis_rejected(context):
+    transport = Mock()
+    transport.rpc.side_effect = lambda url, method, params: (
+        {"hash": "0x" + "22" * 32} if method == "eth_getBlockByNumber" else "0x7a69"
+    )
+    with pytest.raises(MpcNetworkError, match="RPC genesis"):
+        verify_evm_rpc_endpoints("ETH", transport)
 
 
 def test_is_testnet_flag_is_required_but_not_sufficient(context):
@@ -236,6 +266,8 @@ def test_actual_failover_endpoint_is_checked_after_ambiguous_primary_broadcast(c
                 fallback_checks += 1
                 return "0x7a69" if fallback_checks == 1 else "0xa"
             return "0x7a69"
+        if method == "eth_getBlockByNumber":
+            return {"hash": "0x" + "11" * 32}
         assert method == "eth_sendRawTransaction" and url.endswith("18545")
         raise requests.Timeout("ambiguous primary response")
 

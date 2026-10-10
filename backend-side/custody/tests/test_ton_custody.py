@@ -309,7 +309,16 @@ def test_jetton_full_precision_double_entry_survives_default_decimal_context():
         settle_withdrawal,
         user_balances,
     )
-    from custody.models import LedgerPosting
+    from custody.models import Asset, LedgerPosting
+
+    Asset.objects.create(
+        asset_key="TON-JETTON",
+        chain_id="TON",
+        symbol="REFERENCE",
+        decimals=18,
+        token_standard="TEP74",
+        contract_address="0:" + "44" * 32,
+    )
 
     amount = Decimal("123456789012345.123456789012345678")
     deposit = N(

@@ -34,10 +34,13 @@ class EvmIndexer(IndexerClient):
 
         assert_verified_token(asset.asset_key)
         urls = rpc_urls(self.chain_id)
-        head = int(_call_any(urls, "eth_blockNumber", []), 16)
+
+        def read(method, params):
+            return _call_any(urls, method, params, chain_id=self.chain_id)
+
+        head = int(read("eth_blockNumber", []), 16)
         padded = address.lower().removeprefix("0x").rjust(64, "0")
-        raw = _call_any(
-            urls,
+        raw = read(
             "eth_call",
             [{"to": asset.contract_address, "data": "0x70a08231" + padded}, "latest"],
         )
@@ -53,8 +56,7 @@ class EvmIndexer(IndexerClient):
         for first in range(start, head + 1, chunk):
             last = min(head, first + chunk - 1)
             logs = (
-                _call_any(
-                    urls,
+                read(
                     "eth_getLogs",
                     [
                         {

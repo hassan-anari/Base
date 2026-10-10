@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 
-SUITES = ("evm", "tron", "solana", "ton", "aux-persistence", "network")
+SUITES = ("evm", "tron", "solana", "ton", "aux-persistence", "network", "integrated")
 NETWORK_MODULES = {"test_cggmp.py", "test_network.py", "test_dkg.py", "test_signing.py"}
 
 
 def crypto_suite(item):
+    if item.path.name == "test_integrated.py":
+        return "integrated"
     if item.path.name in {"test_ton.py", "test_ton_network.py", "test_ton_django.py"}:
         return "ton"
     if item.path.name == "test_solana.py":

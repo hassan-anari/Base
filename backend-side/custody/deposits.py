@@ -6,12 +6,15 @@ from django.db import transaction
 
 from .config import get_confirmation_threshold, validate_chain_asset
 from .ledger import credit_deposit, reverse_deposit_posting
-from .models import Deposit
+from .models import Asset, Deposit
 
 
+@transaction.atomic
 def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
     """Persist/update one concrete indexer event and credit at finality exactly once."""
-    validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
+    # Serialize validation and first credit with registry mutation. Account
+    # insertion freezes this same row before the transaction can release it.
+    Asset.objects.select_for_update().get(asset_key=user_wallet.asset_key)
     asset = validate_chain_asset(user_wallet.chain_id, user_wallet.asset_key, "deposit")
     if event.asset_key and event.asset_key != user_wallet.asset_key:
         raise ValueError("deposit event asset does not match wallet asset")

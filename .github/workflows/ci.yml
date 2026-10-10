@@ -18,7 +18,7 @@ on:
       crypto_suite:
         description: Select one suite for debugging; only all can satisfy the full gate
         type: choice
-        options: [all, evm, tron, solana, ton, aux-persistence, network, protocol]
+        options: [all, evm, tron, solana, ton, integrated, aux-persistence, network, protocol]
         default: all
   schedule:
     - cron: '0 3 * * 0'
@@ -74,8 +74,8 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
-      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-3]* custody/tests
-      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-3]* custody/tests
+      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-4]* custody/tests
+      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-4]* custody/tests
       - run: >-
           ruff format --check custody/admin.py custody/api.py custody/apps.py
           custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
@@ -257,7 +257,7 @@ jobs:
       - name: Verify complete crypto inventory without executing fixtures
         run: |
           mkdir -p work
-          pytest --collect-only -q mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py mpc-side/integration/test_ton.py mpc-side/integration/test_ton_network.py mpc-side/integration/test_ton_django.py --crypto-suite=all --crypto-manifest=work/crypto-inventory.json
+          pytest --collect-only -q mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py mpc-side/integration/test_ton.py mpc-side/integration/test_ton_network.py mpc-side/integration/test_ton_django.py mpc-side/integration/test_integrated.py --crypto-suite=all --crypto-manifest=work/crypto-inventory.json
       - name: Verify real TLS and disposable validator setup before fresh primes
         run: pytest -x -v -s mpc-side/integration/test_ci_preflight.py --basetemp=work/preflight --junitxml=work/crypto-preflight.xml --durations=0
       - name: Select isolated crypto jobs
@@ -267,7 +267,7 @@ jobs:
         run: |
           python - <<'PYCODE'
           import json, os
-          suites = ['evm', 'tron', 'solana', 'ton', 'aux-persistence', 'network']
+          suites = ['evm', 'tron', 'solana', 'ton', 'aux-persistence', 'network', 'integrated']
           requested = os.environ['REQUESTED_SUITE']
           if requested == 'protocol':
               suites = []
@@ -319,6 +319,14 @@ jobs:
       suite: ton
       reviewed_head_sha: ${{ github.event.pull_request.head.sha || github.sha }}
 
+  mpc-integrated:
+    needs: [crypto-preflight]
+    if: ((github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)) && (github.event_name != 'workflow_dispatch' || inputs.crypto_suite == 'all' || inputs.crypto_suite == 'integrated')
+    uses: ./.github/workflows/crypto-suite.yml
+    with:
+      suite: integrated
+      reviewed_head_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
   mpc-aux-persistence:
     needs: [crypto-preflight]
     if: ((github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)) && (github.event_name != 'workflow_dispatch' || inputs.crypto_suite == 'all' || inputs.crypto_suite == 'aux-persistence')
@@ -366,7 +374,7 @@ jobs:
       - run: npm run build:sim
 
   full-crypto-gate:
-    needs: [backend, rust-check, rust-audit, frontend, crypto-preflight, rust-crypto, mpc-evm, mpc-tron, mpc-solana, mpc-ton, mpc-aux-persistence, mpc-network]
+    needs: [backend, rust-check, rust-audit, frontend, crypto-preflight, rust-crypto, mpc-evm, mpc-tron, mpc-solana, mpc-ton, mpc-integrated, mpc-aux-persistence, mpc-network]
     if: always() && ((github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'run-full-crypto') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_crypto)) && (github.event_name != 'workflow_dispatch' || inputs.crypto_suite == 'all')
     runs-on: ubuntu-latest
     env:
@@ -384,11 +392,11 @@ jobs:
         run: |
           python - <<'PYCODE'
           import json, os
-          required = {'backend', 'rust-check', 'rust-audit', 'frontend', 'crypto-preflight', 'rust-crypto', 'mpc-evm', 'mpc-tron', 'mpc-solana', 'mpc-ton', 'mpc-aux-persistence', 'mpc-network'}
+          required = {'backend', 'rust-check', 'rust-audit', 'frontend', 'crypto-preflight', 'rust-crypto', 'mpc-evm', 'mpc-tron', 'mpc-solana', 'mpc-ton', 'mpc-integrated', 'mpc-aux-persistence', 'mpc-network'}
           results = json.loads(os.environ['REQUIRED_RESULTS'])
           assert set(results) == required
           for name, job in results.items():
               print(f"{name}: {job['result']}")
           assert all(job['result'] == 'success' for job in results.values()), 'Failed, cancelled or skipped required job'
-          assert json.loads(results['crypto-preflight']['outputs']['suites']) == ['evm', 'tron', 'solana', 'ton', 'aux-persistence', 'network']
+          assert json.loads(results['crypto-preflight']['outputs']['suites']) == ['evm', 'tron', 'solana', 'ton', 'aux-persistence', 'network', 'integrated']
           PYCODE

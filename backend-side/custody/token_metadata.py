@@ -134,9 +134,13 @@ def _hex_uint(value: Any) -> int:
     return int.from_bytes(raw, "big")
 
 
-def _rpc(transport, url: str, method: str, params: list[Any]):
+def _rpc(transport, url: str, method: str, params: list[Any], *, chain_id=None):
     from django.conf import settings
 
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and chain_id is not None:
+        from .mpc_evm_network import guarded_evm_rpc
+
+        return guarded_evm_rpc(chain_id, url, transport, method, params)
     if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and method == "getAccountInfo":
         from .mpc_solana_network import guarded_solana_rpc
 
@@ -169,7 +173,19 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
             verified_master(asset, client, checkpoint)
             decimals = asset.decimals  # approved metadata pin, not ERC20 decimals()
         elif standard == "ERC20":
-            code = _rpc(transport, url, "eth_getCode", [asset.contract_address, "latest"])
+            from django.conf import settings
+
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                from .mpc_evm_network import verify_evm_rpc_endpoints
+
+                verify_evm_rpc_endpoints(asset.chain_id, transport)
+            code = _rpc(
+                transport,
+                url,
+                "eth_getCode",
+                [asset.contract_address, "latest"],
+                chain_id=asset.chain_id,
+            )
             if not code or code in {"0x", "0x0"}:
                 raise TokenVerificationError("token contract has no deployed bytecode")
             decimals = _hex_uint(
@@ -178,6 +194,7 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
                     url,
                     "eth_call",
                     [{"to": asset.contract_address, "data": "0x313ce567"}, "latest"],
+                    chain_id=asset.chain_id,
                 )
             )
             # balanceOf(address(0)); successful ABI uint proves the reviewed selector is callable.
@@ -187,6 +204,7 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
                     url,
                     "eth_call",
                     [{"to": asset.contract_address, "data": "0x70a08231" + "0" * 64}, "latest"],
+                    chain_id=asset.chain_id,
                 )
             )
         elif standard == "TRC20":

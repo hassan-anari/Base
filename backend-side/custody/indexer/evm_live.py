@@ -44,7 +44,14 @@ class EvmLiveError(RuntimeError):
     pass
 
 
-def _rpc(url: str, method: str, params: list):
+def _rpc(url: str, method: str, params: list, *, chain_id=None):
+    from django.conf import settings
+
+    if chain_id is not None and settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+        from ..mpc_evm_network import guarded_evm_rpc
+        from ..native_tx import RequestsTransport
+
+        return guarded_evm_rpc(chain_id, url, RequestsTransport(), method, params)
     r = requests.post(
         url,
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
@@ -57,13 +64,17 @@ def _rpc(url: str, method: str, params: list):
     return data["result"]
 
 
-def _call_any(urls: List[str], method: str, params: list):
+def _call_any(urls: List[str], method: str, params: list, *, chain_id=None):
     """Try each RPC URL in priority order until one succeeds."""
     last_err: Optional[Exception] = None
     for u in urls:
         try:
-            return _rpc(u, method, params)
+            return _rpc(u, method, params, chain_id=chain_id)
         except Exception as e:  # noqa: BLE001 - failover to next node
+            from ..mpc_evm_network import MpcNetworkError
+
+            if isinstance(e, MpcNetworkError):
+                raise
             last_err = e
             logger.warning("evm rpc fail url=%s method=%s err=%s", u, method, e)
     raise EvmLiveError(f"all RPC nodes failed for {method}: {last_err}")
@@ -73,9 +84,9 @@ def evm_get_balance(chain_id: str, address: str) -> BalanceResult:
     urls = rpc_urls(chain_id)
     if not urls:
         raise EvmLiveError(f"no RPC node configured for {chain_id}")
-    head_hex = _call_any(urls, "eth_blockNumber", [])
+    head_hex = _call_any(urls, "eth_blockNumber", [], chain_id=chain_id)
     head = int(head_hex, 16)
-    bal_hex = _call_any(urls, "eth_getBalance", [address, "latest"])
+    bal_hex = _call_any(urls, "eth_getBalance", [address, "latest"], chain_id=chain_id)
     balance_wei = int(bal_hex, 16)
     decimals = get_chain_spec(chain_id).native_decimals
     divisor = Decimal(10**decimals)
@@ -85,13 +96,27 @@ def evm_get_balance(chain_id: str, address: str) -> BalanceResult:
     try:
         start = max(0, head - SCAN_BLOCKS)
         for n in range(start, head + 1):
-            blk = _call_any(urls, "eth_getBlockByNumber", [hex(n), True])
+            blk = _call_any(urls, "eth_getBlockByNumber", [hex(n), True], chain_id=chain_id)
             if not blk:
                 continue
             for tx in blk.get("transactions") or []:
                 if (tx.get("to") or "").lower() == address.lower() and int(
                     tx.get("value", "0x0"), 16
                 ) > 0:
+                    from django.conf import settings
+
+                    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+                        receipt = _call_any(
+                            urls, "eth_getTransactionReceipt", [tx["hash"]], chain_id=chain_id
+                        )
+                        if (
+                            not receipt
+                            or int(receipt.get("status", "0x0"), 16) != 1
+                            or receipt.get("transactionHash") != tx["hash"]
+                            or receipt.get("blockHash") != blk["hash"]
+                            or int(receipt["blockNumber"], 16) != n
+                        ):
+                            continue
                     events.append(
                         DepositEvent(
                             tx_hash=tx["hash"],

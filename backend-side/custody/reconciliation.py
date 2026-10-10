@@ -65,11 +65,7 @@ def reconcile_attempt(attempt_id: int):
             from .outbound import sync_parent_state
 
             snapshot = OnchainTransactionAttempt.objects.get(pk=attempt_id)
-            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id in {
-                "TRX",
-                "SOL",
-                "TON",
-            }:
+            if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
                 OnchainTransactionAttempt.objects.filter(pk=attempt_id).exclude(
                     status__in=["CONFIRMED", "FAILED"]
                 ).update(
@@ -92,7 +88,7 @@ def _reconcile_attempt(attempt_id: int):
 
     if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and get_chain_spec(
         snapshot.chain_id
-    ).kind in {ChainKind.TRON, ChainKind.SOLANA, ChainKind.TON}:
+    ).kind in {ChainKind.EVM, ChainKind.TRON, ChainKind.SOLANA, ChainKind.TON}:
         from .models import MpcSigningSession
         from .mpc_signing import _default_consumer
 
@@ -101,12 +97,12 @@ def _reconcile_attempt(attempt_id: int):
         with transaction.atomic():
             session = MpcSigningSession.objects.select_related("keyset").get(attempt=snapshot)
             if session.status != "COMPLETED" or not session.signature_consumed_at:
-                raise ValueError("TRON reconciliation lacks consumed MPC completion")
+                raise ValueError("reconciliation lacks consumed MPC completion")
             if _default_consumer(snapshot, session) != (
                 snapshot.signed_payload,
                 snapshot.network_tx_id,
             ):
-                raise ValueError("TRON reconciliation signed identity mismatch")
+                raise ValueError("reconciliation signed identity mismatch")
     result = _executor(snapshot.chain_id, snapshot.asset_key).reconcile(
         _prepared(snapshot), snapshot.network_tx_id
     )
@@ -174,6 +170,13 @@ def _reconcile_attempt(attempt_id: int):
             )
             operation.tx_hash = attempt.network_tx_id
             operation.save(update_fields=["status", "tx_hash", "updated_at"])
+        if (
+            get_chain_spec(attempt.chain_id).kind in {ChainKind.EVM, ChainKind.TRON}
+            and settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
+        ):
+            from .account_chain_costs import post_execution_costs
+
+            post_execution_costs(attempt, result.evidence)
         if (
             get_chain_spec(attempt.chain_id).kind is ChainKind.SOLANA
             and settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"

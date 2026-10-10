@@ -28,6 +28,9 @@ class Asset(models.Model):
     """
 
     asset_key = models.CharField(max_length=32, unique=True)  # "USDT-BSC"
+    # PostgreSQL freezes this at first ledger-account creation. Display and
+    # capability changes remain available; financial identity cannot be reused.
+    financial_identity_locked = models.BooleanField(default=False, editable=False)
     chain_id = models.CharField(max_length=16, db_index=True)  # "BSC"
     symbol = models.CharField(max_length=16)
     decimals = models.PositiveIntegerField(default=18)
@@ -119,6 +122,7 @@ class MpcKeyset(models.Model):
     dkg_result_fingerprint = models.CharField(max_length=64, blank=True, default="")
     participant_identities = models.JSONField(default=list, blank=True)
     dkg_public_evidence = models.JSONField(default=dict, blank=True)
+    network_bindings = models.JSONField(default=dict, blank=True, editable=False)
     status = models.CharField(max_length=16, choices=STATUSES, default="CREATING")
     active_for_new_wallets = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -407,6 +411,7 @@ class TonWalletBinding(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["chain_id", "address"], name="uq_ton_root_contract"),
+            models.UniqueConstraint(fields=["keyset"], name="uq_ton_keyset_network_binding"),
             models.CheckConstraint(
                 condition=Q(workchain=0, wallet_version="V5R1"), name="ton_standard_wallet_shape"
             ),

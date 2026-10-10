@@ -193,6 +193,10 @@ def run_evm_acceptance(net, tmp_path):
             MPC_EVM_INTEGRATION_ENABLED=True,
             MPC_INTEGRATION_ENVIRONMENT="development",
             MPC_EVM_DEVELOPMENT_CHAINS={"ETH": 31337, "BASE": 31338},
+            MPC_EVM_GENESIS_HASHES={
+                alias: chain.rpc("eth_getBlockByNumber", ["0x0", False])["hash"]
+                for alias, chain in zip(("ETH", "BASE"), chains, strict=True)
+            },
             CUSTODY_DEMO_MODE=False,
             CUSTODY_TX_MODE="live",
         ),

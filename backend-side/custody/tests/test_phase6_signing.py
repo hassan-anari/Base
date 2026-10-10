@@ -73,14 +73,19 @@ def integration_settings(settings, tmp_path):
     settings.MPC_EVM_INTEGRATION_ENABLED = True
     settings.MPC_INTEGRATION_ENVIRONMENT = "development"
     settings.MPC_EVM_DEVELOPMENT_CHAINS = {"ETH": 31337}
+    settings.MPC_EVM_GENESIS_HASHES = {"ETH": "0x" + "11" * 32}
     settings.CUSTODY_DEMO_MODE = False
     settings.CUSTODY_TX_MODE = "live"
     settings.MPC_COORDINATOR_URL = "https://localhost:8443"
     settings.MPC_CLIENT_CERT = str(identity / "tls.crt")
     settings.MPC_CLIENT_KEY = str(identity / "tls.key")
     settings.MPC_CA_CERT = str(identity / "ca.crt")
-    with patch("custody.native_tx.RequestsTransport.rpc", return_value="0x7a69"):
+    with patch("custody.native_tx.RequestsTransport.rpc", side_effect=authorized_rpc):
         yield
+
+
+def authorized_rpc(url, method, params):
+    return {"hash": "0x" + "11" * 32} if method == "eth_getBlockByNumber" else "0x7a69"
 
 
 def metadata_for(keyset):
@@ -589,7 +594,7 @@ def test_crash_after_signed_persistence_and_ambiguous_broadcast_preserves_reserv
     context.attempt.refresh_from_db()
     payload = context.attempt.signed_payload
     with patch("custody.outbound._executor") as executor:
-        executor.return_value.transport.rpc.return_value = "0x7a69"
+        executor.return_value.transport.rpc.side_effect = authorized_rpc
         executor.return_value.broadcast.side_effect = AmbiguousBroadcast("response lost")
         with pytest.raises(AmbiguousBroadcast):
             execute_attempt(context.attempt.pk, "worker")
@@ -599,7 +604,15 @@ def test_crash_after_signed_persistence_and_ambiguous_broadcast_preserves_reserv
     assert user_balances("phase6e", "ETH")["reserved"] == Decimal(1)
     with patch("custody.reconciliation._executor") as executor:
         executor.return_value.reconcile.return_value = ReconciliationResult(
-            ReconciliationState.CONFIRMED, {}
+            ReconciliationState.CONFIRMED,
+            {
+                "confirmations": 12,
+                "receipt": {
+                    "transactionHash": context.attempt.network_tx_id,
+                    "gasUsed": "0x5208",
+                    "effectiveGasPrice": "0x1",
+                },
+            },
         )
         reconcile_attempt(context.attempt.pk)
         reconcile_attempt(context.attempt.pk)
@@ -735,7 +748,7 @@ def test_digest_created_after_allocated_nonce_and_duplicate_preparation(context)
         patch("custody.signer_adapter.get_adapter", return_value=client),
     ):
         executor.return_value.prepare.return_value = prepared
-        executor.return_value.transport.rpc.return_value = "0x7a69"
+        executor.return_value.transport.rpc.side_effect = authorized_rpc
         execute_attempt(context.attempt.pk, "reviewer")
         execute_attempt(context.attempt.pk, "reviewer")
         assert executor.return_value.prepare.call_count == 1
@@ -871,7 +884,7 @@ def test_proven_prebroadcast_rejection_reuses_signed_bytes(context):
     context.attempt.refresh_from_db()
     signed, nonce = context.attempt.signed_payload, context.attempt.sequence
     with patch("custody.outbound._executor") as executor:
-        executor.return_value.transport.rpc.return_value = "0x7a69"
+        executor.return_value.transport.rpc.side_effect = authorized_rpc
         executor.return_value.broadcast.side_effect = SafePreBroadcastRejection(
             "proven non-acceptance"
         )

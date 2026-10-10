@@ -424,9 +424,9 @@ def test_ton_postgresql_real_mpc_deposits_withdrawals_sweeps_gas_and_ambiguity(t
                 reserved_native=str(user_balances(wallet.user_id, "TON")["reserved"]),
                 reserved_jetton=str(user_balances(wallet.user_id, asset.asset_key)["reserved"]),
             )
-            (REPO / "work/ton-review/django-validator-evidence.json").write_text(
-                json.dumps(evidence, indent=2)
-            )
+            destination = REPO / "work/ton-review/django-validator-evidence.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(evidence, indent=2))
     finally:
         net.close()
         admin.terminate()

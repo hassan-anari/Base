@@ -67,7 +67,7 @@ def coordinator_request(attempt, session) -> dict:
         or identity_fingerprint(identity) != session.coordinator_request_id
     ):
         raise ValueError("immutable MPC transaction identity or digest mismatch")
-    return {
+    request = {
         "session_id": str(session.session_id),
         "attempt_id": attempt.pk,
         "keyset_id": str(session.keyset.keyset_id),
@@ -85,6 +85,9 @@ def coordinator_request(attempt, session) -> dict:
         else attempt.from_address.lower(),
         "derivation_reference": None,
     }
+    if session.payload_type == "TON_V5R1_CELL_HASH":
+        request["ton_authorization"] = attempt.prepared_metadata["ton_authorization"]
+    return request
 
 
 def _coordinator_identity_matches(expected: dict, result: dict) -> bool:
@@ -169,10 +172,18 @@ def _default_consumer(attempt, session):
     if session.algorithm == "FROST_ED25519":
         from .solana_wire import assemble_signature
 
-        if session.payload_type != "SOLANA_MESSAGE" or set(result) != set(expected) | {
-            "signature_hex"
-        }:
+        if session.payload_type not in {"SOLANA_MESSAGE", "TON_V5R1_CELL_HASH"} or set(
+            result
+        ) != set(expected) | {"signature_hex"}:
             raise ValueError("invalid FROST output contract")
+        if session.payload_type == "TON_V5R1_CELL_HASH":
+            from .ton_wire import assemble_signature as assemble_ton_signature
+
+            return assemble_ton_signature(
+                attempt.prepared_metadata["ton_authorization"],
+                session.keyset.public_key,
+                result["signature_hex"],
+            )
         return assemble_signature(
             attempt.prepared_metadata["message"], session.keyset.public_key, result["signature_hex"]
         )
@@ -354,6 +365,11 @@ def advance_mpc_signing(attempt_id: int, client=None):
 
 
 def _require_solana_fresh(attempt, session):
+    if session.payload_type == "TON_V5R1_CELL_HASH":
+        from .ton_policy import require_fresh_authorization
+
+        require_fresh_authorization(attempt)
+
     if session.payload_type == "SOLANA_MESSAGE":
         from .mpc_solana_network import require_fresh
         from .native_tx import RequestsTransport

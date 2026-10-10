@@ -772,7 +772,7 @@ def test_non_evm_production_signing_remains_disabled(context, chain_id):
     from custody.signer_adapter import assert_mpc_backend_runtime_safe
 
     if chain_id == "TON":
-        with pytest.raises(RuntimeError, match="production activation is disabled"):
+        with pytest.raises(ValueError, match="independently established TON genesis required"):
             assert_mpc_backend_runtime_safe(chain_id)
         return
     message = (

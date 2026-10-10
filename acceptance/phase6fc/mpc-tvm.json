@@ -1,0 +1,247 @@
+{
+  "category": "MPC_AND_TVM_ONLY",
+  "network_finality": false,
+  "operations": [
+    {
+      "pair": [
+        "signer-a",
+        "signer-b"
+      ],
+      "execution": "bc40065a-88c3-49b8-b970-cea116798479",
+      "message_hash": "d0e8d91174fc7a1b165fdadfc92d80853c30647aea43679c71af9286b3681be8",
+      "seqno": 0,
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "lt": "4000000",
+            "hash": "4cda8da277706c2d034835e20fbe92e3f728ae95eb8f4e4075379c8a2de73f40"
+          },
+          {
+            "account": "0:0e37d66e21cf32d80d92426c6c3f8c696e897ff7f8989d1636fa94a414ae1586",
+            "lt": "5000000",
+            "hash": "2543184e5455e0923acde567b3a7fd99ab9ac39066a8b15a14e840351fa3587c"
+          }
+        ],
+        "fee_nanoton": 989603,
+        "fee_transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "4cda8da277706c2d034835e20fbe92e3f728ae95eb8f4e4075379c8a2de73f40",
+            "fee_nanoton": 989603
+          }
+        ],
+        "funding_expense_nanoton": 0,
+        "returned_nanoton": 0,
+        "recipient_fee_nanoton": 20601
+      }
+    },
+    {
+      "pair": [
+        "signer-a",
+        "signer-c"
+      ],
+      "execution": "6febde1c-10b7-423d-b3be-9521b64ed17b",
+      "message_hash": "ab99894fc15341ee704d7c3a27b4b3a565b8994bb7f36032954208a3b2647b80",
+      "seqno": 1,
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "lt": "7000000",
+            "hash": "3dfd15fcfbb2b64854e75f992646f447dcfce9c9cd0417839fba09728130aef9"
+          },
+          {
+            "account": "0:0e37d66e21cf32d80d92426c6c3f8c696e897ff7f8989d1636fa94a414ae1586",
+            "lt": "8000000",
+            "hash": "776d3964044f5e47c5365e83a28dfe687ebaf66f49acf03824377a21180eae4c"
+          }
+        ],
+        "fee_nanoton": 522603,
+        "fee_transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "3dfd15fcfbb2b64854e75f992646f447dcfce9c9cd0417839fba09728130aef9",
+            "fee_nanoton": 522603
+          }
+        ],
+        "funding_expense_nanoton": 0,
+        "returned_nanoton": 0,
+        "recipient_fee_nanoton": 20601
+      }
+    },
+    {
+      "pair": [
+        "signer-b",
+        "signer-c"
+      ],
+      "execution": "6cb54307-9c1f-4e1a-810d-e038f922d71f",
+      "message_hash": "d29246807282c7d21960cad8d7dd12644a478c865de2b83b0e737fd371aa13e3",
+      "seqno": 2,
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "lt": "10000000",
+            "hash": "37c0df3f8da520fc3f6fa551c1f84017f547bffda8a730baaf0a21e8fd67a9e7"
+          },
+          {
+            "account": "0:0e37d66e21cf32d80d92426c6c3f8c696e897ff7f8989d1636fa94a414ae1586",
+            "lt": "11000000",
+            "hash": "c746cec079bdd8657a24d877b0bcf52b83d4c83556d347b3bac1d85b3cdaf74f"
+          }
+        ],
+        "fee_nanoton": 522603,
+        "fee_transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "37c0df3f8da520fc3f6fa551c1f84017f547bffda8a730baaf0a21e8fd67a9e7",
+            "fee_nanoton": 522603
+          }
+        ],
+        "funding_expense_nanoton": 0,
+        "returned_nanoton": 0,
+        "recipient_fee_nanoton": 20601
+      }
+    },
+    {
+      "query_id": 100,
+      "execution": "def0e463-bb1d-42fa-b19f-88ca5daa92db",
+      "message_hash": "94cc57657aaa7db327a51ebe62cb5f400374e05d6027bb97b3ab9cb369866a26",
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "lt": "19000000",
+            "hash": "4dd89de8675f0c79b03b63c7335dbaa4ada6cb269ee92dfc3646f078a9e3d5f9"
+          },
+          {
+            "account": "0:ae1c2f5b8efee9bf42f043e7cb1e5e9acff46a9b2410b17575f8f7660db93e17",
+            "lt": "20000000",
+            "hash": "b2842c0e03bba1697317dbacb898db3f2c066423b3cdae8dc34ce6b962f0af47"
+          },
+          {
+            "account": "0:93aa0a0d047cf67fb2b3c23ee70ede74b9fedb4aa4889afd61f03bdd6609fda1",
+            "lt": "21000000",
+            "hash": "a7ec3d1b88cd544c81fcb3448a91410aec2e0f8d1634d02dcefe46ade6d2e22d"
+          }
+        ],
+        "fee_nanoton": 1958807,
+        "fee_transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "4dd89de8675f0c79b03b63c7335dbaa4ada6cb269ee92dfc3646f078a9e3d5f9",
+            "fee_nanoton": 622603
+          },
+          {
+            "account": "0:ae1c2f5b8efee9bf42f043e7cb1e5e9acff46a9b2410b17575f8f7660db93e17",
+            "hash": "b2842c0e03bba1697317dbacb898db3f2c066423b3cdae8dc34ce6b962f0af47",
+            "fee_nanoton": 1284336
+          },
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "7dc185943cb0d0db39680bb035ed3faca007fc8e3debe9072ba9e82607fc7737",
+            "fee_nanoton": 51868
+          }
+        ],
+        "funding_expense_nanoton": 25766142,
+        "returned_nanoton": 72949522,
+        "recipient_fee_nanoton": 719532
+      }
+    },
+    {
+      "query_id": 101,
+      "execution": "e7a99d51-c54a-48b1-a1e8-221b8e8d6cad",
+      "message_hash": "a444df98699e6064fce01f3d3688087df4e0058b377444277688f8558228d3e8",
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "lt": "24000000",
+            "hash": "d937a887d7151aed002fc4c2ae96f5a9b42c2ad74480dc828f3cfdc5167ea18b"
+          },
+          {
+            "account": "0:ae1c2f5b8efee9bf42f043e7cb1e5e9acff46a9b2410b17575f8f7660db93e17",
+            "lt": "25000000",
+            "hash": "f8b3bc39fa072c014c2aa168b91afa86170a298703e3461fe53dffbc489890fa"
+          },
+          {
+            "account": "0:93aa0a0d047cf67fb2b3c23ee70ede74b9fedb4aa4889afd61f03bdd6609fda1",
+            "lt": "26000000",
+            "hash": "3fb2d85d4ab9be45bd1483203036d3bb9922b3791f6494e8bf3e75395ae488e1"
+          }
+        ],
+        "fee_nanoton": 1958807,
+        "fee_transactions": [
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "d937a887d7151aed002fc4c2ae96f5a9b42c2ad74480dc828f3cfdc5167ea18b",
+            "fee_nanoton": 622603
+          },
+          {
+            "account": "0:ae1c2f5b8efee9bf42f043e7cb1e5e9acff46a9b2410b17575f8f7660db93e17",
+            "hash": "f8b3bc39fa072c014c2aa168b91afa86170a298703e3461fe53dffbc489890fa",
+            "fee_nanoton": 1284336
+          },
+          {
+            "account": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+            "hash": "5ed8bbdb5280520da6cfbb83ecc33b98a7c3c6a9b5849f48ce409be2669483e2",
+            "fee_nanoton": 51868
+          }
+        ],
+        "funding_expense_nanoton": 15766142,
+        "returned_nanoton": 82949522,
+        "recipient_fee_nanoton": 719532
+      }
+    }
+  ],
+  "public_key": "c5ceecb3f69485381ad252ffbc3cb9e84157008a2017dac5a3440ff67af441e3",
+  "dkg_fingerprint": "a16f54189504973cd21991f65cb3213af5d050da31f175b814f48b5a98b7d978",
+  "source": "0:70979f453894b6e780193583dc8f435468be71cc70ededbbf88dcd651cf2f63c",
+  "authenticated_ton_authorization_mutations_rejected": [
+    "wallet_version",
+    "code_hash",
+    "wallet_id",
+    "seqno",
+    "send_mode",
+    "valid_until",
+    "amount",
+    "destination",
+    "jetton_master"
+  ],
+  "spoofed_jetton_notification_and_internal_transfer_rejected": true,
+  "jetton_bounce": {
+    "message_hash": "736f896e921fbbd25c154b4fd8195fbeb71ea0aba47f1ce3f9696a333392e842",
+    "sender_balance_before": 500000,
+    "sender_balance_after": 500000,
+    "recipient_effect_unproven": true,
+    "transaction_hashes": [
+      "33cc65651e3f0db3c425df37ab83a4df7169091edd3457be88402efe4232169a",
+      "30c76b2cf6cc26c2b3585cca49edb9fbc52b39fc0d61d6d851a4cadedf65d2bb",
+      "14a04e1c79699fbffbeec2fe3fea3b3d6bc4019863e992f7a007231f5d8dafff",
+      "f9876508c0d039094e70e9c576fa25bfb5f0a660c7fb9b02a24ca1cfdf7f4234"
+    ]
+  },
+  "native_bounce": {
+    "message_hash": "76184d82ac335e20694ab22c6f32b9cfb310b7340262c9b37b3fc11707a8f9b2",
+    "terminal": false
+  },
+  "nonce_interruption": {
+    "execution": "df294bca-98bd-45bc-a499-9532e4621cc8",
+    "restart_rejected": true
+  },
+  "jetton_master": "0:928060f926649b234608dadb3926c4b5cb87835c1819e36dbd7d02ef9c6d8bfe",
+  "restart": true,
+  "expiry_rejected": true,
+  "duplicate_rejected": true
+}

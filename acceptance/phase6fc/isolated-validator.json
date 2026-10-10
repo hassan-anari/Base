@@ -1,0 +1,367 @@
+{
+  "category": "ISOLATED_VALIDATOR_NETWORK",
+  "identity": {
+    "network": "isolated-acton-v1",
+    "genesis_source": "localton-generated-zerostate",
+    "global_id": -777,
+    "settings_sha256": "b4906b2145bf9dd5469d1b791538d3c4315d43d56a5acea884e46f36455e7e94",
+    "image_digest": "c5dd9dcb3f662c85ec0636c19b85664b69ccad554ef69b6adf3864e7e9e82387",
+    "zerostate_root_hash": "496354e7ef185bad34d99e815eb4c2634bdcffe4c4e169ef5b1079012c7c195d",
+    "zerostate_file_hash": "96750e15f43b3b1f0225a8e66cdd73d6a429457c3ddd88c42db6abdb5d1ce2e0",
+    "basechain_zerostate_root_hash": "12f23678d2af1cecbeadbfca1efea56f7683f279f71754e9f86a109eb683c7eb",
+    "basechain_zerostate_file_hash": "4a776f8b1511ee8956e3ea12ebd6200f8410b7c3eeb4f264992e86675fcdd247"
+  },
+  "operations": [
+    {
+      "native": true,
+      "bounce": false,
+      "message_hash": "d231fa08a756823f4df3009e360dc03dfd0d676117e24f199cab217dd8ce9706",
+      "execution_id": "b130d6b4-8ec2-4c92-8dfb-155968c4cd00",
+      "checkpoint": {
+        "workchain": -1,
+        "seqno": 8887,
+        "root_hash": "7339f8f01c52af6bbd024fce9810d2c5aceaa4e8380b6f9c7dc9b225e12dad43",
+        "file_hash": "93c4fcde0b0abd35d72736db1b346957dc9e5db6e47f5aeff36c6325e8b79b0a"
+      },
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "lt": "8892000001",
+            "hash": "255f1b7edcfad8a3d4c05ee27d7f2c1b7376883dd46a0773b7afc85bb9767c95"
+          },
+          {
+            "account": "0:8d57fa93cef910d812ce950b96cab55039c193446c78409e37d10dcff50c79fa",
+            "lt": "8892000003",
+            "hash": "4d87abd059f7fc3c9c3bcd2790c9eb15057b4fe7adf6bc34cf832192983e7e1e"
+          }
+        ],
+        "fee_nanoton": 5880001,
+        "fee_transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "hash": "255f1b7edcfad8a3d4c05ee27d7f2c1b7376883dd46a0773b7afc85bb9767c95",
+            "fee_nanoton": 5880001
+          }
+        ],
+        "funding_expense_nanoton": 0,
+        "returned_nanoton": 0,
+        "recipient_fee_nanoton": 218401
+      },
+      "blocks": [
+        {
+          "workchain": 0,
+          "seqno": 8710,
+          "root_hash": "1015c79133a72aafb692f1ec3007225bb84bbb962705b5e719657a07993e59a8",
+          "file_hash": "eac08bb8b2cbec0cd8330b6db1422b02a496793dcd4edea7da6bd6b3e3b7b265"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8709,
+          "root_hash": "879ab04a22b5131a2cbbc36e8ab6faf8f76c6a5b4041b81db95e3b5da02db0ef",
+          "file_hash": "b3e941944073442a9e36dcea9304079d824340e09cab6d1b701cf59fe97f2f43"
+        }
+      ],
+      "transaction_inclusions": [
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8710,
+            "root_hash": "1015c79133a72aafb692f1ec3007225bb84bbb962705b5e719657a07993e59a8",
+            "file_hash": "eac08bb8b2cbec0cd8330b6db1422b02a496793dcd4edea7da6bd6b3e3b7b265"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8892000001",
+          "transaction_hash": "255f1b7edcfad8a3d4c05ee27d7f2c1b7376883dd46a0773b7afc85bb9767c95",
+          "inbound_message_hash": "d231fa08a756823f4df3009e360dc03dfd0d676117e24f199cab217dd8ce9706"
+        }
+      ]
+    },
+    {
+      "native": false,
+      "bounce": false,
+      "message_hash": "be0e50c61c5400b7c3c6bfa46177e7b20b9a8628a0d5d8262299db59cf3ebbfe",
+      "execution_id": "74ddfcdf-add0-41ba-9ffb-4764e6e9edf2",
+      "checkpoint": {
+        "workchain": -1,
+        "seqno": 8893,
+        "root_hash": "113630c5f7acc3b710bf0613de53ca4b268cc18db2bc4f5e8d1146ead1899a98",
+        "file_hash": "fd00f69705f9bf6f013619298c440c8dc7fba15823b50a4ad91ddf7808559ec9"
+      },
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "lt": "8898000001",
+            "hash": "e3dac5feabb94b8426da26a992938ccee20c3e544a0173a75c116e18bb450f5c"
+          },
+          {
+            "account": "0:6a01249dc8d4de2b85fec4a3c2f8b5468971a6edbedb75052906366a1fab3452",
+            "lt": "8898000003",
+            "hash": "284b16aa67f2a049581fbc5cb2fd10c69f0093a4b37761ccd673679cc98bf6b0"
+          },
+          {
+            "account": "0:69bfcb3ba5c10c3f7ee0ee0eea82ff10d25fc2561868759cb76ba96d1242602b",
+            "lt": "8898000005",
+            "hash": "a725a84b227d0de7cb6305674087946b2bbaa2bd0a355e680c5e233677ef7bfc"
+          }
+        ],
+        "fee_nanoton": 11752804,
+        "fee_transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "hash": "e3dac5feabb94b8426da26a992938ccee20c3e544a0173a75c116e18bb450f5c",
+            "fee_nanoton": 3735602
+          },
+          {
+            "account": "0:6a01249dc8d4de2b85fec4a3c2f8b5468971a6edbedb75052906366a1fab3452",
+            "hash": "284b16aa67f2a049581fbc5cb2fd10c69f0093a4b37761ccd673679cc98bf6b0",
+            "fee_nanoton": 7706002
+          },
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "hash": "8ca5b825eb4938ca169d9d10d767577630d81a0f631c18412db946d9854d6991",
+            "fee_nanoton": 311200
+          }
+        ],
+        "funding_expense_nanoton": 29596834,
+        "returned_nanoton": 62697166,
+        "recipient_fee_nanoton": 4317194
+      },
+      "blocks": [
+        {
+          "workchain": 0,
+          "seqno": 8716,
+          "root_hash": "ea7eb5ba6c137ca88b5fdedd5d88fa8ae3c427de8f1c500741553da6520fda87",
+          "file_hash": "7722a1a46733d21842035f66cfdab29a86b1b76ce2c1f56d0547406f9807702f"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8715,
+          "root_hash": "ac3cfb4820a254d1094e413d285fd7470c56b8f4213dbd6a3f226f99b442f6af",
+          "file_hash": "3e4e286ef569c666d6b8788fe8fa4e6e5e9fbe8d17f9eb65108cd2d532fad042"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8714,
+          "root_hash": "9942ea0f9fd0c92c5d889e07df747010106c8594a4eb75b681b414980ada0d9d",
+          "file_hash": "88409fdc05ce3ea66c47502c77ecf66e0a64b8878a10150fca10017388266ca2"
+        }
+      ],
+      "transaction_inclusions": [
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8716,
+            "root_hash": "ea7eb5ba6c137ca88b5fdedd5d88fa8ae3c427de8f1c500741553da6520fda87",
+            "file_hash": "7722a1a46733d21842035f66cfdab29a86b1b76ce2c1f56d0547406f9807702f"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8898000001",
+          "transaction_hash": "e3dac5feabb94b8426da26a992938ccee20c3e544a0173a75c116e18bb450f5c",
+          "inbound_message_hash": "be0e50c61c5400b7c3c6bfa46177e7b20b9a8628a0d5d8262299db59cf3ebbfe"
+        },
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8716,
+            "root_hash": "ea7eb5ba6c137ca88b5fdedd5d88fa8ae3c427de8f1c500741553da6520fda87",
+            "file_hash": "7722a1a46733d21842035f66cfdab29a86b1b76ce2c1f56d0547406f9807702f"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8898000008",
+          "transaction_hash": "8ca5b825eb4938ca169d9d10d767577630d81a0f631c18412db946d9854d6991",
+          "inbound_message_hash": "d44325aa3719b56f86fa410328546bc961f35342bc8ac4f1d13b7256dae4abdb"
+        }
+      ]
+    },
+    {
+      "native": false,
+      "bounce": false,
+      "message_hash": "aada202c77f8be8a0d5c4e0f9ce7e8e2d623f9450c3bacf263a205e503393ae0",
+      "execution_id": "8a1ce23e-dda3-45d3-bbbe-58e0b86266bf",
+      "checkpoint": {
+        "workchain": -1,
+        "seqno": 8898,
+        "root_hash": "93bf9680bace47bca13b0ac8310f1dfc5938635ed33dbce911b58ca9bcc5f591",
+        "file_hash": "e75ded1dd28d69a4799d0ceb0971de4239bd37f64d1fd7304ea1f4489aa01438"
+      },
+      "effect": {
+        "terminal": true,
+        "network_finality": false,
+        "transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "lt": "8903000001",
+            "hash": "f09f9a0d5e4c5310c08727250667ee8a781e955c2e3a346bafe7c4cbd4b17997"
+          },
+          {
+            "account": "0:6a01249dc8d4de2b85fec4a3c2f8b5468971a6edbedb75052906366a1fab3452",
+            "lt": "8903000003",
+            "hash": "e37c5cbb527dc64385dbcaceac4c54761d0cd68db05d6feb4c1d09e5ab7ab0a4"
+          },
+          {
+            "account": "0:69bfcb3ba5c10c3f7ee0ee0eea82ff10d25fc2561868759cb76ba96d1242602b",
+            "lt": "8903000005",
+            "hash": "49f001ff3fb9af9edd543ef75c0d0a4a2649f91de0c657691df0e886f7b3fa2f"
+          }
+        ],
+        "fee_nanoton": 11752803,
+        "fee_transactions": [
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "hash": "f09f9a0d5e4c5310c08727250667ee8a781e955c2e3a346bafe7c4cbd4b17997",
+            "fee_nanoton": 3735601
+          },
+          {
+            "account": "0:6a01249dc8d4de2b85fec4a3c2f8b5468971a6edbedb75052906366a1fab3452",
+            "hash": "e37c5cbb527dc64385dbcaceac4c54761d0cd68db05d6feb4c1d09e5ab7ab0a4",
+            "fee_nanoton": 7706002
+          },
+          {
+            "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+            "hash": "83daa681542c49e03da8e65f318fc014e829b677a25de893d2493f1159a27b42",
+            "fee_nanoton": 311200
+          }
+        ],
+        "funding_expense_nanoton": 19596834,
+        "returned_nanoton": 72697166,
+        "recipient_fee_nanoton": 4317196
+      },
+      "blocks": [
+        {
+          "workchain": 0,
+          "seqno": 8720,
+          "root_hash": "ee8a5ed2657f9a7295c6144b4c1dd75630f71f245d153b0721952dc2e4a38553",
+          "file_hash": "ec9ff10c334dcc36dee3cde3cef72b6a5b4bafbaf243fc43fdc66c98d214ed46"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8719,
+          "root_hash": "da1c89d005f507a69964a6507b23f1f6476c82af5bf57123cdb869ff0e164287",
+          "file_hash": "47b05abcb84500ca4adc9bd2ec2f763ce2bb8d7ff59a936e4ad525947fb2236b"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8718,
+          "root_hash": "878f520ce87adb7f9f684743321af465db5eaaad3e21991fe72048f7435a23ea",
+          "file_hash": "aebad70d62d32cf51b9e82a2832dc091716d89116264f51ec2d6cbbf10b222ad"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8717,
+          "root_hash": "494f01a4c6ac96a3f48fd554b373e2ae4418e25e08e4d1d6330023edaf87adb6",
+          "file_hash": "b29e2f755ea427ddd11be73740172922b002ea9ca962fc9a57c9e13259155113"
+        }
+      ],
+      "transaction_inclusions": [
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8720,
+            "root_hash": "ee8a5ed2657f9a7295c6144b4c1dd75630f71f245d153b0721952dc2e4a38553",
+            "file_hash": "ec9ff10c334dcc36dee3cde3cef72b6a5b4bafbaf243fc43fdc66c98d214ed46"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8903000001",
+          "transaction_hash": "f09f9a0d5e4c5310c08727250667ee8a781e955c2e3a346bafe7c4cbd4b17997",
+          "inbound_message_hash": "aada202c77f8be8a0d5c4e0f9ce7e8e2d623f9450c3bacf263a205e503393ae0"
+        },
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8720,
+            "root_hash": "ee8a5ed2657f9a7295c6144b4c1dd75630f71f245d153b0721952dc2e4a38553",
+            "file_hash": "ec9ff10c334dcc36dee3cde3cef72b6a5b4bafbaf243fc43fdc66c98d214ed46"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8903000008",
+          "transaction_hash": "83daa681542c49e03da8e65f318fc014e829b677a25de893d2493f1159a27b42",
+          "inbound_message_hash": "49a605f026ed30652a94d320e5090de7493296ca262684bf24bf853db3ea7cae"
+        }
+      ]
+    },
+    {
+      "native": true,
+      "bounce": true,
+      "message_hash": "85c1b622cdf948f96a783ce7b7be496618aa0935dd67b43c89ee2ad5de87b76d",
+      "execution_id": "4a0b6bf3-9ee8-402d-9908-441f0ef125c0",
+      "checkpoint": {
+        "workchain": -1,
+        "seqno": 8901,
+        "root_hash": "e5a723b1a1e068f0ed18f33e9d232cfccd09df4b1b08edb1672872295cf549e7",
+        "file_hash": "35941c65fb661338e7c2597a4bcf514689d9b37a169816fd35d132e83538c904"
+      },
+      "effect": {
+        "terminal": false,
+        "reason": "RECIPIENT_EXECUTION_UNPROVEN"
+      },
+      "blocks": [
+        {
+          "workchain": 0,
+          "seqno": 8723,
+          "root_hash": "2ed39a3f3064d234967a2ec0dc0f4100ce32edda897264df9ac53fcde13fb100",
+          "file_hash": "f11b4a41c188749a422d2ed722313e8d2d7edadbbc6207b6ce6cf8a4291b1f50"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8722,
+          "root_hash": "19399b2c8d1304603cacebde7058ea19b270dffbb4928f6eb0fda8eb12fbf2e6",
+          "file_hash": "ab0e1777a6dfc025668e1f5230e2133e81dc0920fc8d7742718bffb6da005e4f"
+        },
+        {
+          "workchain": 0,
+          "seqno": 8721,
+          "root_hash": "ccdcad0fc1b14b4fb149124321f5070020df1a0927bca201512064af29eed851",
+          "file_hash": "1d6015c7308eab6334abaf2c4b80f6958bf9d02bcde7274477eda7da5189665b"
+        }
+      ],
+      "transaction_inclusions": [
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8723,
+            "root_hash": "2ed39a3f3064d234967a2ec0dc0f4100ce32edda897264df9ac53fcde13fb100",
+            "file_hash": "f11b4a41c188749a422d2ed722313e8d2d7edadbbc6207b6ce6cf8a4291b1f50"
+          },
+          "account": "0:3ae8e05abf5d92d4419e5a76c114c6b40a59efeda2bb9ee63e448c95f0258d12",
+          "lt": "8906000003",
+          "transaction_hash": "730cc4f1e5f0972ed953e3521ad7add4933c8dec9d977987b8899c20dd07dca8",
+          "inbound_message_hash": "27ebbec3af91c15be01a681b580caccb07f76671d821f5357b565b44b1cd60ec"
+        },
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8723,
+            "root_hash": "2ed39a3f3064d234967a2ec0dc0f4100ce32edda897264df9ac53fcde13fb100",
+            "file_hash": "f11b4a41c188749a422d2ed722313e8d2d7edadbbc6207b6ce6cf8a4291b1f50"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8906000001",
+          "transaction_hash": "0cb7247078a7e386836623425ba3d8c1a3ffe175c8675e457c85efb347355ad3",
+          "inbound_message_hash": "85c1b622cdf948f96a783ce7b7be496618aa0935dd67b43c89ee2ad5de87b76d"
+        },
+        {
+          "block": {
+            "workchain": 0,
+            "seqno": 8723,
+            "root_hash": "2ed39a3f3064d234967a2ec0dc0f4100ce32edda897264df9ac53fcde13fb100",
+            "file_hash": "f11b4a41c188749a422d2ed722313e8d2d7edadbbc6207b6ce6cf8a4291b1f50"
+          },
+          "account": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+          "lt": "8906000005",
+          "transaction_hash": "34614cabd156a6da41de327bbafb7c3204cb182ab57f8e77db74bed3b7e0f248",
+          "inbound_message_hash": "e8c4fbca0bf2a5db1ec375485704a6cc4f9e7170e6c201ea48c421bb82e865b3"
+        }
+      ]
+    }
+  ],
+  "dkg_fingerprint": "8e0b4dd9133a7967d7c47b79bcb173268be3406da40f06e7af4aa5b4a7779c7d",
+  "source": "0:4645622eb699f3b654ff7cdc6770c920c0d9d64357d399c29342976694cb2922",
+  "master": "0:3ae8e05abf5d92d4419e5a76c114c6b40a59efeda2bb9ee63e448c95f0258d12",
+  "content_hash": "70e2bc55c11a1aab98b309277efed3e0ca93821245b23d4789b7c3b33ff7889a"
+}

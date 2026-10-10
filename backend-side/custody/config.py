@@ -224,9 +224,7 @@ DEFAULT_ASSETS: dict[str, AssetConfig] = {
         symbol="USDT",
         decimals=6,
         is_native=False,
-        contract_address=_env(
-            "USDT_TON_CONTRACT", "EQD2Vuh8jFqW6o1XfF0ywz6t7m9o8n7s6r5t4y3u2i1o0p"
-        ),
+        contract_address=_env("USDT_TON_CONTRACT", ""),
         deposit_threshold=Decimal("1.0"),
         deposit_supported=False,
         withdrawal_supported=False,
@@ -342,6 +340,12 @@ def validate_chain_asset(
     """Resolve an asset and reject cross-chain operations."""
     try:
         get_chain(chain_id)
+        from .chain_registry import get_chain_spec
+
+        if get_chain_spec(chain_id).kind is ChainKind.TON:
+            from .mpc_ton_network import authorize_ton_network
+
+            authorize_ton_network(chain_id)
     except Exception as exc:
         raise ValueError(f"unknown chain {chain_id}") from exc
     try:

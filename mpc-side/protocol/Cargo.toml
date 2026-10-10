@@ -17,5 +17,7 @@ bs58 = "=0.5.1"
 k256 = { version = "=0.13.4", features = ["ecdsa"] }
 sha3 = "=0.10.8"
 
+everscale-types = { version = "=0.1.2", default-features = false, features = ["sync"] }
+
 [dev-dependencies]
 round-based = { version = "=0.4.1", features = ["sim"] }

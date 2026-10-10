@@ -77,11 +77,9 @@ class TonAdapter(ChainAdapter):
     kind, derivation_purpose = ChainKind.TON, 396
 
     def validate_address(self, address: str, *, custody_derived: bool = False) -> None:
-        if not (
-            re.fullmatch(r"-?\d+:[0-9a-fA-F]{64}", address or "")
-            or re.fullmatch(r"[EU]Q[0-9A-Za-z_-]{46}", address or "")
-        ):
-            raise ValueError("invalid TON address")
+        from .ton_wire import normalize_address
+
+        normalize_address(address)
 
     def build_indexer(self, spec):
         from .indexer.ton import TonIndexer

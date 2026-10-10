@@ -45,6 +45,7 @@ jobs:
       CUSTODY_INDEXER_MODE: stub
       LOCAL_KEY_ENCRYPTION_PASSPHRASE: ci-transport-only
       PHASE6F_TRON_JAR: /tmp/phase6f-FullNode.jar
+      PYTHONPATH: backend-side:mpc-side/integration
       PHASE6FB_SOLANA_BIN: /tmp/phase6fb-solana/solana-release/bin
     steps:
       - uses: actions/checkout@v4
@@ -100,11 +101,26 @@ jobs:
             tar -xjf /tmp/phase6fb-solana/release.tar.bz2 -C /tmp/phase6fb-solana
           fi
           "$PHASE6FB_SOLANA_BIN/solana-test-validator" --version
+      - if: inputs.suite == 'ton'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mpc-side/integration/ton/package-lock.json
+      - if: inputs.suite == 'ton'
+        run: |
+          npm ci --prefix mpc-side/integration/ton
+          node mpc-side/integration/ton/compile.cjs
+      - name: Provision pinned isolated TON validators from local genesis
+        if: inputs.suite == 'ton'
+        env:
+          PYTHONPATH: backend-side:mpc-side/integration
+        run: python -m ton.localnet work/ton-bootstrap --container phase6fc-localton
       - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
       - name: Run every selected original scenario with private fixtures local to this job
         run: |
           mkdir -p work/crypto
-          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
+          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py mpc-side/integration/test_ton.py mpc-side/integration/test_ton_network.py mpc-side/integration/test_ton_django.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -115,4 +131,11 @@ jobs:
             work/crypto/results.xml
             work/crypto/fixtures/**/tron-evidence.json
             work/crypto/fixtures/**/solana-evidence.json
+            work/ton-review/mpc-tvm-evidence.json
+            work/ton-review/validator-network-evidence.json
+            work/ton-review/django-validator-evidence.json
+            work/crypto/fixtures/**/public-genesis/zerostate.boc
+            work/crypto/fixtures/**/public-genesis/basestate0.boc
+            work/crypto/fixtures/**/public-genesis/localton-settings.json
+            work/crypto/fixtures/**/public-genesis/global.config.json
 

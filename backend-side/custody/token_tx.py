@@ -132,6 +132,10 @@ def get_transfer_executor(chain_id: str, asset_key: str, transport=None):
         return Trc20Executor(transport)
     if asset.token_standard == "SPL":
         return SplTokenExecutor(transport)
+    if asset.token_standard == "TEP74":
+        from .ton_tx import JettonExecutor
+
+        return JettonExecutor(transport)
     raise UnsupportedNativeTransaction(f"{asset.token_standard} executor is not yet available")
 
 

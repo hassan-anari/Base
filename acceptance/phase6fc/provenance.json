@@ -1,0 +1,28 @@
+{
+  "category": "LOCAL_GENESIS_AND_NATIVE_CONSENSUS_PROOF",
+  "identity": {
+    "network": "isolated-acton-v1",
+    "genesis_source": "localton-generated-zerostate",
+    "global_id": -777,
+    "settings_sha256": "b4906b2145bf9dd5469d1b791538d3c4315d43d56a5acea884e46f36455e7e94",
+    "image_digest": "c5dd9dcb3f662c85ec0636c19b85664b69ccad554ef69b6adf3864e7e9e82387",
+    "zerostate_root_hash": "496354e7ef185bad34d99e815eb4c2634bdcffe4c4e169ef5b1079012c7c195d",
+    "zerostate_file_hash": "96750e15f43b3b1f0225a8e66cdd73d6a429457c3ddd88c42db6abdb5d1ce2e0",
+    "basechain_zerostate_root_hash": "12f23678d2af1cecbeadbfca1efea56f7683f279f71754e9f86a109eb683c7eb",
+    "basechain_zerostate_file_hash": "4a776f8b1511ee8956e3ea12ebd6200f8410b7c3eeb4f264992e86675fcdd247"
+  },
+  "checkpoint": {
+    "workchain": -1,
+    "seqno": 9533,
+    "root_hash": "2c9f72e7e035e03ae031cd05ce2eff45689026816efe1643063556425a1a9b6d",
+    "file_hash": "2c45d12c8e6c4f6e2e0d71b5b89cef67c7b10a039cbf5b15ae91e59e3e9b8f57"
+  },
+  "proof_result": "valid complete proof chain: last block is (-1,8000000000000000,9533):2C9F72E7E035E03AE031CD05CE2EFF45689026816EFE1643063556425A1A9B6D:2C45D12C8E6C4F6E2E0D71B5B89CEF67C7B10A039CBF5B15AE91E59E3E9B8F57, last key block is (-1,8000000000000000,9506):CDE1C1DA32560392FB18EC743D994C9B9D8FF60C7915D78A72EAAC8DED70EB6C:47E9E18CCD8F5EA8A7686C6B124B570A239417FA7466454461567873A9CCBEF7",
+  "lite_client_sha256": "da7a4c01c0253106d7360eabec356ab4f17ca7c8f5fa5ab118aecf32432dc2b9",
+  "ton_source_commit": "3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "acton_reference_version": "1.2.1",
+  "acton_reference_commit": "13594911b09b0a9bc68910111e0bb88a74161f5b",
+  "localton_image_source_commit": "72bf7425d9d034adf81ac7ebd900c7d03182f234",
+  "trust": "Controlled local genesis, Docker/image/verifier supply chain and validator keys; not independent multi-operator Byzantine resilience",
+  "fee_configuration_matches_local_genesis": true
+}

@@ -33,7 +33,7 @@ class Asset(models.Model):
     decimals = models.PositiveIntegerField(default=18)
     is_native = models.BooleanField(default=False)
     contract_address = models.CharField(max_length=128, null=True, blank=True)
-    TOKEN_STANDARDS = [(value, value) for value in ("ERC20", "TRC20", "SPL")]
+    TOKEN_STANDARDS = [(value, value) for value in ("ERC20", "TRC20", "SPL", "TEP74")]
     token_standard = models.CharField(max_length=8, choices=TOKEN_STANDARDS, null=True, blank=True)
     metadata_verified_at = models.DateTimeField(null=True, blank=True)
     metadata_fingerprint = models.CharField(max_length=64, blank=True, default="")
@@ -106,7 +106,7 @@ class MpcKeyset(models.Model):
 
     ALGORITHMS = [("CGGMP24_ECDSA", "CGGMP24_ECDSA"), ("FROST_ED25519", "FROST_ED25519")]
     STATUSES = [("CREATING", "CREATING"), ("ACTIVE", "ACTIVE"), ("RETIRED", "RETIRED")]
-    SCOPES = [(value, value) for value in ("EVM", "TRON", "SOLANA")]
+    SCOPES = [(value, value) for value in ("EVM", "TRON", "SOLANA", "TON")]
     keyset_id = models.UUIDField(unique=True)
     algorithm = models.CharField(max_length=32, choices=ALGORITHMS)
     curve = models.CharField(max_length=16)
@@ -145,13 +145,17 @@ class MpcKeyset(models.Model):
                         derivation_version="cggmp_hd_v1",
                     )
                     | models.Q(
-                        scope="SOLANA",
+                        scope__in=["SOLANA", "TON"],
                         algorithm="FROST_ED25519",
                         curve="ed25519",
                         derivation_version="frost_keyset_v1",
                     )
                 ),
                 name="mpc_keyset_scope_algorithm_shape",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(scope="TON", active_for_new_wallets=True),
+                name="ton_root_no_auto_provisioning",
             ),
             models.CheckConstraint(
                 condition=~models.Q(scope="SOLANA", active_for_new_wallets=True),
@@ -165,6 +169,7 @@ class MpcKeyset(models.Model):
             "EVM": ("CGGMP24_ECDSA", "secp256k1", "cggmp_hd_v1"),
             "TRON": ("CGGMP24_ECDSA", "secp256k1", "cggmp_hd_v1"),
             "SOLANA": ("FROST_ED25519", "ed25519", "frost_keyset_v1"),
+            "TON": ("FROST_ED25519", "ed25519", "frost_keyset_v1"),
         }
         if self.scope and (self.algorithm, self.curve, self.derivation_version) != expected.get(
             self.scope
@@ -177,10 +182,10 @@ class MpcKeyset(models.Model):
 
 
 class UserWallet(models.Model):
-    """A user's deposit EOA address for a given (chain, asset).
+    """A user's deposit address for a given (chain, asset).
 
-    deposit_address is ALWAYS an EOA (never a contract). The derivation_path
-    is stored so we can rotate (addressIndex+1) deterministically.
+    TON uses an independently verified standard wallet contract bound to an
+    original FROST root. Root references do not support HD child derivation.
     """
 
     STATUS = [("ACTIVE", "ACTIVE"), ("RETIRED", "RETIRED")]
@@ -220,6 +225,7 @@ class UserWallet(models.Model):
     last_scanned_at = models.DateTimeField(null=True, blank=True)
     last_scanned_block = models.BigIntegerField(null=True, blank=True)
     solana_scan_cursor = models.JSONField(default=dict, blank=True)
+    ton_scan_cursor = models.JSONField(default=dict, blank=True)
     # SPL ATA. The signing authority remains deposit_address.
     asset_account_address = models.CharField(max_length=128, null=True, blank=True)
     mpc_keyset = models.ForeignKey(
@@ -251,6 +257,7 @@ class Deposit(models.Model):
         ("CONFIRMED", "CONFIRMED"),
         ("REVERTED", "REVERTED"),
     ]
+    chain_evidence = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=16, choices=DEPOSIT_STATUS, default="PENDING")
 
     class Meta:
@@ -384,12 +391,41 @@ class GasTopupIntent(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class TonWalletBinding(models.Model):
+    """Public immutable V5R1 root identity. ACTIVE is never on-chain proof."""
+
+    chain_id = models.CharField(max_length=16, default="TON")
+    address = models.CharField(max_length=128)
+    keyset = models.ForeignKey(MpcKeyset, on_delete=models.PROTECT)
+    network_identity = models.JSONField()
+    wallet_version = models.CharField(max_length=8, default="V5R1")
+    code_hash = models.CharField(max_length=64)
+    wallet_id = models.PositiveBigIntegerField()
+    workchain = models.SmallIntegerField(default=0)
+    state_init = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["chain_id", "address"], name="uq_ton_root_contract"),
+            models.CheckConstraint(
+                condition=Q(workchain=0, wallet_version="V5R1"), name="ton_standard_wallet_shape"
+            ),
+        ]
+
+
 class SourceAccountSequence(models.Model):
     """Durable allocator for account-chain sequence numbers (not a cache)."""
 
     chain_id = models.CharField(max_length=16)
     address = models.CharField(max_length=128)
     next_sequence = models.PositiveBigIntegerField(default=0)
+    owner_attempt = models.OneToOneField(
+        "OnchainTransactionAttempt",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="owned_sequence",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -571,6 +607,7 @@ class LedgerAccount(models.Model):
         ("TREASURY_ASSET", "TREASURY_ASSET"),
         ("NETWORK_FEE_EXPENSE", "NETWORK_FEE_EXPENSE"),
         ("ATA_RENT_ASSET", "ATA_RENT_ASSET"),
+        ("TOKEN_GAS_EXPENSE", "TOKEN_GAS_EXPENSE"),
     ]
     owner_type = models.CharField(max_length=16, choices=OWNER_TYPES)
     owner_id = models.CharField(max_length=64)
@@ -596,6 +633,7 @@ class LedgerAccount(models.Model):
                             "TREASURY_ASSET",
                             "NETWORK_FEE_EXPENSE",
                             "ATA_RENT_ASSET",
+                            "TOKEN_GAS_EXPENSE",
                         ],
                     )
                 ),
@@ -620,7 +658,13 @@ class LedgerAccount(models.Model):
             self.owner_type == "SYSTEM"
             and self.owner_id == "custody"
             and self.bucket
-            in {"CUSTODY_CLEARING", "TREASURY_ASSET", "NETWORK_FEE_EXPENSE", "ATA_RENT_ASSET"}
+            in {
+                "CUSTODY_CLEARING",
+                "TREASURY_ASSET",
+                "NETWORK_FEE_EXPENSE",
+                "ATA_RENT_ASSET",
+                "TOKEN_GAS_EXPENSE",
+            }
         )
         if not (valid_user or valid_system):
             raise ValidationError("invalid ledger account identity shape")
@@ -641,6 +685,7 @@ class LedgerTransaction(models.Model):
         ("WITHDRAWAL_SETTLE", "WITHDRAWAL_SETTLE"),
         ("NETWORK_FEE", "NETWORK_FEE"),
         ("ATA_RENT", "ATA_RENT"),
+        ("TOKEN_GAS", "TOKEN_GAS"),
     ]
     event_key = models.CharField(max_length=160, unique=True)
     event_type = models.CharField(max_length=32, choices=TYPES)

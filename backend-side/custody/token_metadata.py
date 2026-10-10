@@ -60,12 +60,21 @@ def canonical_contract(kind: ChainKind, value: str) -> str:
         if len(raw) != expected or (kind is ChainKind.TRON and raw[0] != 0x41):
             raise TokenVerificationError(f"invalid {kind.value} token address")
         return value
+    if kind is ChainKind.TON:
+        from .ton_wire import normalize_address
+
+        return normalize_address(value).raw
     raise TokenVerificationError("tokens are not supported on this chain family")
 
 
 def expected_standard(kind: ChainKind) -> str:
     try:
-        return {ChainKind.EVM: "ERC20", ChainKind.TRON: "TRC20", ChainKind.SOLANA: "SPL"}[kind]
+        return {
+            ChainKind.EVM: "ERC20",
+            ChainKind.TRON: "TRC20",
+            ChainKind.SOLANA: "SPL",
+            ChainKind.TON: "TEP74",
+        }[kind]
     except KeyError as exc:
         raise TokenVerificationError("tokens are not supported on this chain family") from exc
 
@@ -89,6 +98,13 @@ def metadata_fingerprint(asset: Asset | Any, *, program: str = "") -> str:
             from .mpc_solana_network import network_identity
 
             body["network"] = network_identity(asset.chain_id)
+    if spec.kind is ChainKind.TON:
+        from django.conf import settings
+
+        from .mpc_ton_network import network_identity
+
+        body["network"] = network_identity(asset.chain_id)
+        body["master_policy"] = settings.MPC_TON_NETWORK.get("jetton_masters", {}).get(contract)
     return hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -144,7 +160,15 @@ def verify_token_asset(asset_key: str, *, transport=None) -> Asset:
             raise TokenVerificationError(f"{spec.kind.value} requires {standard}")
         asset.contract_address = canonical_contract(spec.kind, asset.contract_address)
         url = rpc_urls(spec.chain_id)[0]
-        if standard == "ERC20":
+        if standard == "TEP74":
+            from .mpc_ton_network import proof_client
+            from .ton_assets import verified_master
+
+            client = proof_client(asset.chain_id)
+            checkpoint, _ = client.checkpoint()
+            verified_master(asset, client, checkpoint)
+            decimals = asset.decimals  # approved metadata pin, not ERC20 decimals()
+        elif standard == "ERC20":
             code = _rpc(transport, url, "eth_getCode", [asset.contract_address, "latest"])
             if not code or code in {"0x", "0x0"}:
                 raise TokenVerificationError("token contract has no deployed bytecode")

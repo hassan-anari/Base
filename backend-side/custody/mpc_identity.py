@@ -25,4 +25,9 @@ def address_from_public_key(chain_id: str, public_key_hex: str) -> str:
         from solders.pubkey import Pubkey
 
         return str(Pubkey.from_bytes(raw))
+    if kind is ChainKind.TON:
+        from .mpc_ton_network import network_identity
+        from .ton_wire import wallet_address
+
+        return wallet_address(raw, network_identity(chain_id)["global_id"])
     raise ValueError("MPC identity is unsupported for this chain")

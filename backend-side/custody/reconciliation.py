@@ -31,7 +31,18 @@ def _prepared(attempt: OnchainTransactionAttempt) -> PreparedNativeTransaction:
         amount=attempt.amount,
         base_unit_amount=int(attempt.base_unit_amount),
         signing_payload=b"",
-        unsigned_payload=attempt.prepared_metadata,
+        unsigned_payload={
+            **attempt.prepared_metadata,
+            **(
+                {
+                    "_ton_reconciliation_progress": attempt.confirmation_metadata.get(
+                        "ton_progress", {}
+                    )
+                }
+                if attempt.chain_id == "TON"
+                else {}
+            ),
+        },
         fee_metadata=attempt.fee_metadata,
         sequence=attempt.sequence,
         expected_tx_id=attempt.network_tx_id,
@@ -57,6 +68,7 @@ def reconcile_attempt(attempt_id: int):
             if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and snapshot.chain_id in {
                 "TRX",
                 "SOL",
+                "TON",
             }:
                 OnchainTransactionAttempt.objects.filter(pk=attempt_id).exclude(
                     status__in=["CONFIRMED", "FAILED"]
@@ -80,7 +92,7 @@ def _reconcile_attempt(attempt_id: int):
 
     if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and get_chain_spec(
         snapshot.chain_id
-    ).kind in {ChainKind.TRON, ChainKind.SOLANA}:
+    ).kind in {ChainKind.TRON, ChainKind.SOLANA, ChainKind.TON}:
         from .models import MpcSigningSession
         from .mpc_signing import _default_consumer
 
@@ -99,7 +111,7 @@ def _reconcile_attempt(attempt_id: int):
         _prepared(snapshot), snapshot.network_tx_id
     )
     if (
-        get_chain_spec(snapshot.chain_id).kind is ChainKind.SOLANA
+        get_chain_spec(snapshot.chain_id).kind in {ChainKind.SOLANA, ChainKind.TON}
         and result.state is ReconciliationState.EXPIRED
     ):
         from .native_tx import ReconciliationResult
@@ -167,6 +179,10 @@ def _reconcile_attempt(attempt_id: int):
             and settings.MPC_SIGNER_BACKEND == "self_hosted_mpc"
         ):
             from .solana_costs import post_execution_costs
+
+            post_execution_costs(attempt, result.evidence)
+        if attempt.chain_id == "TON":
+            from .ton_costs import post_execution_costs
 
             post_execution_costs(attempt, result.evidence)
         attempt.status = "CONFIRMED" if result.state is ReconciliationState.CONFIRMED else "FAILED"

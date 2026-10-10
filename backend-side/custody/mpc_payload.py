@@ -45,6 +45,12 @@ def exact_signing_payload(
         if not signing_payload:
             raise ValueError("Solana MPC signing requires the serialized message")
         return "SOLANA_MESSAGE", signing_payload
+    if kind is ChainKind.TON:
+        from .ton_wire import validate_authorization
+
+        return "TON_V5R1_CELL_HASH", validate_authorization(
+            prepared_payload["ton_authorization"], bytes.fromhex(prepared_payload["public_key"])
+        )
     raise ValueError(f"MPC signing is unsupported for chain kind {kind}")
 
 

@@ -46,7 +46,7 @@ def local_root_keyset(attempt):
 
 def _wallet_root_keyset(wallet, chain_id, source_address):
     spec = get_chain_spec(chain_id)
-    if spec.kind not in {ChainKind.EVM, ChainKind.TRON, ChainKind.SOLANA}:
+    if spec.kind not in {ChainKind.EVM, ChainKind.TRON, ChainKind.SOLANA, ChainKind.TON}:
         raise MpcBindingError("unsupported root signing family")
     keyset = wallet.mpc_keyset
     if keyset is None:
@@ -58,13 +58,21 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
         )
     if isinstance(wallet, UserWallet) and wallet.derivation_version != "mpc_root_v1":
         raise UnsupportedMpcDerivation("deposit wallet must explicitly select mpc_root_v1")
-    solana = spec.kind is ChainKind.SOLANA
+    solana = spec.kind in {ChainKind.SOLANA, ChainKind.TON}
     if (
         keyset.status != "ACTIVE"
         or keyset.algorithm != ("FROST_ED25519" if solana else "CGGMP24_ECDSA")
         or keyset.curve != ("ed25519" if solana else "secp256k1")
         or keyset.scope
-        != ("SOLANA" if solana else "TRON" if spec.kind is ChainKind.TRON else "EVM")
+        != (
+            "TON"
+            if spec.kind is ChainKind.TON
+            else "SOLANA"
+            if solana
+            else "TRON"
+            if spec.kind is ChainKind.TRON
+            else "EVM"
+        )
         or (keyset.threshold, keyset.party_count) != (2, 3)
         or keyset.participant_identities != PARTICIPANTS
         or keyset.derivation_version != ("frost_keyset_v1" if solana else "cggmp_hd_v1")
@@ -83,6 +91,10 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
         source_address
     ):
         raise MpcBindingError("DKG public key does not control the bound transaction source")
+    if spec.kind is ChainKind.TON:
+        from .ton_policy import verified_binding
+
+        verified_binding(chain_id, source_address, keyset)
     return keyset
 
 
@@ -126,8 +138,12 @@ def verify_coordinator_keyset(keyset, metadata):
     if frost:
         if (keyset.threshold, keyset.party_count) != (2, 3):
             raise MpcBindingError("FROST root threshold must be exactly 2-of-3")
-        if (keyset.scope, keyset.curve, keyset.derivation_version) != (
-            "SOLANA",
+        if keyset.scope not in {"SOLANA", "TON"} or (
+            keyset.scope,
+            keyset.curve,
+            keyset.derivation_version,
+        ) != (
+            keyset.scope,
             "ed25519",
             "frost_keyset_v1",
         ):
@@ -276,6 +292,11 @@ def validate_custody_intent(attempt):
             or (not asset.is_native and attempt.amount != operation.balance_snapshot)
         ):
             raise MpcBindingError("sweep eligibility or intent mismatch")
+        if spec.kind is ChainKind.TON:
+            from .ton_policy import require_owned_contract
+
+            _wallet_root_keyset(hot, attempt.chain_id, attempt.to_address)
+            require_owned_contract(attempt.chain_id, attempt.to_address, hot.mpc_keyset)
         if operation.gas_topup_intent_id and operation.gas_topup_intent.status != "CONFIRMED":
             raise MpcBindingError("sweep gas grant is not confirmed")
     elif attempt.operation_type == "GAS_TOPUP":
@@ -290,6 +311,12 @@ def validate_custody_intent(attempt):
             status="ACTIVE",
         ).exists() or normalize(hot.address) == normalize(attempt.to_address)
         maximum_grant = spec.gas_topup_amount * 10
+        if spec.kind is ChainKind.TON:
+            from decimal import Decimal
+
+            if spec.gas_topup_amount != Decimal("0.13"):
+                raise MpcBindingError("TON funding requires the reviewed 0.13 TON policy")
+            maximum_grant = Decimal("0.13")
         if spec.kind is ChainKind.TRON:
             maximum_grant = spec.gas_topup_amount
             recipients = UserWallet.objects.select_related("mpc_keyset").filter(
@@ -302,7 +329,7 @@ def validate_custody_intent(attempt):
             else:
                 for recipient in recipients:
                     _wallet_root_keyset(recipient, attempt.chain_id, attempt.to_address)
-        elif spec.kind is ChainKind.SOLANA:
+        elif spec.kind in {ChainKind.SOLANA, ChainKind.TON}:
             recipients = list(
                 UserWallet.objects.select_related("mpc_keyset").filter(
                     chain_id=attempt.chain_id,
@@ -324,6 +351,14 @@ def validate_custody_intent(attempt):
                 )
             if len(owner_keysets) != 1:
                 raise MpcBindingError("Solana gas grant destination has conflicting root bindings")
+            if spec.kind is ChainKind.TON:
+                from .ton_policy import require_owned_contract
+
+                for recipient in ([hot] if is_hot else []) + recipients:
+                    require_owned_contract(
+                        attempt.chain_id, attempt.to_address, recipient.mpc_keyset
+                    )
+
         if (
             operation.status
             not in (
@@ -348,6 +383,10 @@ def transaction_identity(attempt, keyset):
     from .token_metadata import assert_verified_token
 
     spec = get_chain_spec(attempt.chain_id)
+    if spec.kind is ChainKind.TON:
+        from .ton_policy import ton_transaction_identity
+
+        return ton_transaction_identity(attempt, keyset)
     if spec.kind is ChainKind.SOLANA:
         from .solana_policy import solana_transaction_identity
 

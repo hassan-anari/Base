@@ -33,6 +33,24 @@ def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
             kind, asset.contract_address
         ):
             raise ValueError("token deposit came from an unreviewed contract/mint")
+    chain_evidence = {}
+    if user_wallet.chain_id == "TON":
+        from .ton_wire import jetton_wallet_address
+
+        chain_evidence = getattr(event, "ton_finality_evidence", None)
+        expected = (
+            user_wallet.deposit_address
+            if asset.is_native
+            else jetton_wallet_address(user_wallet.deposit_address, asset.contract_address)
+        )
+        if (
+            not chain_evidence
+            or chain_evidence.get("account") != expected
+            or chain_evidence.get("transaction_hash") != event.tx_hash
+            or chain_evidence.get("inbound_message_hash") != event.event_index
+            or chain_evidence.get("shard_block", {}).get("root_hash") != event.block_hash
+        ):
+            raise ValueError("TON deposit lacks verified account/message inclusion evidence")
     threshold = get_confirmation_threshold(user_wallet.chain_id)
     with transaction.atomic():
         deposit, created = Deposit.objects.get_or_create(
@@ -47,6 +65,7 @@ def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
                 "memo": event.memo,
                 "block_hash": event.block_hash,
                 "status": "PENDING",
+                "chain_evidence": chain_evidence,
             },
         )
         deposit = (

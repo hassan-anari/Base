@@ -107,5 +107,9 @@ def verify_mpc_rpc_endpoints(chain_id, transport):
         verify_solana_rpc_endpoints(chain_id, transport)
     elif get_chain_spec(chain_id).kind is ChainKind.EVM:
         verify_evm_rpc_endpoints(chain_id, transport)
+    elif get_chain_spec(chain_id).kind is ChainKind.TON:
+        from .mpc_ton_network import verify_ton_rpc_endpoints
+
+        verify_ton_rpc_endpoints(chain_id, transport)
     else:
         raise MpcNetworkError("unsupported MPC network family")

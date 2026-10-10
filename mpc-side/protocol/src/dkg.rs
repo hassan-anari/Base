@@ -24,7 +24,7 @@ impl DkgRequest {
     pub fn is_frost(&self) -> bool {
         self.algorithm == ALGORITHM
             && self.curve == "ed25519"
-            && self.scope == "SOLANA"
+            && ["SOLANA", "TON"].contains(&self.scope.as_str())
             && self.derivation_version == "frost_keyset_v1"
             && self.threshold == 2
             && self.party_count == 3

@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "network": {
+    "global_id": -777,
+    "workchain_enabled": true,
+    "initial_balance": 4999990000,
+    "gas_price": 26214400,
+    "gas_price_masterchain": 655360000,
+    "cell_price": 2621440000,
+    "cell_price_masterchain": 65536000000,
+    "max_validators": 1000,
+    "max_masterchain_validators": 100,
+    "min_validators": 1,
+    "min_validator_stake": 10000,
+    "max_validator_stake": 10000000,
+    "min_total_validator_stake": 10000,
+    "max_stake_factor": 3,
+    "elected_for_seconds": 120,
+    "election_start_before_seconds": 90,
+    "election_end_before_seconds": 30,
+    "stakes_frozen_for_seconds": 30,
+    "original_validator_set_valid_for_seconds": 90,
+    "simplex_target_rate_ms": 1000,
+    "simplex_slots_per_leader_window": 4,
+    "simplex_first_block_timeout_ms": 700,
+    "simplex_max_leader_window_desync": 250
+  },
+  "node": {
+    "role": "genesis",
+    "name": "genesis",
+    "enabled": true,
+    "validator": true,
+    "liteserver": true,
+    "public_ip": "127.0.0.1",
+    "console_port": 4441,
+    "adnl_port": 4442,
+    "liteserver_port": 18004,
+    "out_port": 3272,
+    "dht_port": 6302,
+    "threads": 4,
+    "verbosity": 2,
+    "sync_before_seconds": 3600,
+    "state_ttl_seconds": 31536000,
+    "block_ttl_seconds": 31536000,
+    "archive_ttl_seconds": 31536000,
+    "key_proof_ttl_seconds": 315360000,
+    "initial_wallet_amount_nano": 50005000000000,
+    "validator_stake_nano": 10001000000000,
+    "participate_in_elections": true
+  },
+  "services": {
+    "config_http": {
+      "enabled": true,
+      "bind": "127.0.0.1",
+      "port": 18000
+    },
+    "admin_http": {
+      "enabled": false,
+      "bind": "127.0.0.1",
+      "port": 18001
+    },
+    "ton_http_api": {
+      "enabled": true,
+      "port": 18002,
+      "backend_port": 18005,
+      "monitor_port": 18006,
+      "command": null,
+      "static_config": null
+    },
+    "observability": {
+      "enabled": false,
+      "bind": "0.0.0.0",
+      "port": 18007,
+      "publish_interval_seconds": 5,
+      "observation_ttl_seconds": 20,
+      "block_window_seconds": 600
+    }
+  },
+  "validation": {
+    "auto_participate": true,
+    "auto_reap": true,
+    "poll_interval_seconds": 5,
+    "max_factor": 3.0,
+    "reap_value_nano": 1000000000
+  },
+  "monitoring": {
+    "enabled": true,
+    "poll_interval_seconds": 2
+  }
+}

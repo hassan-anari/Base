@@ -90,6 +90,8 @@ async fn main() {
             storage_directory.clone(),
             party_id.clone(),
             auxiliary.clone(),
+            wallet_mpc_transport::CustodyRequestVerifier::new(&tls)
+                .expect("custody request trust unavailable"),
         )
         .expect("CGGMP HD evidence recovery failed");
         let cggmp_signing = wallet_mpc_signer::cggmp_sign::SigningService::open(

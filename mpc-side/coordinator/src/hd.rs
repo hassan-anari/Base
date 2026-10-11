@@ -7,7 +7,7 @@ use wallet_mpc_protocol::{
 use wallet_mpc_transport::SignerClient;
 
 impl DurableStore {
-    fn hd_path(&self, name: &str) -> PathBuf {
+    pub(super) fn hd_path(&self, name: &str) -> PathBuf {
         self.path.with_extension("hd").join(name)
     }
     pub(super) fn hd_read<T: serde::de::DeserializeOwned>(

@@ -101,6 +101,58 @@ def _hash(value, label):
     return value.lower()
 
 
+def _internal_mpc_gas_grant(spec, address, tx, tx_hash, value):
+    """An authenticated treasury grant is custody funding, not a new liability.
+
+    Unknown/mismatched provenance aborts history; never hide an external payment
+    merely because its source is a hot wallet or its amount resembles a grant.
+    """
+    from eth_account import Account
+    from eth_utils import keccak
+
+    from ..models import OnchainTransactionAttempt
+
+    candidates = OnchainTransactionAttempt.objects.filter(
+        chain_id=spec.chain_id, operation_type="GAS_TOPUP", network_tx_id__iexact=tx_hash
+    )
+    if not candidates.exists():
+        return False
+    try:
+        attempt = candidates.get()
+        raw = bytes.fromhex(attempt.signed_payload.removeprefix("0x"))
+        prepared = attempt.prepared_metadata
+        consumed = attempt.mpc_sessions.filter(
+            status="COMPLETED", signature_consumed_at__isnull=False
+        ).first()
+        identity = consumed.transaction_identity if consumed else {}
+        valid = (
+            bool(raw)
+            and "0x" + keccak(raw).hex() == tx_hash
+            and Account.recover_transaction(raw).lower() == attempt.from_address.lower()
+            and str(tx.get("from", "")).lower() == attempt.from_address.lower()
+            and attempt.to_address.lower() == address.lower()
+            and attempt.asset_key == spec.native_asset_key
+            and int(attempt.base_unit_amount) == value
+            and prepared["to"].lower() == address.lower()
+            and prepared["value"] == value
+            and prepared["chainId"] == spec.evm_chain_id
+            and identity.get("operation_type") == "GAS_TOPUP"
+            and identity.get("operation_id") == attempt.operation_id
+            and identity.get("attempt_id") == attempt.pk
+            and identity.get("chain") == spec.chain_id
+            and identity.get("asset") == spec.native_asset_key
+            and identity.get("source", "").lower() == attempt.from_address.lower()
+            and identity.get("destination", "").lower() == address.lower()
+            and identity.get("base_unit_amount") == str(value)
+            and identity.get("unsigned_transaction") == prepared
+        )
+    except (ValueError, KeyError, TypeError, OnchainTransactionAttempt.MultipleObjectsReturned):
+        valid = False
+    if not valid:
+        raise EvmLiveError("EVM gas grant has incomplete custody provenance")
+    return True
+
+
 def evm_get_balance(
     chain_id: str, address: str, *, after_block=None, after_block_hash=None
 ) -> EvmBalanceResult:
@@ -178,6 +230,8 @@ def evm_get_balance(
             ):
                 raise EvmLiveError("native receipt does not match scanned transaction/block")
             if status == 1:
+                if _internal_mpc_gas_grant(spec, address, tx, tx_hash, value):
+                    continue
                 events.append(
                     DepositEvent(
                         tx_hash=tx_hash,

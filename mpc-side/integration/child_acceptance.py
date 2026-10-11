@@ -8,6 +8,7 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -128,6 +129,99 @@ def hostile_child_cases(net, root, accounts):
         authenticated_request(net, "coordinator", "custody", "/v1/sign-sessions", signing)[0] == 200
     )
     initial = sign_state(net, signing)
+    probe = {
+        "request": signing,
+        "crypto_execution_id": initial["crypto_execution_id"],
+        "selected_signers": ["signer-a", "signer-b"],
+        "auxiliary": child["request"]["root"]["request"]["auxiliary"],
+    }
+    # Coordinator substitution of another already-approved child must fail
+    # despite a structurally valid path, source and signer-local approval.
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from custody.mpc_request_auth import authorization_message
+
+    for fault in ("missing", "signature", "child", "digest", "coordinator", "wrong-ca", "expired"):
+        tampered = copy.deepcopy(signing)
+        if fault == "missing":
+            tampered.pop("custody_authorization")
+        elif fault == "signature":
+            tampered["custody_authorization"]["signature_der_hex"] = "00" * 70
+        elif fault == "child":
+            other = accounts[1].evidence["child"]
+            tampered.update(
+                child_authorization=other,
+                expected_source=accounts[1].address,
+                derivation_reference=child_reference(other),
+            )
+        elif fault == "digest":
+            import hashlib
+
+            tampered["payload_hex"] = "32" * 32
+            tampered["message_fingerprint"] = hashlib.sha256(bytes.fromhex("32" * 32)).hexdigest()
+        else:
+            identity = net.root / fault / "identity"
+            certificate = x509.load_pem_x509_certificate((identity / "tls.crt").read_bytes())
+            key = serialization.load_pem_private_key((identity / "tls.key").read_bytes(), None)
+            tampered["custody_authorization"] = {
+                "certificate_chain_der_hex": [
+                    certificate.public_bytes(serialization.Encoding.DER).hex()
+                ],
+                "signature_der_hex": key.sign(
+                    authorization_message(tampered), ec.ECDSA(hashes.SHA256())
+                ).hex(),
+            }
+        assert (
+            authenticated_request(
+                net,
+                "signer-a",
+                "coordinator",
+                "/internal/v1/cggmp/sign/probe",
+                {**probe, "request": tampered},
+            )[0]
+            == 409
+        )
+    assert not (
+        net.root / "signer-a" / "storage" / "cggmp-signing" / f"{signing['session_id']}.json"
+    ).exists()
+    receipt = net.root / "signer-a" / "storage" / "cggmp-hd" / f"{root.keyset.keyset_id}.root"
+    original_receipt = receipt.read_bytes()
+    try:
+        receipt.unlink()
+        assert (
+            authenticated_request(
+                net, "signer-a", "coordinator", "/internal/v1/cggmp/sign/probe", probe
+            )[0]
+            == 409
+        )
+        corrupted = json.loads(original_receipt)
+        corrupted["root"]["chain_code"] = "12" * 32
+        receipt.write_text(json.dumps(corrupted))
+        assert (
+            authenticated_request(
+                net, "signer-a", "coordinator", "/internal/v1/cggmp/sign/probe", probe
+            )[0]
+            == 409
+        )
+    finally:
+        receipt.write_bytes(original_receipt)
+        receipt.chmod(0o600)
+    # Dropping the path/source cannot repurpose this dedicated deposit root.
+    root_only = signing_request(net)
+    root_only["keyset_id"] = str(root.keyset.keyset_id)
+    root_only["expected_source"] = address_from_public_key("ETH", root.keyset.public_key).lower()
+    assert (
+        authenticated_request(net, "coordinator", "custody", "/v1/sign-sessions", root_only)[0]
+        == 400
+    )
+    root_probe = {**probe, "request": root_only}
+    assert (
+        authenticated_request(
+            net, "signer-a", "coordinator", "/internal/v1/cggmp/sign/probe", root_probe
+        )[0]
+        == 409
+    )
     net.stop("signer-b")
     net.stop("signer-c")
     try:
@@ -200,6 +294,7 @@ def record(attempt, child=None):
         assert session.transaction_identity["public_key"] == child.public_key
         assert session.transaction_identity["root_public_key"] != child.public_key
         assert session.transaction_identity["child_authorization"] == child.evidence["child"]
+        assert session.custody_authorization
     return {
         "txid": attempt.network_tx_id,
         "source": attempt.from_address,
@@ -207,11 +302,15 @@ def record(attempt, child=None):
         "session_id": str(session.session_id),
         "execution_id": str(session.crypto_execution_id),
         "selected_signers": session.selected_signers,
+        "session_seconds_to_consumed_signature": (
+            session.signature_consumed_at - session.created_at
+        ).total_seconds(),
+        "original_custody_authorization_present": bool(session.custody_authorization),
         "confirmation": attempt.confirmation_metadata,
     }
 
 
-def benchmark(root, tmp_path):
+def benchmark(root, tmp_path, net):
     count = int(os.environ.get("PHASE6GB_BENCHMARK_COUNT", "1000"))
     assert 100 <= count <= 100000
     workers = 8
@@ -290,16 +389,38 @@ def benchmark(root, tmp_path):
         patch.object(
             MpcCustodyAccount, "save", measured("persistent_issue_save", MpcCustodyAccount.save)
         ),
+        override_settings(MPC_REQUEST_TIMEOUT_SECONDS=120),
         ThreadPoolExecutor(max_workers=workers) as pool,
     ):
         accounts = list(pool.map(worker, range(count)))
     seconds = time.perf_counter() - start
     assert len(set(accounts)) == count
     assert MpcCustodyAccount.objects.filter(pk__in=accounts, status="ISSUED").count() == count
+    initial_phase_latency = {
+        name: {
+            "samples": len(values),
+            "sum": sum(values),
+            "mean": sum(values) / len(values),
+            "max": max(values),
+        }
+        for name, values in phases.items()
+    }
     retry = time.perf_counter()
     close_old_connections()
     assert worker(0) == accounts[0]
     recovery = time.perf_counter() - retry
+    restart = time.perf_counter()
+    for role in ("coordinator", "signer-a", "signer-b", "signer-c"):
+        net.stop(role)
+    connection.close()
+    for role in ("coordinator", "signer-a", "signer-b", "signer-c"):
+        net.start(role)
+    restart_seconds = time.perf_counter() - restart
+    replay = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        assert list(pool.map(worker, range(count))) == accounts
+    replay_seconds = time.perf_counter() - replay
+    assert len(timings) == count  # No new crypto/approval operation on recovery.
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
         postgres = cursor.fetchone()[0]
@@ -309,15 +430,35 @@ def benchmark(root, tmp_path):
         "kind": "real-three-store-verified-persistent-child-issuance",
         "customers": count,
         "workers": workers,
+        "bounded_issuance_http_timeout_seconds": 120,
         "seconds": seconds,
         "issued_accounts_per_second": count / seconds,
         "authenticated_child_requests": len(timings),
         "coordinator_request_seconds_sum": sum(timings),
         "coordinator_request_seconds_mean": sum(timings) / len(timings),
         "reconnected_idempotent_issuance_seconds": recovery,
+        "four_service_restart_seconds": restart_seconds,
+        "full_population_idempotent_recovery_seconds": replay_seconds,
+        "full_population_recovered_accounts_per_second": count / replay_seconds,
         "account_table_and_index_bytes": size,
         "postgres_version": postgres,
-        "cpu": platform.processor(),
+        "cpu": platform.processor()
+        or next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in Path("/proc/cpuinfo").read_text().splitlines()
+                if line.startswith("model name")
+            ),
+            "unknown",
+        ),
+        "memory_kib": int(
+            next(
+                line
+                for line in Path("/proc/meminfo").read_text().splitlines()
+                if line.startswith("MemTotal:")
+            ).split()[1]
+        ),
+        "python_version": platform.python_version(),
         "logical_cpus": os.cpu_count(),
         "machine": platform.machine(),
         "platform": platform.platform(),
@@ -325,15 +466,7 @@ def benchmark(root, tmp_path):
         "issued_asset_views_during_benchmark": count,
         "signatures_during_issuance": 0,
         "signing_latency": "measured separately on chain sweeps",
-        "phase_latency_seconds": {
-            name: {
-                "samples": len(values),
-                "sum": sum(values),
-                "mean": sum(values) / len(values),
-                "max": max(values),
-            }
-            for name, values in phases.items()
-        },
+        "phase_latency_seconds": initial_phase_latency,
         "reservation_operations_per_second_during_full_issuance": count / seconds,
         "postgres_contention_measure": (
             "FOR UPDATE query latency includes lock waiting; not isolated wait-time attribution"
@@ -460,6 +593,21 @@ def run_evm_child_acceptance(net, tmp_path):
             ]
             signed = native.signed_payload
             net.stop("coordinator")
+            approval = (
+                net.root
+                / "coordinator"
+                / "storage"
+                / "coordinator.hd"
+                / f"{account.reservation_id}.child"
+            )
+            withheld = approval.with_suffix(".withheld")
+            approval.rename(withheld)
+            try:
+                with pytest.raises(RuntimeError, match="durable original child approval"):
+                    net.start("coordinator")
+            finally:
+                net.stop("coordinator")
+                withheld.rename(approval)
             net.start("coordinator")
             assert execute_attempt(native.pk, "worker").signed_payload == signed
             native = settle(chain, native)
@@ -581,7 +729,7 @@ def run_evm_child_acceptance(net, tmp_path):
                 issue(0).evidence["child"]
             )
             net.start("signer-a")
-            evidence["benchmark"] = benchmark(root, tmp_path)
+            evidence["benchmark"] = benchmark(root, tmp_path, net)
             for journal in LedgerTransaction.objects.all():
                 assert (
                     sum(

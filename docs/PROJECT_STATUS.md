@@ -12,7 +12,8 @@ The successful rerun supersedes the earlier unresolved runner-block status.
 
 This branch implements genuine original-share HD agreement, upstream SLIP-10
 public derivation and CGGMP24 child threshold signing for EVM/TRON, plus immutable
-canonical custody accounts and asset views (migrations 0029/0030). It preserves
+canonical custody accounts and asset views, and end-to-end original machine
+request authentication (migrations 0029/0030/0031). It preserves
 root-only wallets and the original ledger. See [PHASE6GB.md](../PHASE6GB.md) for
 reviewable boundaries and current test evidence. This is not independent audit
 acceptance, production permission or completion of Phase 6G-C.

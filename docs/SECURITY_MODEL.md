@@ -72,3 +72,38 @@ in [PHASE6GB.md](../PHASE6GB.md) identifies HashSet rather than the advisory's
 TreeIndex insertion path; it is not an independent exploitability clearance.
 No cryptographic major dependency upgrade, audit suppression, TON scope expansion
 or production flag relaxation is part of this branch.
+
+Cross-asset address publication is serialized across canonical accounts and legacy
+wallet inserts by a shared PostgreSQL advisory transaction lock. Publication uses
+READ COMMITTED; other isolation levels fail closed to prevent stale-snapshot write
+skew. Immutable issued account reads avoid an inverse scanner/account lock order.
+This fixes the race found during this branch's security assessment; independent
+review must confirm DB role/isolation/locking assumptions before acceptance.
+
+Security assessment found a P1 EVM liability-inflation path: native scanning could
+credit operator MPC gas funding as a customer deposit when native/token views
+shared an address. This branch excludes only an exact known GAS_TOPUP transaction
+with recovered persisted signed bytes, original source/destination/native amount/
+chain, and consumed completed signing intent. Missing or altered provenance aborts
+history; another payment from the same sender is still a deposit. Genuine live
+acceptance caught the issue; dedicated negative contracts and final validator
+checks cover the repair. Existing append-only historical journals are not rewritten;
+any preexisting affected deployment needs a separate evidence-led investigation.
+Independent review is required before considering this P1 repair accepted.
+
+The coordinator substitution review also identified an authorization gap: approving
+a child in each store did not authenticate which approved child the custody
+service originally requested. This branch commits the full child signing request
+with a once-persisted ECDSA/SHA-256 signature under the existing custody P-256 TLS
+identity. Signers independently validate private-CA client authentication, current
+certificate validity, exact custody URI and signature before nonce work and in the
+worker. Substitution of another valid approved child, digest or session fails
+closed. Dedicated DEPOSIT roots also reject dropping child authorization.
+Migration 0031 freezes the original grant and prevents retrospective minting for
+already-started executions. Original completed public signature recovery remains
+possible; uncertain funds are never released on credential expiry or RPC timeout.
+This does not make a compromised custody authority trustworthy; independent policy
+authority remains Phase 7. Independent review must verify canonical serialization,
+identity-key isolation, credential validity and immutable session/replay controls.
+Transport adds the existing pinned ring 0.17.14 dependency edge; no Rust package or
+cryptographic version is upgraded and the scc P1 remains open.

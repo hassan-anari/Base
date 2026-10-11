@@ -197,7 +197,13 @@ impl SigningService {
     ) -> Result<SignReport> {
         execution.validate()?;
         if let Some(child) = &execution.request.child_authorization {
+            if action != "report" && action != "abort" {
+                self.hd.verify_original_request(&execution.request)?;
+            }
             self.hd.validate_child(child).await?;
+        } else if action != "report" && action != "abort" {
+            self.hd
+                .require_historical_root_signing(execution.request.keyset_id)?;
         }
         let party = { self.local.lock().await.party.clone() };
         ensure!(
@@ -346,7 +352,10 @@ impl SigningService {
                     let digest = execution.validate()?;
                     let key = auxiliary.own_key(&execution.auxiliary).await?;
                     if let Some(child) = &execution.request.child_authorization {
+                        hd.verify_original_request(&execution.request)?;
                         hd.validate_child(child).await?;
+                    } else {
+                        hd.require_historical_root_signing(execution.request.keyset_id)?;
                     }
                     let index = execution
                         .selected_signers

@@ -222,7 +222,8 @@ impl SigningExecution {
         if let Some(child) = &self.request.child_authorization {
             child.validate()?;
             ensure!(
-                child.request.root.request.auxiliary == self.auxiliary
+                self.request.custody_authorization.is_some()
+                    && child.request.root.request.auxiliary == self.auxiliary
                     && (child.request.root.request.scope.chain_id == self.request.chain
                         || (self.auxiliary.dkg.scope == "TRON"
                             && child.request.root.request.scope.chain_id == "TRX"

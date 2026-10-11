@@ -7,35 +7,96 @@ use axum::{
     routing::post,
     Extension, Json, Router,
 };
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 use tokio::sync::Mutex;
 use wallet_mpc_protocol::{
     dkg::hex,
     hd::{fingerprint, ChildIdentity, ChildReport, ChildRequest, HdRequest, HdRoot, HdRootReport},
 };
 use wallet_mpc_storage::{atomic_create_secret, confirm_parent_durability};
-use wallet_mpc_transport::PeerIdentity;
+use wallet_mpc_transport::{CustodyRequestVerifier, PeerIdentity};
 
 pub struct HdService {
     directory: PathBuf,
     party: String,
     auxiliary: Arc<crate::cggmp_aux::AuxService>,
     lock: Mutex<()>,
+    dedicated: RwLock<BTreeSet<uuid::Uuid>>,
+    custody_verifier: CustodyRequestVerifier,
 }
 impl HdService {
+    pub fn verify_original_request(
+        &self,
+        request: &wallet_mpc_protocol::sign::SignRequest,
+    ) -> Result<()> {
+        use wallet_mpc_protocol::sign::decode_hex;
+        let auth = request
+            .custody_authorization
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("original custody child authorization required"))?;
+        let chain = auth
+            .certificate_chain_der_hex
+            .iter()
+            .map(|c| {
+                decode_hex(c).ok_or_else(|| anyhow::anyhow!("invalid custody certificate encoding"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let signature = decode_hex(&auth.signature_der_hex)
+            .ok_or_else(|| anyhow::anyhow!("invalid custody signature encoding"))?;
+        self.custody_verifier.verify(
+            &request.custody_authorization_message()?,
+            &chain,
+            &signature,
+        )
+    }
+    pub fn require_historical_root_signing(&self, keyset: uuid::Uuid) -> Result<()> {
+        // A dedicated DEPOSIT namespace has no issued root account. Dropping
+        // child authorization must not turn its approval into root signing.
+        ensure!(
+            !self
+                .dedicated
+                .read()
+                .map_err(|_| anyhow::anyhow!("HD binding lock poisoned"))?
+                .contains(&keyset)
+                && !self.directory.join(format!("{keyset}.root")).exists(),
+            "dedicated HD root requires approved child authorization"
+        );
+        Ok(())
+    }
     pub fn open(
         directory: PathBuf,
         party: String,
         auxiliary: Arc<crate::cggmp_aux::AuxService>,
+        custody_verifier: CustodyRequestVerifier,
     ) -> Result<Arc<Self>> {
         let directory = directory.join("cggmp-hd");
         fs::create_dir_all(&directory)?;
         confirm_parent_durability(&directory)?;
+        let mut dedicated = BTreeSet::new();
+        for entry in fs::read_dir(&directory)? {
+            let name = entry?.file_name();
+            let name = name.to_string_lossy();
+            let root = name.strip_suffix(".root").or_else(|| {
+                (name.ends_with(".index") && name.get(36..37) == Some("-"))
+                    .then(|| name.get(..36))
+                    .flatten()
+            });
+            if let Some(root) = root {
+                dedicated.insert(root.parse()?);
+            }
+        }
         Ok(Arc::new(Self {
             directory,
             party,
             auxiliary,
             lock: Mutex::new(()),
+            dedicated: RwLock::new(dedicated),
+            custody_verifier,
         }))
     }
     fn pin<T: serde::Serialize>(&self, name: &str, value: &T, create: bool) -> Result<()> {
@@ -66,6 +127,10 @@ impl HdService {
     pub async fn attest(&self, request: HdRequest) -> Result<HdRootReport> {
         let _guard = self.lock.lock().await;
         let root = self.original(&request).await?;
+        self.dedicated
+            .write()
+            .map_err(|_| anyhow::anyhow!("HD binding lock poisoned"))?
+            .insert(request.auxiliary.dkg.keyset_id);
         let report = HdRootReport {
             root,
             party_id: self.party.clone(),

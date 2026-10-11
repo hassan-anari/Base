@@ -8,6 +8,13 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct CustodyAuthorization {
+    pub certificate_chain_der_hex: Vec<String>,
+    pub signature_der_hex: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SignRequest {
     pub session_id: Uuid,
     pub attempt_id: u64,
@@ -24,6 +31,8 @@ pub struct SignRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_authorization: Option<crate::hd::ChildIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody_authorization: Option<CustodyAuthorization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ton_authorization: Option<crate::ton::TonAuthorization>,
 }
 
@@ -38,6 +47,16 @@ pub fn decode_hex(value: &str) -> Option<Vec<u8>> {
 }
 
 impl SignRequest {
+    pub fn custody_authorization_message(&self) -> Result<Vec<u8>> {
+        let mut value = serde_json::to_value(self)?;
+        value
+            .as_object_mut()
+            .context("invalid custody request")?
+            .remove("custody_authorization");
+        let mut message = b"Wallet-MPC/CUSTODY_CHILD_SIGNING_AUTH_V1\0".to_vec();
+        message.extend(serde_json::to_vec(&value)?);
+        Ok(message)
+    }
     pub fn frost_message(&self, group: &str) -> Result<Vec<u8>> {
         ensure!(
             self.algorithm == ALGORITHM

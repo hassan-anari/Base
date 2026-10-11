@@ -55,6 +55,11 @@ Existing customer IDs are global ledger principals, not a new tenant namespace.
 There is no journal backfill or second ledger. Child authorization is committed
 in original transaction, signing request and execution; the original 2-of-3 shares
 sign with upstream `set_derivation_path`, and verification uses the child key.
+The custody machine signs the entire original child request with its existing
+P-256 TLS identity. Each signer verifies that grant across the coordinator hop
+against the private CA before nonce work. Migration 0031 persists it once with
+the original session; coordinator child substitution invalidates the signature.
+This is machine authentication, with independent policy authority still Phase 7.
 See [PHASE6GB.md](../PHASE6GB.md) for failure/recovery and throughput limits.
 
 Phase 6G should use reviewed chain/algorithm-specific scalable provisioning rather than heavy fresh DKG for every deposit address. EVM/TRON secp256k1 derivation and Ed25519 FROST derivation must not be assumed interchangeable. Root bindings are immutable; resharing/rotation/recovery require versioned, auditable transitions. Hot/warm/cold are separate security classes; cold signing cannot reuse the hot environment's routine authorization.

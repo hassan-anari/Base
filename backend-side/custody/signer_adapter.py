@@ -194,7 +194,9 @@ class SelfHostedMpcAdapter:
         del network, path
         from .mpc_binding import UnsupportedMpcDerivation
 
-        raise UnsupportedMpcDerivation("MPC child derivation is unsupported; bind a root keyset")
+        raise UnsupportedMpcDerivation(
+            "arbitrary MPC derivation is unsupported; use an approved custody account"
+        )
 
     def get_keyset(self, keyset_id: str) -> dict:
         return self._request("GET", f"/v1/keysets/{keyset_id}")

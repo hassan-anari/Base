@@ -8,6 +8,7 @@ from django.db import connection, transaction
 
 from .models import (
     Asset,
+    HotWallet,
     MpcCustodyAccount,
     MpcHdRootEvidence,
     MpcKeyset,
@@ -50,10 +51,21 @@ def attest_original_hd(*, keyset_id, ownership_scope, client=None):
     from .signer_adapter import SelfHostedMpcAdapter
 
     _postgres()
+    if connection.in_atomic_block:
+        raise ProvisioningError("HD attestation requires a durably committed original namespace")
     root = MpcProvisioningRoot.objects.select_related("keyset").get(keyset__keyset_id=keyset_id)
     if root.ownership_scope != _text(ownership_scope, 64, "ownership scope"):
         raise ProvisioningError("provisioning ownership scope mismatch")
     _runtime(root)
+    # Dedicated DEPOSIT HD roots cannot disable a legitimate historical root
+    # account. Registered namespaces also block new root-only wallet bindings.
+    if (
+        HotWallet.objects.filter(mpc_keyset_id=root.pk).exists()
+        or UserWallet.objects.filter(mpc_keyset_id=root.pk, custody_account__isnull=True).exists()
+    ):
+        raise ProvisioningError(
+            "historical root wallet remains root-only; use a fresh dedicated root"
+        )
     client = client or SelfHostedMpcAdapter()
     evidence = client.attest_hd(str(keyset_id), hd_scope(root))
     verify_hd_evidence(root, evidence)

@@ -290,6 +290,12 @@ impl DurableStore {
             }
             .validate()
             .map_err(|_| StoreError::Invalid)?;
+        } else if request.algorithm == "CGGMP24_ECDSA"
+            && self
+                .hd_path(&format!("{}.root", request.keyset_id))
+                .exists()
+        {
+            return Err(StoreError::Invalid);
         }
         validate_sign_request(&request)?;
         if request.algorithm == "FROST_ED25519" {
@@ -653,6 +659,7 @@ mod tests {
             expected_source: "0x123".into(),
             derivation_reference: Some("cggmp_hd_v1/1/2/0".into()),
             child_authorization: None,
+            custody_authorization: None,
             ton_authorization: None,
         }
     }

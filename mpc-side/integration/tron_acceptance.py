@@ -141,11 +141,14 @@ def signing_evidence(attempt):
     assert MpcSigningSession.objects.filter(attempt=attempt).count() == 1
     completed = MpcSigningSession.objects.select_related("keyset").get(attempt=attempt)
     assert completed.status == "COMPLETED" and completed.signature_consumed_at
+    if completed.transaction_identity.get("child_authorization"):
+        assert completed.custody_authorization
     return {
         "txid": attempt.network_tx_id,
         "session_id": str(completed.session_id),
         "execution_id": str(completed.crypto_execution_id),
         "selected_signers": completed.selected_signers,
+        "original_custody_authorization_present": bool(completed.custody_authorization),
         "public_key": completed.keyset.public_key,
         "signing_public_key": completed.transaction_identity.get(
             "public_key", completed.keyset.public_key

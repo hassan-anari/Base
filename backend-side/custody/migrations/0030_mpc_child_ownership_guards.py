@@ -95,6 +95,13 @@ BEGIN
      OR (r.root_identity ->> 'scope' = 'TRON' AND NEW.address !~ '^T[1-9A-HJ-NP-Za-km-z]{33}$') THEN
     RAISE EXCEPTION 'noncanonical child address';
   END IF;
+  -- Serialize cross-asset legacy inserts with publication of the canonical
+  -- address. A row uniqueness constraint alone cannot cover both tables.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'address ownership publication requires READ COMMITTED';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'mpc-account-address:' || NEW.chain_id || ':' || lower(NEW.address), 0));
   IF EXISTS (SELECT 1 FROM custody_userwallet w WHERE w.chain_id = NEW.chain_id
       AND (CASE WHEN r.root_identity ->> 'scope' = 'EVM' THEN lower(w.deposit_address) ELSE
     w.deposit_address END) = NEW.address
@@ -129,6 +136,11 @@ BEGIN
     RAISE EXCEPTION 'issued financial asset view is immutable';
   END IF;
   IF NEW.custody_account_id IS NULL THEN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+      RAISE EXCEPTION 'address ownership publication requires READ COMMITTED';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'mpc-account-address:' || NEW.chain_id || ':' || lower(NEW.deposit_address), 0));
     IF NEW.derivation_version = 'mpc_child_v1' OR EXISTS (SELECT 1 FROM custody_mpccustodyaccount c
        JOIN custody_mpcderivationreservation d ON d.reservation_id = c.reservation_id
        JOIN custody_mpckeyset k ON k.id = d.root_id
@@ -138,8 +150,10 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
+  -- Issued identity is immutable; a read avoids reversing the account/wallet
+  -- lock order during scanner updates. Asset attachment locks the account.
   SELECT * INTO STRICT a FROM custody_mpccustodyaccount WHERE account_id =
-    NEW.custody_account_id FOR UPDATE;
+    NEW.custody_account_id;
   SELECT * INTO STRICT reservation FROM custody_mpcderivationreservation WHERE reservation_id =
     a.reservation_id;
   SELECT * INTO STRICT keyset FROM custody_mpckeyset WHERE id = reservation.root_id;

@@ -70,3 +70,12 @@ root/source replacement, missing approval and cross-network replay are rejected.
 `mpc_child_wallet` exposes trusted operator attest/issue commands, without root
 creation/activation or a new external signing API. Partial RPC completion leaves
 PROVISIONING; retry uses the same customer, namespace and original idempotency key.
+
+Child SignRequest also requires `custody_authorization`, containing the original
+custody client certificate chain as DER hex and P-256 ECDSA/SHA-256 signature as
+ASN.1 DER hex. Sign the domain `Wallet-MPC/CUSTODY_CHILD_SIGNING_AUTH_V1` followed
+by NUL and canonical sorted UTF-8 JSON of SignRequest with that field omitted.
+Persist the exact grant once; retries cannot regenerate a different signature.
+Signers verify private-CA client authentication, expiry and exact custody URI
+before private operations. Dedicated attested DEPOSIT roots reject root-only
+signing; legacy roots outside that namespace keep their existing contract.

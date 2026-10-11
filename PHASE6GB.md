@@ -10,7 +10,9 @@ An implemented acceptance scenario is not itself a passing result.
 
 The pinned `cggmp24` 0.7.0-alpha.3, `key-share` 0.6.1 and `hd-wallet` 0.6.1
 provide extended public roots, SLIP-10 public derivation and signing
-`set_derivation_path`. Rust dependency versions and Cargo.lock are unchanged.
+`set_derivation_path`. Cryptographic dependency versions are unchanged. Transport
+adds a direct dependency on the already pinned ring 0.17.14 for original custody
+request verification; Cargo.lock adds that edge, with no package/version upgrade.
 Each signer reloads its original encrypted validated DKG/auxiliary share,
 checks `extended_public_key()` against the original group key, and reads its
 actual original 32-byte chain code. It never manufactures missing metadata.
@@ -54,14 +56,39 @@ the original shares. Verification and ECDSA recovery use the CHILD public key.
 Wrong owner/root/chain code/path/source/replay is rejected. Original signing
 execution IDs, consumed tombstones and reconciliation behavior remain intact.
 Restart validates persisted child authorization before resuming coordinator work.
-Absence of child authorization preserves the historical root-only contract.
+Historical roots without an HD provisioning namespace retain root-only signing.
+An attested dedicated DEPOSIT root requires child authorization; dropping the
+path cannot turn an issued-child approval into root signing.
+Attestation refuses a historical root with existing root-only customer/hot
+bindings before contacting signers. Registered namespaces prohibit new root-only
+bindings under PostgreSQL keyset locks; existing historical bindings remain
+usable without attestation. Caller transactions cannot roll back the original
+namespace after external approval; use a committed, fresh dedicated DKG root.
+
+The original custody service signs the complete canonical child SignRequest under
+`Wallet-MPC/CUSTODY_CHILD_SIGNING_AUTH_V1`, using its existing P-256 TLS identity
+key. Django persists this randomized ECDSA grant exactly once with the original
+session, before RPC. Every signer validates the private-CA client-auth chain,
+current validity, exact custody URI SAN, P-256 key and request signature before
+probe/prepare/start and again before private work. A coordinator substituting
+another already-approved child, source, digest or session cannot retain a valid
+grant. This authenticates the existing machine authority; it does not implement
+Phase 7 human approval, RBAC or an independent policy authority. Expired grants
+fail closed for new private work; immutable completed public reports remain
+recoverable without retrospectively authorizing another operation.
 
 ## Additive ownership schema and durable lifecycle
 
 Migration 0029 adds immutable original `MpcHdRootEvidence`, canonical
 `MpcCustodyAccount` and nullable `UserWallet.custody_account`. Migration 0030 adds
-PostgreSQL trigger guards. Existing rows remain nullable; no historical wallet,
+PostgreSQL trigger guards. Cross-table address publication and legacy inserts
+serialize under a shared advisory transaction lock. READ COMMITTED is enforced
+for address publication; stale snapshot isolation cannot bypass ownership checks. Existing rows remain nullable; no historical wallet,
 asset, financial owner, balance or journal is rewritten or backfilled.
+Migration 0031 adds persisted original custody authorization to signing sessions,
+freezes populated grants, forbids their deletion and prevents retrospective
+authorization of an already-started execution. Historical root-only sessions
+remain empty and compatible; downgrade with retained grant evidence is refused.
 
 A transaction allocates the original reservation and commits a PROVISIONING
 account claim before external requests. Issuance rejects an enclosing caller
@@ -142,6 +169,12 @@ benchmark proves neither unlimited population nor production throughput. Full si
 restore/lifecycle recovery costs remain Phase 6G-C, not hidden in a reconnect figure.
 Artifacts: `child-issuance-benchmark.json`, `evm-child-evidence.json`,
 `tron-child-evidence.json`, per-suite manifests and final-head CI run links.
+Issuance uses a bounded 120-second HTTP timeout because approvals serialize at
+the coordinator; the initial five-second benchmark timeout is retained as a
+failed development attempt. Full-population recovery restarts all four services,
+reconnects PostgreSQL and verifies every original account UUID without additional
+signer approval operations. Query timings include work and lock waits; they do
+not independently attribute PostgreSQL waiting time.
 
 ## Scoped dependency/security assessment
 
@@ -202,3 +235,31 @@ scan_complete attribute on the demo result; no synthetic result was accepted as
 chain evidence. Corrected runs use separate databases and real live validators.
 Original attested root/network bindings are never deleted or changed to make a
 rerun pass; fresh fixtures are required when an ephemeral genesis is lost.
+
+Address-claim concurrency review found and repaired a race on this unmerged branch:
+a legacy asset view could otherwise insert between canonical publication checks.
+A shared canonical-address PostgreSQL advisory lock now serializes both tables;
+non-READ-COMMITTED publication fails closed. Issued child views read the immutable
+account without reversing the wallet/account lock order during scans. Dedicated
+concurrent legacy-owner and stale-snapshot tests cover the fix. Independent review
+must include these migration guards; no original ledger mutation is involved.
+
+Security assessment found a P1 EVM liability-inflation path: native scanning could
+credit operator MPC gas funding as a customer deposit when native/token views
+shared an address. This branch excludes only an exact known GAS_TOPUP transaction
+with recovered persisted signed bytes, original source/destination/native amount/
+chain, and consumed completed signing intent. Missing or altered provenance aborts
+history; another payment from the same sender is still a deposit. Genuine live
+acceptance caught the issue; dedicated negative contracts and final validator
+checks cover the repair. Existing append-only historical journals are not rewritten;
+any preexisting affected deployment needs a separate evidence-led investigation.
+Independent review is required before considering this P1 repair accepted.
+
+Additional supporting checks after original-request authentication: 591 backend
+contracts passed in 303.50s, the final eighteen issuance/authentication cases
+passed in 27.12s, coordinator/signer units passed (21 cases), and fmt/clippy
+passed. Cargo audit again scanned 255 packages with the same two explicit
+informationals. These are supporting checks; the final exact-head full gate,
+including the latest migration and original machine grant, remains authoritative.
+The supporting full run 38175926795 passed Fast and all suites except EVM; EVM
+failed on the gas-credit finding above, so its gate correctly failed.

@@ -90,3 +90,14 @@ Staking/earn, off-exchange collateral, OTC-specific suite, cross-chain liquidity
 ## Status disclaimer
 
 As of main 4488016a, much of this register is **not implemented**. In particular tenant isolation, high-scale HD provisioning, approval quorum, trade settlement, merchant/invoice and policy-signing ticket platform are future work. A status must not be promoted without code and passing scope-relevant evidence.
+
+Phase 6G-B child requests must retain the original custody machine authorization
+across the coordinator hop. Every signer verifies a once-persisted signature under
+the existing private-CA custody identity over the exact original child/root/path/
+owner, digest, session, network and source. Substituting another approved child
+must fail before nonce work. This does not implement Phase 7 human approvals or
+independent policy authority. Historical root-only wallets remain usable; a
+provisioning root with such bindings remains unissuable and needs an explicitly
+authorized fresh dedicated root. Native operator gas grants must not create
+customer liabilities; exact signed and consumed custody provenance distinguishes
+them from external customer deposits. Existing historical journals stay intact.

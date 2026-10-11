@@ -35,6 +35,20 @@ def request(net, destination, role, path, body=None, method="POST"):
     identity = net.root / role / "identity"
     if (
         role == "custody"
+        and path.endswith("/children")
+        and body is not None
+        and "request" not in body
+    ):
+        from custody.mpc_request_auth import authorize_child_approval
+
+        body = {
+            "request": body,
+            "custody_authorization": authorize_child_approval(
+                body, identity / "tls.crt", identity / "tls.key"
+            ),
+        }
+    if (
+        role == "custody"
         and path == "/v1/sign-sessions"
         and body is not None
         and body.get("child_authorization")

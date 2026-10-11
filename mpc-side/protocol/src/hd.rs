@@ -17,6 +17,23 @@ use uuid::Uuid;
 
 pub const VERSION: &str = "cggmp_slip10_nonhardened_v1";
 
+/// Credential readiness and original custody ownership are checked before
+/// approval. The transient machine proof does not alter immutable child identity
+/// or consume any CGGMP nonce; it cannot authorize a signing execution.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ChildApprovalRequest {
+    pub request: ChildRequest,
+    pub custody_authorization: crate::sign::CustodyAuthorization,
+}
+impl ChildApprovalRequest {
+    pub fn authorization_message(&self) -> Result<Vec<u8>> {
+        let mut message = b"Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1\0".to_vec();
+        message.extend(serde_json::to_vec(&serde_json::to_value(&self.request)?)?);
+        Ok(message)
+    }
+}
+
 pub fn fingerprint<T: Serialize>(domain: &str, value: &T) -> Result<String> {
     // Serialize through Value to sort every object key. Cross-language canonical JSON,
     // with domain separation, integer-only network metadata and UTF-8 strings.

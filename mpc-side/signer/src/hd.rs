@@ -16,7 +16,10 @@ use std::{
 use tokio::sync::Mutex;
 use wallet_mpc_protocol::{
     dkg::hex,
-    hd::{fingerprint, ChildIdentity, ChildReport, ChildRequest, HdRequest, HdRoot, HdRootReport},
+    hd::{
+        fingerprint, ChildApprovalRequest, ChildIdentity, ChildReport, HdRequest, HdRoot,
+        HdRootReport,
+    },
 };
 use wallet_mpc_storage::{atomic_create_secret, confirm_parent_durability};
 use wallet_mpc_transport::{CustodyRequestVerifier, PeerIdentity};
@@ -34,11 +37,18 @@ impl HdService {
         &self,
         request: &wallet_mpc_protocol::sign::SignRequest,
     ) -> Result<()> {
-        use wallet_mpc_protocol::sign::decode_hex;
         let auth = request
             .custody_authorization
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("original custody child authorization required"))?;
+        self.verify_custody_message(&request.custody_authorization_message()?, auth)
+    }
+    fn verify_custody_message(
+        &self,
+        message: &[u8],
+        auth: &wallet_mpc_protocol::sign::CustodyAuthorization,
+    ) -> Result<()> {
+        use wallet_mpc_protocol::sign::decode_hex;
         let chain = auth
             .certificate_chain_der_hex
             .iter()
@@ -48,11 +58,7 @@ impl HdService {
             .collect::<Result<Vec<_>>>()?;
         let signature = decode_hex(&auth.signature_der_hex)
             .ok_or_else(|| anyhow::anyhow!("invalid custody signature encoding"))?;
-        self.custody_verifier.verify(
-            &request.custody_authorization_message()?,
-            &chain,
-            &signature,
-        )
+        self.custody_verifier.verify(message, &chain, &signature)
     }
     pub fn require_historical_root_signing(&self, keyset: uuid::Uuid) -> Result<()> {
         // A dedicated DEPOSIT namespace has no issued root account. Dropping
@@ -206,9 +212,13 @@ impl HdService {
         )?;
         Ok(report)
     }
-    pub async fn approve(&self, request: ChildRequest) -> Result<ChildReport> {
+    pub async fn approve(&self, approval: ChildApprovalRequest) -> Result<ChildReport> {
+        self.verify_custody_message(
+            &approval.authorization_message()?,
+            &approval.custody_authorization,
+        )?;
         let _guard = self.lock.lock().await;
-        self.own_child(&request.derive()?, true).await
+        self.own_child(&approval.request.derive()?, true).await
     }
     pub async fn validate_child(&self, child: &ChildIdentity) -> Result<()> {
         let _guard = self.lock.lock().await;

@@ -79,3 +79,10 @@ Persist the exact grant once; retries cannot regenerate a different signature.
 Signers verify private-CA client authentication, expiry and exact custody URI
 before private operations. Dedicated attested DEPOSIT roots reject root-only
 signing; legacy roots outside that namespace keep their existing contract.
+
+POST `/v1/keysets/{id}/children` now accepts `{request: ChildRequest,
+custody_authorization: {certificate_chain_der_hex, signature_der_hex}}`.
+The public approval proof signs `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1` + NUL +
+canonical sorted UTF-8 JSON of the original ChildRequest. All three issuing
+signers validate the original custody credential before approval. The envelope
+does not change the canonical child identity or authorize a private signature.

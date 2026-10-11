@@ -2,7 +2,7 @@
 use super::*;
 use wallet_mpc_protocol::{
     cggmp::AUX_READY,
-    hd::{ChildEvidence, ChildRequest, HdEvidence, HdRequest, HdScope},
+    hd::{ChildApprovalRequest, ChildEvidence, HdEvidence, HdRequest, HdScope},
 };
 use wallet_mpc_transport::SignerClient;
 
@@ -130,8 +130,9 @@ async fn attest_inner(
 async fn child_inner(
     service: &Service,
     keyset: Uuid,
-    request: ChildRequest,
+    approval: ChildApprovalRequest,
 ) -> anyhow::Result<ChildEvidence> {
+    let request = &approval.request;
     let root: HdEvidence = service
         .store
         .hd_read(&format!("{keyset}.root"))?
@@ -160,7 +161,7 @@ async fn child_inner(
                 party,
                 "POST",
                 "/internal/v1/cggmp/hd/child",
-                serde_json::to_vec(&request)?,
+                serde_json::to_vec(&approval)?,
             )
             .await?;
         let report: wallet_mpc_protocol::hd::ChildReport = serde_json::from_slice(&bytes)?;
@@ -192,7 +193,7 @@ async fn attest(
 async fn child(
     State(service): State<Arc<Service>>,
     Path(keyset): Path<Uuid>,
-    Json(request): Json<ChildRequest>,
+    Json(request): Json<ChildApprovalRequest>,
 ) -> Result<Json<ChildEvidence>, StatusCode> {
     let _guard = service.lock.lock().await;
     child_inner(&service, keyset, request)

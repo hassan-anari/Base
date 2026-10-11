@@ -71,3 +71,10 @@ Introduce reliable transactional outbox/inbox, monotonic event IDs, idempotent c
 ## Compatibility rules
 
 Do not claim old Phase 1–5 docs describe current complete state; those files describe dated baselines. Do not invent production integrations just because DTO/routes or dashboard placeholders exist. Keep migrations additive, auditable and reversal-safe. Never change a settled financial journal to compensate for new behaviors.
+
+New child approvals include a domain-separated original custody machine proof.
+All three signer CAs and P-256 credential profiles are verified before issuance;
+identity readiness is established with the original share/HD approval rather than
+first discovered during spending. This public approval does not consume an MPC
+nonce or alter immutable child identity. Signing uses its separately persisted
+original grant.

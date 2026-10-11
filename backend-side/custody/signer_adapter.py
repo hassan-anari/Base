@@ -205,7 +205,17 @@ class SelfHostedMpcAdapter:
         return self._request("POST", f"/v1/keysets/{keyset_id}/hd-attestation", json=scope)
 
     def approve_child(self, keyset_id: str, request: dict) -> dict:
-        return self._request("POST", f"/v1/keysets/{keyset_id}/children", json=request)
+        from django.conf import settings
+
+        from .mpc_request_auth import authorize_child_approval
+
+        approval = {
+            "request": request,
+            "custody_authorization": authorize_child_approval(
+                request, settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY
+            ),
+        }
+        return self._request("POST", f"/v1/keysets/{keyset_id}/children", json=approval)
 
     def create_signing_session(self, payload: dict) -> dict:
         """Idempotently create the durable coordinator operation."""

@@ -275,3 +275,28 @@ remains available until its keyset lock is acquired. No deadlock is hidden by
 retrying or claiming a passing benchmark. Initial-stage public benchmark evidence
 is persisted before recovery so failed stages remain attributable. The full
 recovery/validator run must pass on the final head.
+
+Child issuance additionally verifies the current spending credential at all three
+signers. The coordinator forwards an envelope containing the original ChildRequest
+and a custody P-256 signature under `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1`. Each
+signer validates private-CA client authentication, validity, exact custody URI and
+public-request signature before reading/pinning child approval. Unsupported keys
+or a custody CA trusted only by the coordinator cannot publish a new spendable
+account. This public proof is domain-separated from signing grants, consumes no
+CGGMP nonce and is not part of immutable child identity; public retries retain
+original receipt identity. Private signing still requires its once-persisted
+original operation grant. No human/policy approval authority is added.
+
+Supporting complete issuance measurement at `3e5ddc7a036b70cc73074ab1aa997e28d7155817`
+(before the additional public credential-readiness proof): genuine local EVM
+acceptance passed in 1176.65s. One thousand customers, eight workers, PostgreSQL 16,
+three logical CPUs / AMD EPYC 9V74, 10,207,516 KiB RAM: complete issuance took
+609.505s (1.64067 accounts/s). The reservation stage averaged 6.473ms; two public
+checks per customer averaged 2.989ms, two claim/publication saves averaged 2.313ms,
+and asset attachment averaged 17.324ms. Twelve thousand FOR UPDATE queries averaged
+0.474ms with a 49.948ms maximum (includes work/wait). All four services restarted
+in 0.462s; all 1,000 original account IDs recovered in 55.982s (17.863/s), with no
+new approval requests. Native signing including preparation/dispatch took 6.150s;
+token signing after dispatch took 6.034s. This is a bounded development measurement,
+not final-head throughput or arbitrary scale. Final credential-proof measurements
+and all exact-head suite results belong in the PR's final security handoff.

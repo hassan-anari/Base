@@ -119,3 +119,14 @@ remains available until its keyset lock is acquired. No deadlock is hidden by
 retrying or claiming a passing benchmark. Initial-stage public benchmark evidence
 is persisted before recovery so failed stages remain attributable. The full
 recovery/validator run must pass on the final head.
+
+Child issuance additionally verifies the current spending credential at all three
+signers. The coordinator forwards an envelope containing the original ChildRequest
+and a custody P-256 signature under `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1`. Each
+signer validates private-CA client authentication, validity, exact custody URI and
+public-request signature before reading/pinning child approval. Unsupported keys
+or a custody CA trusted only by the coordinator cannot publish a new spendable
+account. This public proof is domain-separated from signing grants, consumes no
+CGGMP nonce and is not part of immutable child identity; public retries retain
+original receipt identity. Private signing still requires its once-persisted
+original operation grant. No human/policy approval authority is added.

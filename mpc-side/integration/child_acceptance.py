@@ -30,7 +30,7 @@ from custody.models import (
     OnchainTransactionAttempt,
     SweepJob,
 )
-from custody.mpc_hd import child_reference
+from custody.mpc_hd import child_reference, child_request
 from custody.mpc_identity import address_from_public_key
 from custody.mpc_issuance import attach_account_asset, attest_original_hd, issue_customer_account
 from custody.mpc_provisioning import register_provisioning_root, reserve_derivation_path
@@ -60,6 +60,66 @@ from test_network import settings_for
 def hostile_child_cases(net, root, accounts):
     """Actual authenticated services reject replay and recover partial approvals."""
     child = accounts[0].evidence["child"]
+    # Before issuance, actual signers must accept the same custody credential
+    # profile that will authorize spending. No MPC nonce is allocated here.
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from custody.mpc_request_auth import APPROVAL_DOMAIN, authorize_child_approval
+
+    credential_reservation = reserve_derivation_path(
+        keyset_id=root.keyset.keyset_id,
+        ownership_scope=root.ownership_scope,
+        customer_ref="credential-recovery",
+        idempotency_key="credential-recovery",
+    )
+    statement = child_request(credential_reservation, child["request"]["root"])
+    identity = net.root / "custody" / "identity"
+    proof = authorize_child_approval(statement, identity / "tls.crt", identity / "tls.key")
+    for fault in ("signature", "coordinator", "wrong-ca", "expired", "child"):
+        altered = copy.deepcopy(statement)
+        grant = copy.deepcopy(proof)
+        if fault == "signature":
+            grant["signature_der_hex"] = "00" * 70
+        elif fault == "child":
+            altered["customer_ref"] = "intruder"
+        else:
+            identity = net.root / fault / "identity"
+            cert = x509.load_pem_x509_certificate((identity / "tls.crt").read_bytes())
+            key = serialization.load_pem_private_key((identity / "tls.key").read_bytes(), None)
+            message = (
+                APPROVAL_DOMAIN
+                + json.dumps(
+                    statement, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            )
+            grant = {
+                "certificate_chain_der_hex": [cert.public_bytes(serialization.Encoding.DER).hex()],
+                "signature_der_hex": key.sign(message, ec.ECDSA(hashes.SHA256())).hex(),
+            }
+        assert (
+            authenticated_request(
+                net,
+                "signer-a",
+                "coordinator",
+                "/internal/v1/cggmp/hd/child",
+                {"request": altered, "custody_authorization": grant},
+            )[0]
+            == 409
+        )
+        assert not (
+            net.root / "signer-a" / "storage" / "cggmp-hd" / f"{credential_reservation.pk}.child"
+        ).exists()
+    credential_account = issue_customer_account(
+        keyset_id=root.keyset.keyset_id,
+        ownership_scope=root.ownership_scope,
+        customer_ref="credential-recovery",
+        idempotency_key="credential-recovery",
+    )
+    assert (
+        credential_account.status == "ISSUED"
+        and credential_account.reservation_id == credential_reservation.pk
+    )
     scope = child["request"]["root"]["request"]["scope"]
     url = f"/v1/keysets/{root.keyset.keyset_id}"
     assert (
@@ -137,9 +197,6 @@ def hostile_child_cases(net, root, accounts):
     }
     # Coordinator substitution of another already-approved child must fail
     # despite a structurally valid path, source and signer-local approval.
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
     from custody.mpc_request_auth import authorization_message
 
     for fault in ("missing", "signature", "child", "digest", "coordinator", "wrong-ca", "expired"):

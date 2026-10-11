@@ -2,6 +2,7 @@
 
 import copy
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from unittest.mock import patch
@@ -297,6 +298,63 @@ def test_dedicated_root_cannot_acquire_a_competing_root_only_binding(root):
 def test_attestation_requires_original_committed_namespace(root):
     with transaction.atomic(), pytest.raises(ProvisioningError, match="durably committed"):
         attest_original_hd(keyset_id=root.keyset.keyset_id, ownership_scope=root.ownership_scope)
+
+
+@pytest.mark.parametrize("existing_view", [False, True])
+def test_asset_attachment_waits_on_keyset_before_account(existing_view, hd):
+    account = issue(hd)
+    root, _ = hd
+    if existing_view:
+        attach_account_asset(
+            account_id=account.pk,
+            customer_ref=account.customer_ref,
+            ownership_scope=account.ownership_scope,
+            asset_key="ETH",
+        )
+    locking = threading.Event()
+    pid = []
+
+    def worker():
+        close_old_connections()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                pid.append(cursor.fetchone()[0])
+
+            def observe(execute, sql, params, many, context):
+                if "FOR UPDATE" in sql:
+                    locking.set()
+                return execute(sql, params, many, context)
+
+            with patch("custody.mpc_issuance._network"), connection.execute_wrapper(observe):
+                return attach_account_asset(
+                    account_id=account.pk,
+                    customer_ref=account.customer_ref,
+                    ownership_scope=account.ownership_scope,
+                    asset_key="ETH",
+                ).pk
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with transaction.atomic():
+            MpcKeyset = root.keyset.__class__
+            MpcKeyset.objects.select_for_update().get(pk=root.pk)
+            pending = pool.submit(worker)
+            assert locking.wait(5)
+            deadline = time.monotonic() + 5
+            while True:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT cardinality(pg_blocking_pids(%s))", [pid[0]])
+                    if cursor.fetchone()[0]:
+                        break
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            # The worker is now demonstrably blocked at the keyset. It must
+            # not already own an account lock that reverses issuance ordering.
+            MpcCustodyAccount.objects.select_for_update(nowait=True).get(pk=account.pk)
+        assert pending.result(timeout=5)
+    assert UserWallet.objects.filter(custody_account=account).count() == 1
 
 
 def test_legacy_cross_asset_insert_racing_issuance_cannot_create_two_owners(hd):

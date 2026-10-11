@@ -405,6 +405,18 @@ def benchmark(root, tmp_path, net):
         }
         for name, values in phases.items()
     }
+    checkpoint = {
+        "status": "INITIAL_ISSUANCE_COMPLETE_RECOVERY_PENDING",
+        "customers": count,
+        "workers": workers,
+        "seconds": seconds,
+        "issued_accounts_per_second": count / seconds,
+        "authenticated_child_requests": len(timings),
+        "phase_latency_seconds": initial_phase_latency,
+        "root": str(root.keyset.keyset_id),
+    }
+    (tmp_path / "child-issuance-initial-stage.json").write_text(json.dumps(checkpoint, indent=2))
+    print("PHASE6GB_BENCHMARK_INITIAL " + json.dumps(checkpoint, sort_keys=True))
     retry = time.perf_counter()
     close_old_connections()
     assert worker(0) == accounts[0]
@@ -750,6 +762,7 @@ def run_evm_child_acceptance(net, tmp_path):
                 for a in accounts
             ]
             (tmp_path / "evm-child-evidence.json").write_text(json.dumps(evidence, indent=2))
+            print("REAL_EVM_CHILD_ACCEPTANCE " + json.dumps(evidence, sort_keys=True))
     finally:
         for role in ("coordinator", "signer-a", "signer-b", "signer-c"):
             if role not in net.running:

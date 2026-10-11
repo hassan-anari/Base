@@ -263,3 +263,15 @@ informationals. These are supporting checks; the final exact-head full gate,
 including the latest migration and original machine grant, remains authoritative.
 The supporting full run 38175926795 passed Fast and all suites except EVM; EVM
 failed on the gas-credit finding above, so its gate correctly failed.
+
+The first full-population restart benchmark issued all 1,000 real accounts, then
+failed on a PostgreSQL deadlock during concurrent idempotent replay. Django's
+joined FOR UPDATE implicitly locked account/reservation/root/keyset rows in query
+plan order, conflicting with issuance's keyset-first order. Asset attachment now
+explicitly locks keyset -> provisioning root -> account -> asset; the joined
+account query locks only `self`. Deterministic first-view and existing-view tests
+wait for a demonstrably blocked PostgreSQL backend and assert the account lock
+remains available until its keyset lock is acquired. No deadlock is hidden by
+retrying or claiming a passing benchmark. Initial-stage public benchmark evidence
+is persisted before recovery so failed stages remain attributable. The full
+recovery/validator run must pass on the final head.

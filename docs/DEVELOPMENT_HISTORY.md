@@ -115,3 +115,15 @@ authority remains Phase 7. Independent review must verify canonical serializatio
 identity-key isolation, credential validity and immutable session/replay controls.
 Transport adds the existing pinned ring 0.17.14 dependency edge; no Rust package or
 cryptographic version is upgraded and the scc P1 remains open.
+
+The first full-population restart benchmark issued all 1,000 real accounts, then
+failed on a PostgreSQL deadlock during concurrent idempotent replay. Django's
+joined FOR UPDATE implicitly locked account/reservation/root/keyset rows in query
+plan order, conflicting with issuance's keyset-first order. Asset attachment now
+explicitly locks keyset -> provisioning root -> account -> asset; the joined
+account query locks only `self`. Deterministic first-view and existing-view tests
+wait for a demonstrably blocked PostgreSQL backend and assert the account lock
+remains available until its keyset lock is acquired. No deadlock is hidden by
+retrying or claiming a passing benchmark. Initial-stage public benchmark evidence
+is persisted before recovery so failed stages remain attributable. The full
+recovery/validator run must pass on the final head.

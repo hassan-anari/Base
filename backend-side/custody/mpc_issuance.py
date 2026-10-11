@@ -181,8 +181,16 @@ def attach_account_asset(*, account_id, customer_ref, ownership_scope, asset_key
 
     _postgres()
     with transaction.atomic():
+        # Match issuance's keyset -> root -> account order. A joined FOR UPDATE
+        # implicitly locks related rows in query-plan order and can deadlock
+        # against concurrent issuance/replay, including deferred FK locks.
+        root_id = MpcCustodyAccount.objects.values_list("reservation__root_id", flat=True).get(
+            pk=account_id
+        )
+        MpcKeyset.objects.select_for_update().get(pk=root_id)
+        MpcProvisioningRoot.objects.select_for_update().get(pk=root_id)
         account = (
-            MpcCustodyAccount.objects.select_for_update()
+            MpcCustodyAccount.objects.select_for_update(of=("self",))
             .select_related("reservation__root__keyset")
             .get(pk=account_id)
         )

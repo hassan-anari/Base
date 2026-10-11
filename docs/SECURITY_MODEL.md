@@ -43,3 +43,32 @@ still requires a separate lifecycle review; retaining path evidence does not
 make the historical root retirement command safe for funded wallets.
 
 Per PR provide threat-model deltas, proof/identity and exact original signing-intent linkage, ledger invariants, concurrency/restart/replay/unknown-outcome test cases, CI final SHA and job links, migration/backfill plans, monitoring/runbooks and unresolved risk register. Reviews are independent, not self-approved.
+
+## Phase 6G-B child custody boundary (unmerged development)
+
+Original HD evidence is read from each signer's encrypted, original, validated
+DKG/auxiliary share and pinned create-once to root, algorithm, DKG, network/genesis,
+deployment namespace and DEPOSIT/HOT purpose. Three mTLS-authenticated matching
+reports are required for attestation and new child issuance; two original shares
+are sufficient for signing an already approved child. Historical missing HD material
+is never invented; such roots remain root-only. Canonical non-hardened paths come
+from immutable reservations, never the external caller. Signers independently reload
+original HD/share metadata and their own approved reservation before nonce work.
+Child request/path/owner/public key/source are bound into the original execution;
+root/child signatures and authorizations cannot be substituted.
+
+PostgreSQL triggers freeze HD evidence, claims, issued identities and asset views.
+The application separately verifies public derivation before issuance, deposit
+credit and signing. Database superusers, disabled triggers, compromised trusted
+custody credentials and altered signer files are not neutralized by JSON receipts;
+secure DB roles, separate stores and independent infrastructure review remain
+mandatory. This does not implement Phase 7 independently issued policy tickets.
+Uncertain signing or broadcast retains the original execution, signed bytes and
+financial reservation. Issuance rejects caller-owned transactions so a published
+signer approval cannot outlive a rolled-back original database claim.
+
+P1 RUSTSEC-2026-0205 remains open. The scoped source/reverse-dependency assessment
+in [PHASE6GB.md](../PHASE6GB.md) identifies HashSet rather than the advisory's
+TreeIndex insertion path; it is not an independent exploitability clearance.
+No cryptographic major dependency upgrade, audit suppression, TON scope expansion
+or production flag relaxation is part of this branch.

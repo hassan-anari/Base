@@ -1018,3 +1018,17 @@ def test_phase6g_authenticated_root_path_reservations(auxiliary_network):
         if "coordinator" not in net.running:
             net.start("coordinator")
         chain.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_tron_child_custody(tron_auxiliary_network, tmp_path):
+    from tron_acceptance import run_tron_acceptance
+
+    run_tron_acceptance(tron_auxiliary_network, tmp_path, child_wallets=True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_evm_child_custody(auxiliary_network, tmp_path):
+    from child_acceptance import run_evm_child_acceptance
+
+    run_evm_child_acceptance(auxiliary_network, tmp_path)

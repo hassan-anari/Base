@@ -38,3 +38,6 @@ gunicorn>=23,<27
 pytest>=8.3,<9
 pytest-django>=4.9,<5
 ruff>=0.8,<1
+
+# Independent public-point verification of authenticated CGGMP children.
+coincurve==21.0.0

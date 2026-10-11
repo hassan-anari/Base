@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 pub mod cggmp;
 pub mod dkg;
+pub mod hd;
 pub mod sign;
 pub mod ton;
 
@@ -239,6 +240,34 @@ mod tests {
             signatures
                 .verify(&shares[0].shared_public_key(), &message)
                 .unwrap();
+        }
+        // The same independently held original shares sign non-hardened children
+        // through the exact pinned upstream mechanism, for every threshold pair.
+        let child = shares[0]
+            .derive_child_public_key::<cggmp24::hd_wallet::Slip10, _>([0u32, 19])
+            .unwrap();
+        assert_ne!(child.public_key, *shares[0].shared_public_key());
+        for participants in [[0u16, 1u16], [0, 2], [1, 2]] {
+            let execution_bytes = new_execution_id();
+            let execution_id = CggmpExecutionId::new(&execution_bytes);
+            let selected = participants.map(|index| &shares[usize::from(index)]);
+            let signature = round_based::sim::run_with_setup(
+                selected,
+                |signing_index, party, share| async move {
+                    cggmp24::signing(execution_id, signing_index, &participants, share)
+                        .set_derivation_path([0u32, 19])
+                        .unwrap()
+                        .sign(&mut OsRng, party, &message)
+                        .await
+                },
+            )
+            .unwrap()
+            .expect_ok()
+            .expect_eq();
+            signature.verify(&child.public_key, &message).unwrap();
+            assert!(signature
+                .verify(&shares[0].shared_public_key(), &message)
+                .is_err());
         }
         for participant in [0u16, 1, 2] {
             let execution_bytes = new_execution_id();

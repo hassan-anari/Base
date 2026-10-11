@@ -22,6 +22,8 @@ pub struct SignRequest {
     pub expected_source: String,
     pub derivation_reference: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_authorization: Option<crate::hd::ChildIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ton_authorization: Option<crate::ton::TonAuthorization>,
 }
 
@@ -50,7 +52,8 @@ impl SignRequest {
                 && self.attempt_id > 0
                 && !self.session_id.is_nil()
                 && !self.keyset_id.is_nil()
-                && self.derivation_reference.is_none(),
+                && self.derivation_reference.is_none()
+                && self.child_authorization.is_none(),
             "invalid custody signing context"
         );
         let message = decode_hex(&self.payload_hex).context("invalid message encoding")?;

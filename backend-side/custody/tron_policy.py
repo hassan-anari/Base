@@ -198,7 +198,7 @@ def tron_transaction_identity(attempt, keyset):
         or attempt.fee_metadata.get("timestamp_ms") != raw["timestamp"]
     ):
         raise ValueError("TRON frozen validity evidence mismatch")
-    return {
+    identity = {
         "attempt_id": attempt.pk,
         "operation_type": attempt.operation_type,
         "operation_id": attempt.operation_id,
@@ -215,6 +215,10 @@ def tron_transaction_identity(attempt, keyset):
         "public_key": keyset.public_key,
         "dkg_fingerprint": keyset.dkg_result_fingerprint,
     }
+
+    from .mpc_binding import with_child_identity
+
+    return with_child_identity(attempt, identity)
 
 
 def assemble_tron_signature(tx, signature):

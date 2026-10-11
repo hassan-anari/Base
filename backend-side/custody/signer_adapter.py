@@ -199,6 +199,12 @@ class SelfHostedMpcAdapter:
     def get_keyset(self, keyset_id: str) -> dict:
         return self._request("GET", f"/v1/keysets/{keyset_id}")
 
+    def attest_hd(self, keyset_id: str, scope: dict) -> dict:
+        return self._request("POST", f"/v1/keysets/{keyset_id}/hd-attestation", json=scope)
+
+    def approve_child(self, keyset_id: str, request: dict) -> dict:
+        return self._request("POST", f"/v1/keysets/{keyset_id}/children", json=request)
+
     def create_signing_session(self, payload: dict) -> dict:
         """Idempotently create the durable coordinator operation."""
         return self._request("POST", "/v1/sign-sessions", json=payload)

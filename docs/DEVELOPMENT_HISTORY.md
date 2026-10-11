@@ -68,3 +68,22 @@ Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. P
 ## How to maintain this timeline
 
 On every milestone merge, append date, exact PR/merge SHA, capabilities with implementation-level evidence, tests/CI links, discovered risks, migrations, and changed scope/architecture decisions. Do not overwrite chronology with a guessed percent complete. Use PROJECT_STATUS.md as a separately refreshed current-state view.
+
+## Phase 6G-A merge correction and 6G-B active branch
+
+PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
+Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen
+jobs on [full CI run 38142219480, attempt 2](https://github.com/hassan-anari/Base/actions/runs/38142219480/attempts/2),
+including the four Fast jobs and genuine four-chain suites. Earlier runner failures
+and Fast run 38142190057 remain historical failure evidence; they were not erased.
+The successful rerun supersedes the earlier unresolved runner-block status.
+
+Phase 6G-B is based on that exact merge, on `phase6g-b-child-wallets`.
+Original-share HD attestation, canonical child derivation, genuine threshold child
+signing and additive canonical account/asset associations are implemented in this
+single branch. Migrations 0029/0030 leave historical wallet/ledger rows intact.
+Final validator, throughput and exact-head CI evidence belongs in
+[PHASE6GB.md](../PHASE6GB.md) and the draft review handoff. Unmerged capability
+is not counted as shipped. Earlier failed harness/CI attempts remain evidence.
+Final Phase 6G-C owns Solana provisioning, lifecycle, rotation/recovery and wallet
+security-class foundations; no additional implementation PR split is authorized.

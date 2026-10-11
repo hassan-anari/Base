@@ -52,11 +52,16 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
     if keyset is None:
         raise MpcBindingError("source wallet has no explicit MPC keyset binding")
     reference = wallet.derivation_path if isinstance(wallet, UserWallet) else wallet.signing_key_ref
-    if reference != f"keyset:{keyset.keyset_id}":
+    child_wallet = isinstance(wallet, UserWallet) and wallet.custody_account_id is not None
+    if not child_wallet and reference != f"keyset:{keyset.keyset_id}":
         raise UnsupportedMpcDerivation(
             "unsupported child derivation; explicit root binding required"
         )
-    if isinstance(wallet, UserWallet) and wallet.derivation_version != "mpc_root_v1":
+    if (
+        isinstance(wallet, UserWallet)
+        and not child_wallet
+        and wallet.derivation_version != "mpc_root_v1"
+    ):
         raise UnsupportedMpcDerivation("deposit wallet must explicitly select mpc_root_v1")
     solana = spec.kind in {ChainKind.SOLANA, ChainKind.TON}
     if (
@@ -85,7 +90,13 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
     if solana:
         verify_coordinator_keyset(keyset, keyset.dkg_public_evidence)
     address = wallet.deposit_address if isinstance(wallet, UserWallet) else wallet.address
-    expected = address_from_public_key(chain_id, keyset.public_key)
+    if child_wallet:
+        from .mpc_issuance import validate_child_wallet
+
+        _, child = validate_child_wallet(wallet, chain_id, source_address)
+        expected = child["address"]
+    else:
+        expected = address_from_public_key(chain_id, keyset.public_key)
     normalize = str.lower if spec.kind is ChainKind.EVM else str
     if normalize(expected) != normalize(address) or normalize(expected) != normalize(
         source_address
@@ -492,7 +503,7 @@ def transaction_identity(attempt, keyset):
         spec.gas_settings, "max_total_fee_base_units"
     ):
         raise MpcBindingError("unsigned transaction exceeds reviewed total fee limit")
-    return {
+    identity = {
         "attempt_id": attempt.pk,
         "operation_type": attempt.operation_type,
         "operation_id": attempt.operation_id,
@@ -514,6 +525,34 @@ def transaction_identity(attempt, keyset):
         "public_key": keyset.public_key,
         "dkg_fingerprint": keyset.dkg_result_fingerprint,
     }
+
+    return with_child_identity(attempt, identity)
+
+
+def approved_child(attempt):
+    wallet = source_wallet(attempt)
+    if isinstance(wallet, UserWallet) and wallet.custody_account_id:
+        from .mpc_issuance import validate_child_wallet
+
+        return validate_child_wallet(wallet, attempt.chain_id, attempt.from_address)[1]
+    return None
+
+
+def signing_public_key(attempt, keyset):
+    child = approved_child(attempt)
+    return child["public_key"] if child else keyset.public_key
+
+
+def with_child_identity(attempt, identity):
+    child = approved_child(attempt)
+    if child:
+        identity = {
+            **identity,
+            "public_key": child["public_key"],
+            "root_public_key": identity["public_key"],
+            "child_authorization": child,
+        }
+    return identity
 
 
 def identity_fingerprint(identity):

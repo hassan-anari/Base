@@ -319,7 +319,10 @@ def test_migration_preserves_legacy_wallets_and_refuses_evidence_downgrade():
         before = historical.get_model("custody", "UserWallet").objects.values().get(pk=wallet.pk)
         executor = MigrationExecutor(connection)
         executor.migrate(original)
-        assert UserWallet.objects.values().get(pk=wallet.pk) == before
+        assert UserWallet.objects.values().get(pk=wallet.pk) == {
+            **before,
+            "custody_account_id": None,
+        }
         assert MpcProvisioningRoot.objects.count() == 0
         assert MpcDerivationReservation.objects.count() == 0
         keyset = fixture_keyset()

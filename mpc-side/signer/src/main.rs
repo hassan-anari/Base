@@ -86,11 +86,18 @@ async fn main() {
             peers.clone(),
         )
         .expect("CGGMP auxiliary recovery failed");
+        let hd = wallet_mpc_signer::hd::HdService::open(
+            storage_directory.clone(),
+            party_id.clone(),
+            auxiliary.clone(),
+        )
+        .expect("CGGMP HD evidence recovery failed");
         let cggmp_signing = wallet_mpc_signer::cggmp_sign::SigningService::open(
             storage_directory.clone(),
             party_id.clone(),
             executions.clone(),
             auxiliary.clone(),
+            hd.clone(),
             peers,
         )
         .expect("CGGMP signing recovery failed");
@@ -106,7 +113,8 @@ async fn main() {
             .merge(wallet_mpc_signer::sign::router(signing))
             .merge(wallet_mpc_signer::cggmp::router(cggmp))
             .merge(wallet_mpc_signer::cggmp_aux::router(auxiliary))
-            .merge(wallet_mpc_signer::cggmp_sign::router(cggmp_signing));
+            .merge(wallet_mpc_signer::cggmp_sign::router(cggmp_signing))
+            .merge(wallet_mpc_signer::hd::router(hd));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");

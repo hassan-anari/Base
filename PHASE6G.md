@@ -1,3 +1,27 @@
+# Phase 6G — authorized three-PR implementation
+
+## Current direction: 6G-A / 6G-B / final 6G-C
+
+Exactly three major implementation PRs: **6G-A PR #36 merged**, **6G-B this
+branch** (original HD attestation, complete EVM/TRON child issuance and signing),
+and **6G-C final** (Solana scalable provisioning, key lifecycle, rotation/recovery,
+Hot/Warm/Cold foundations). Earlier small-slice proposals below are historical
+and superseded by this authorized direction. No extra roadmap phase or separate
+attestation/signing PR is authorized.
+
+PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
+Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen
+jobs on [full CI run 38142219480, attempt 2](https://github.com/hassan-anari/Base/actions/runs/38142219480/attempts/2),
+including the four Fast jobs and genuine four-chain suites. Earlier runner failures
+and Fast run 38142190057 remain historical failure evidence; they were not erased.
+The successful rerun supersedes the earlier unresolved runner-block status.
+
+See [PHASE6GB.md](PHASE6GB.md) for this branch's contract, migrations, security
+assessment and acceptance evidence. Development implementation remains subject
+to final-head gates and independent review; no production activation.
+
+## Historical Phase 6G-A record (preserved)
+
 # Phase 6G — first provisioning foundation, Draft for independent review
 
 Verified base/main: `99d005e23f1463ebb245fc451552af944a1fdd1f` (PR #35).

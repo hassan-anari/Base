@@ -1,33 +1,21 @@
 # Project status — verified snapshot
 
-**Verified on:** 2026-10-11. **Repository:** hassan-anari/Wallet-MPC.
-**Verified main:** 99d005e23f1463ebb245fc451552af944a1fdd1f (product source-of-truth PR #35).
-**Active work:** Phase 6G first provisioning foundation,
-[Draft PR #36](https://github.com/hassan-anari/Wallet-MPC/pull/36), for independent review; unmerged.
-Re-verify main and open PRs before subsequent development.
+**Repository:** hassan-anari/Base. **Verified baseline:** `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
+**Active branch:** Phase 6G-B `phase6g-b-child-wallets`, unmerged development work.
 
-## Phase 6G branch scope — IN PROGRESS, not merged
+PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
+Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen
+jobs on [full CI run 38142219480, attempt 2](https://github.com/hassan-anari/Base/actions/runs/38142219480/attempts/2),
+including the four Fast jobs and genuine four-chain suites. Earlier runner failures
+and Fast run 38142190057 remain historical failure evidence; they were not erased.
+The successful rerun supersedes the earlier unresolved runner-block status.
 
-[PHASE6G.md](../PHASE6G.md) audits the pinned CGGMP/FROST libraries and describes
-the first reviewable slice. This branch adds authenticated original-root namespace
-registration, immutable network/deployment-owner/HOT/DEPOSIT bindings and
-PostgreSQL concurrent/idempotent non-hardened path reservations (0027/0028).
-**No addresses are issued; reservations are not spendable wallets.** Warm/Cold,
-FROST derivation, child signing, lifecycle automation and production activation
-remain unavailable. The 10,000-row reservation benchmark is 216.743/s on local
-PostgreSQL 16.15 and explicitly excludes DKG, signing, rent and issuance costs.
-Final-head tests/CI and Draft PR reference belong in the review handoff; this
-entry is not merged acceptance or Phase 6G completion.
-GitHub Fast CI and the requested full cryptographic gate failed before runner
-assignment (zero steps); the full suites were skipped. Local passing checks do
-not satisfy that final-head gate. See the Draft PR for the latest exact-head
-run links and evidence; CI runner execution must be restored before acceptance.
-Supporting code head 09653ef passed 571 PostgreSQL tests and fresh genuine-service
-registration/restart (857.41s). Cargo audit exited 0 but reported atomic-polyfill
-maintenance and scc 2.4.0 unsoundness advisories. The latter remains a P1 dependency
-review finding pending reachability assessment; see PHASE6G.md. No dependency or
-TON restrictions were changed. An evidence-only final documentation commit does
-not change the tested implementation; it still requires exact-head GitHub gates.
+This branch implements genuine original-share HD agreement, upstream SLIP-10
+public derivation and CGGMP24 child threshold signing for EVM/TRON, plus immutable
+canonical custody accounts and asset views (migrations 0029/0030). It preserves
+root-only wallets and the original ledger. See [PHASE6GB.md](../PHASE6GB.md) for
+reviewable boundaries and current test evidence. This is not independent audit
+acceptance, production permission or completion of Phase 6G-C.
 
 ## Shipped into main as development implementation
 
@@ -44,7 +32,7 @@ PR [#34](https://github.com/hassan-anari/Wallet-MPC/pull/34) final implementatio
 
 ## Not yet implemented / do not claim otherwise
 
-- Scalable real MPC HD wallet creation for arbitrarily large customer counts; production-ready root/child lifecycle, rotation/resharing/recovery, independent Hot/Warm/Cold product management.
+- Arbitrarily large provisioning throughput, Solana scalable provisioning, production root/child lifecycle, rotation/resharing/recovery and independent Hot/Warm/Cold management. EVM/TRON child provisioning is implemented on this unmerged branch, with measured development acceptance required.
 - Human multi-person approval quorum, configurable transaction USD thresholds, governance-controlled policy changes, signer-side independently issued approvals.
 - Multi-tenant external exchange financial service APIs (Reserve/Release/Adjust/Trade Settlement/Internal Transfer), merchant invoices/refunds/settlement and signed webhooks.
 - Per-asset configurable finality override and broad operational on-chain reconciliation/dispute tooling.

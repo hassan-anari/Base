@@ -110,6 +110,11 @@ pub(super) async fn execute(
         .get_keyset(session.request.keyset_id)
         .await?
         .ok_or(StoreError::Invalid)?;
+    if let Some(child) = &session.request.child_authorization {
+        store
+            .approved_child(child)
+            .map_err(|_| StoreError::Invalid)?;
+    }
     // Validation before any probe or state advancement; core-only keys cannot sign.
     execution(&session, &dkg, vec!["signer-a".into(), "signer-b".into()])
         .map_err(|_| StoreError::Invalid)?;

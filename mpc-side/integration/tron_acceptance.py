@@ -147,6 +147,14 @@ def signing_evidence(attempt):
         "execution_id": str(completed.crypto_execution_id),
         "selected_signers": completed.selected_signers,
         "public_key": completed.keyset.public_key,
+        "signing_public_key": completed.transaction_identity.get(
+            "public_key", completed.keyset.public_key
+        ),
+        "source": attempt.from_address,
+        "child_authorization": completed.transaction_identity.get("child_authorization"),
+        "session_seconds_to_consumed_signature": (
+            completed.signature_consumed_at - completed.created_at
+        ).total_seconds(),
         "signed_payload_sha256": hashlib.sha256(attempt.signed_payload.encode()).hexdigest(),
     }
 
@@ -155,7 +163,7 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
     assert connection.vendor == "postgresql"
     hot_keyset = imported_keyset(net.aux_context, net.aux_state)
     hot = address_from_public_key("TRX", hot_keyset.public_key)
-    # A second independently generated root proves deposit ownership; no child derivation.
+    # An independent root owns deposits; optional child issuance uses its original shares.
     deposit_root_started = time.monotonic()
     if deposit_metadata is None:
         context = binding("TRON")
@@ -348,6 +356,16 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
                 sweep = settle(validator, sweep)
                 if account:
                     assert sweep.from_address == account.address
+                    observed = validator.post(
+                        "/wallet/gettransactionbyid",
+                        {"value": sweep.network_tx_id, "visible": False},
+                    )
+                    assert (
+                        observed["raw_data"]["contract"][0]["parameter"]["value"][
+                            "owner_address"
+                        ].lower()
+                        == address_bytes(account.address).hex()
+                    )
                     assert (
                         MpcSigningSession.objects.get(attempt=sweep).transaction_identity[
                             "public_key"
@@ -528,6 +546,16 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
                 token_sweep = settle(validator, token_sweep)
                 if account:
                     assert token_sweep.from_address == account.address
+                    observed = validator.post(
+                        "/wallet/gettransactionbyid",
+                        {"value": token_sweep.network_tx_id, "visible": False},
+                    )
+                    assert (
+                        observed["raw_data"]["contract"][0]["parameter"]["value"][
+                            "owner_address"
+                        ].lower()
+                        == address_bytes(account.address).hex()
+                    )
                     assert (
                         MpcSigningSession.objects.get(attempt=token_sweep).transaction_identity[
                             "public_key"

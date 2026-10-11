@@ -1,7 +1,7 @@
 # Phase 6G-B — genuine EVM/TRON child custody, draft development implementation
 
 Base: `24eed19e6e280083793c69c3901f5f746dd0a2fe` (merged PR #36).
-Branch: `phase6g-b-child-wallets`. One draft PR; independent review required.
+Branch: `phase6g-b-child-wallets`. [Draft PR #37](https://github.com/hassan-anari/Base/pull/37); independent review required.
 This record describes implemented controls and acceptance scenarios. Final-head
 results and measured artifacts must be read with the draft PR's exact-SHA report.
 An implemented acceptance scenario is not itself a passing result.
@@ -177,3 +177,28 @@ versioned rotation, recovery/resharing/backup drills; Hot/Warm/Cold foundations 
 class boundaries. Preserve issued account ownership and original ledger. Do not
 invent unreviewed FROST HD, public TON expansion or Phase 7/8 product work. This is
 the final Phase 6G implementation PR, not an additional attestation/signing slice.
+
+## Supporting local results (not final-head acceptance)
+
+- PostgreSQL 16: 581 backend tests passed in 466.63s; focused ten issuance cases
+  passed in 28.14s. Migration dry-run reports no changes; system check passes.
+- Rust workspace: 32 unit tests passed, including genuine upstream all-pair child
+  signatures (protocol cases 282.27s under concurrent local load). Latest
+  coordinator/signer security-check tests pass; fmt/clippy pass.
+- Frontend: two contract tests and both normal/simulator builds pass.
+- Genuine fresh-root TRON child validator case: passed in 1167.54s, five actual
+  confirmed MPC transactions including native/token CHILD sweeps, with B+C.
+  Native/token deposits each have exactly one original ledger credit.
+- cargo-audit 0.22.0 loaded 1,296 advisories and scanned 255 crates; exited zero
+  with both existing informational warnings explicitly shown, not suppressed.
+- Supporting head `9835a6afdb878b09a90890d8ab5d484528c4c148`
+  [Fast CI 38175512208](https://github.com/hassan-anari/Base/actions/runs/38175512208)
+  passed. That head still had an EVM harness environment issue; it is not the
+  final cryptographic acceptance claim. A later exact-head full gate is required.
+
+Earlier local failures are preserved in the handoff: overlapping pytest databases,
+missing Ganache and explicit EVM live-indexer mode. The latter caused a missing
+scan_complete attribute on the demo result; no synthetic result was accepted as
+chain evidence. Corrected runs use separate databases and real live validators.
+Original attested root/network bindings are never deleted or changed to make a
+rerun pass; fresh fixtures are required when an ephemeral genesis is lost.

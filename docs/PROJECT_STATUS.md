@@ -1,7 +1,7 @@
 # Project status — verified snapshot
 
 **Repository:** hassan-anari/Base. **Verified baseline:** `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
-**Active branch:** Phase 6G-B `phase6g-b-child-wallets`, unmerged development work.
+**Active branch:** [Phase 6G-B Draft PR #37](https://github.com/hassan-anari/Base/pull/37), unmerged development work.
 
 PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
 Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen

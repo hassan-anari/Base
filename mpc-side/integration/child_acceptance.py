@@ -383,6 +383,7 @@ def run_evm_child_acceptance(net, tmp_path):
         )
         with (
             settings_for(net),
+            patch.dict(os.environ, {"CUSTODY_INDEXER_MODE": "live"}),
             override_settings(
                 MPC_SIGNER_BACKEND="self_hosted_mpc",
                 MPC_EVM_INTEGRATION_ENABLED=True,

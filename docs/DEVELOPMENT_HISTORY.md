@@ -29,7 +29,8 @@ Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. P
 - 2026-10-11: [PR #35](https://github.com/hassan-anari/Wallet-MPC/pull/35) established
   the authoritative enterprise product/engineering documents; verified main
   `99d005e23f1463ebb245fc451552af944a1fdd1f`.
-- Phase 6G branch `phase6g-provisioning-foundation`, based on that exact main:
+- [Phase 6G Draft PR #36](https://github.com/hassan-anari/Wallet-MPC/pull/36),
+  branch `phase6g-provisioning-foundation`, based on that exact main:
   pinned-source crypto feasibility audit, original-root namespace registration
   and durable non-hardened path reservations with migrations 0027/0028. Unmerged,
   for independent review. Local 10,000-row PostgreSQL benchmark: 46.1376s,

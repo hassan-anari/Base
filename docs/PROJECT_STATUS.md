@@ -2,7 +2,8 @@
 
 **Verified on:** 2026-10-11. **Repository:** hassan-anari/Wallet-MPC.
 **Verified main:** 99d005e23f1463ebb245fc451552af944a1fdd1f (product source-of-truth PR #35).
-**Active work:** Phase 6G first provisioning foundation, Draft for independent review; unmerged.
+**Active work:** Phase 6G first provisioning foundation,
+[Draft PR #36](https://github.com/hassan-anari/Wallet-MPC/pull/36), for independent review; unmerged.
 Re-verify main and open PRs before subsequent development.
 
 ## Phase 6G branch scope — IN PROGRESS, not merged

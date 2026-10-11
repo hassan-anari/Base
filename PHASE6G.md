@@ -1,6 +1,7 @@
 # Phase 6G — first provisioning foundation, Draft for independent review
 
 Verified base/main: `99d005e23f1463ebb245fc451552af944a1fdd1f` (PR #35).
+Draft PR: [#36](https://github.com/hassan-anari/Wallet-MPC/pull/36).
 Feature branch: `phase6g-provisioning-foundation`. Phase 6G remains **IN PROGRESS**.
 This slice implements **path reservations, not deposit address issuance**. It
 does not enable production, change TON, or claim child-key spendability.

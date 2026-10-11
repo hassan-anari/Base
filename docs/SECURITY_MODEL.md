@@ -34,4 +34,12 @@ A chain may activate only with reviewed code/protocol and threat model, mainnet/
 
 ## Acceptance artifacts
 
+Phase 6G's initial unmerged reservation foundation is described in
+[PHASE6G.md](../PHASE6G.md). Its deployment ownership scope, network and purpose
+are immutable allocation evidence, not tenant authorization, child spendability
+or independent Cold authority. Reservations cannot enter signing/indexing and
+Warm/Cold/ISSUED labels are rejected. Existing funded-root retirement behavior
+still requires a separate lifecycle review; retaining path evidence does not
+make the historical root retirement command safe for funded wallets.
+
 Per PR provide threat-model deltas, proof/identity and exact original signing-intent linkage, ledger invariants, concurrency/restart/replay/unknown-outcome test cases, CI final SHA and job links, migration/backfill plans, monitoring/runbooks and unresolved risk register. Reviews are independent, not self-approved.

@@ -12,6 +12,12 @@
 
 Acceptance: thousands of non-colliding provisioned addresses in performance tests; independent signer shares never reconstructed; keys reconfigured only via auditable authorized operations; wallet-to-asset/network binding immutable; loss/restart drills pass without leaking assets.
 
+Phase 6G first Draft slice: immutable dedicated root/network/ownership/purpose
+namespace and non-hardened **path reservations** only; see [PHASE6G.md](../PHASE6G.md).
+The 10,000-customer PostgreSQL reservation benchmark is not address/spendability
+acceptance. CGGMP chain-code attestation/child signing/issuance, Solana account
+strategy, full lifecycle and Warm/Cold boundaries remain requirements to deliver.
+
 ## 2. Authorization and policy — binding
 
 - **P0 / 7A:** Policy Engine by tenant, operation, chain, asset, amount, destination, time, risk, user role, wallet class, velocity. Deterministic precedence, explicit defaults and versioned snapshots.

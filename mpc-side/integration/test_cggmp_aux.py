@@ -926,3 +926,95 @@ def test_phase6f_real_tron_custody_acceptance(tron_auxiliary_network, tmp_path):
     from tron_acceptance import run_tron_acceptance
 
     run_tron_acceptance(tron_auxiliary_network, tmp_path)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6g_authenticated_root_path_reservations(auxiliary_network):
+    """Real DKG/aux/mTLS evidence; path reservations still confer no spendability."""
+    from custody.models import MpcDerivationReservation, MpcKeyset, UserWallet
+    from custody.mpc_provisioning import register_provisioning_root, reserve_derivation_path
+    from django.db import close_old_connections, connection
+    from django.test import override_settings
+    from evm_acceptance import LocalChain
+    from ops.models import Chain, NodeEndpoint
+    from test_network import settings_for
+
+    assert connection.vendor == "postgresql"
+    net = auxiliary_network
+    keyset = MpcKeyset.objects.create(
+        keyset_id=net.aux_context["keyset_id"],
+        algorithm="CGGMP24_ECDSA",
+        curve="secp256k1",
+        scope="EVM",
+        derivation_version="cggmp_hd_v1",
+        status="ACTIVE",
+        participant_identities=net.aux_context["participants"],
+        public_key=net.aux_state["group_public_key"],
+        dkg_execution_id=net.aux_context["execution_id"],
+        dkg_result_fingerprint=net.aux_state["result_fingerprint"],
+    )
+    chain = LocalChain("berlin", 31337)
+    try:
+        genesis = chain.rpc("eth_getBlockByNumber", ["0x0", False])["hash"]
+        Chain.objects.filter(chain_id="ETH").update(
+            enabled=True, kind="evm", is_testnet=True, evm_chain_id=31337
+        )
+        NodeEndpoint.objects.filter(chain_id="ETH", kind="rpc").update(enabled=False)
+        NodeEndpoint.objects.create(
+            chain_id="ETH",
+            name="phase6g-isolated",
+            kind="rpc",
+            url=chain.url,
+            enabled=True,
+            is_primary=True,
+        )
+        with (
+            settings_for(net),
+            override_settings(
+                MPC_SIGNER_BACKEND="self_hosted_mpc",
+                MPC_EVM_INTEGRATION_ENABLED=True,
+                MPC_INTEGRATION_ENVIRONMENT="development",
+                MPC_EVM_DEVELOPMENT_CHAINS={"ETH": 31337},
+                MPC_EVM_GENESIS_HASHES={"ETH": genesis},
+                CUSTODY_DEMO_MODE=False,
+                CUSTODY_TX_MODE="live",
+            ),
+        ):
+            root = register_provisioning_root(
+                keyset_id=keyset.keyset_id, chain_id="ETH", ownership_scope="isolated-acceptance"
+            )
+            assert len(root.dkg_public_evidence["participant_agreement"]) == 3
+            before = UserWallet.objects.count()
+
+            def worker(index):
+                close_old_connections()
+                try:
+                    return reserve_derivation_path(
+                        keyset_id=keyset.keyset_id,
+                        ownership_scope="isolated-acceptance",
+                        customer_ref=f"customer-{index % 16}",
+                        idempotency_key=f"request-{index % 16}",
+                    ).pk
+                finally:
+                    close_old_connections()
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                assigned = list(pool.map(worker, range(32)))
+            assert len(set(assigned)) == 16
+            original = worker(0)
+            net.stop("coordinator")
+            connection.close()
+            assert worker(0) == original
+            net.start("coordinator")
+            recovered = register_provisioning_root(
+                keyset_id=keyset.keyset_id, chain_id="ETH", ownership_scope="isolated-acceptance"
+            )
+            assert recovered.root_identity == root.root_identity
+            assert recovered.dkg_public_evidence == root.dkg_public_evidence
+            assert recovered.next_index == 16
+            assert MpcDerivationReservation.objects.count() == 16
+            assert UserWallet.objects.count() == before
+    finally:
+        if "coordinator" not in net.running:
+            net.start("coordinator")
+        chain.close()

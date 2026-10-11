@@ -43,6 +43,15 @@ Each network has canonical registry, genesis/chain identity, token verification,
 
 ## Lifecycle / throughput constraints
 
+Phase 6G's first unmerged foundation uses a dedicated original CGGMP root per
+allocation namespace, with immutable network/genesis, deployment ownership scope,
+HOT class and DEPOSIT purpose. PostgreSQL reserves canonical `m/0/index` paths
+transactionally and idempotently. A reservation creates neither an address nor a
+UserWallet and cannot enter indexing or signing. Future custody account identity
+must own one verified child and beneficial owner, with asset views sharing that
+account only for the same owner. See [PHASE6G.md](../PHASE6G.md) for feasibility,
+security boundaries and deferred child evidence; no tenant API is added early.
+
 Phase 6G should use reviewed chain/algorithm-specific scalable provisioning rather than heavy fresh DKG for every deposit address. EVM/TRON secp256k1 derivation and Ed25519 FROST derivation must not be assumed interchangeable. Root bindings are immutable; resharing/rotation/recovery require versioned, auditable transitions. Hot/warm/cold are separate security classes; cold signing cannot reuse the hot environment's routine authorization.
 
 ## Scalability, events, and operability

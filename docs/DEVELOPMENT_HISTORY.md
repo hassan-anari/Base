@@ -22,7 +22,20 @@
 | 2026-10-10 | [#33](https://github.com/hassan-anari/Wallet-MPC/pull/33) | Phase 6F-C isolated TON V5R1 / TEP-74; exact audit OPEN |
 | 2026-10-11 | [#34](https://github.com/hassan-anari/Wallet-MPC/pull/34) | Phase 6F-D four-chain integrated development acceptance and financial identity/EVM history hardening |
 
-Current main merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. PR #34 final reviewed feature SHA: **04bb9c621a3aba5a6313bff0c6f5028b4fc803b3**. Different SHAs are expected for merge commits.
+Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. PR #34 final reviewed feature SHA: **04bb9c621a3aba5a6313bff0c6f5028b4fc803b3**. Different SHAs are expected for merge commits.
+
+## Subsequent orientation and active development (not merged capability)
+
+- 2026-10-11: [PR #35](https://github.com/hassan-anari/Wallet-MPC/pull/35) established
+  the authoritative enterprise product/engineering documents; verified main
+  `99d005e23f1463ebb245fc451552af944a1fdd1f`.
+- Phase 6G branch `phase6g-provisioning-foundation`, based on that exact main:
+  pinned-source crypto feasibility audit, original-root namespace registration
+  and durable non-hardened path reservations with migrations 0027/0028. Unmerged,
+  for independent review. Local 10,000-row PostgreSQL benchmark: 46.1376s,
+  216.743 reservations/s, 3,579,904 table/index bytes. These are **not issued
+  spendable addresses**. See [PHASE6G.md](../PHASE6G.md); exact final head/CI
+  links and genuine-service evidence are provided in the Draft PR handoff.
 
 ## Significant discovered/fixed failure classes (development)
 

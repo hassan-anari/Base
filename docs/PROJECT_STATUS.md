@@ -1,8 +1,22 @@
 # Project status — verified snapshot
 
 **Verified on:** 2026-10-11. **Repository:** hassan-anari/Wallet-MPC.
-**main:** 4488016a668283868633eb1a7fa2f64187a93b56 (Phase 6F-D PR #34 merge, 2026-10-11 11:38:17 UTC).
-**Next work:** Phase 6G. Re-verify main and open PRs before starting any subsequent development.
+**Verified main:** 99d005e23f1463ebb245fc451552af944a1fdd1f (product source-of-truth PR #35).
+**Active work:** Phase 6G first provisioning foundation, Draft for independent review; unmerged.
+Re-verify main and open PRs before subsequent development.
+
+## Phase 6G branch scope — IN PROGRESS, not merged
+
+[PHASE6G.md](../PHASE6G.md) audits the pinned CGGMP/FROST libraries and describes
+the first reviewable slice. This branch adds authenticated original-root namespace
+registration, immutable network/deployment-owner/HOT/DEPOSIT bindings and
+PostgreSQL concurrent/idempotent non-hardened path reservations (0027/0028).
+**No addresses are issued; reservations are not spendable wallets.** Warm/Cold,
+FROST derivation, child signing, lifecycle automation and production activation
+remain unavailable. The 10,000-row reservation benchmark is 216.743/s on local
+PostgreSQL 16.15 and explicitly excludes DKG, signing, rent and issuance costs.
+Final-head tests/CI and Draft PR reference belong in the review handoff; this
+entry is not merged acceptance or Phase 6G completion.
 
 ## Shipped into main as development implementation
 

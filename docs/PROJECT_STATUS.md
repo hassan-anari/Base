@@ -22,6 +22,12 @@ GitHub Fast CI and the requested full cryptographic gate failed before runner
 assignment (zero steps); the full suites were skipped. Local passing checks do
 not satisfy that final-head gate. See the Draft PR for the latest exact-head
 run links and evidence; CI runner execution must be restored before acceptance.
+Supporting code head 09653ef passed 571 PostgreSQL tests and fresh genuine-service
+registration/restart (857.41s). Cargo audit exited 0 but reported atomic-polyfill
+maintenance and scc 2.4.0 unsoundness advisories. The latter remains a P1 dependency
+review finding pending reachability assessment; see PHASE6G.md. No dependency or
+TON restrictions were changed. An evidence-only final documentation commit does
+not change the tested implementation; it still requires exact-head GitHub gates.
 
 ## Shipped into main as development implementation
 

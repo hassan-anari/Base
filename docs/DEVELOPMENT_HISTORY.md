@@ -40,6 +40,12 @@ Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. P
   Initial local evidence: 570 backend tests and genuine CGGMP/mTLS registration
   plus coordinator/DB restart passed (338.10s). GitHub jobs failed before runner
   assignment; final-head Fast/full CI acceptance remains blocked, not waived.
+  Supporting code head 09653ef subsequently passed 571 PostgreSQL tests and a
+  fresh genuine CGGMP registration/restart case (857.41s). Cargo audit exited 0
+  with atomic-polyfill maintenance and pinned scc 2.4.0 unsoundness warnings;
+  scc comes through existing everscale-types, uses HashSet in inspected source,
+  and requires separate dependency/reachability review. Final documentation
+  records this finding without changing crypto dependencies or tested code.
 
 ## Significant discovered/fixed failure classes (development)
 

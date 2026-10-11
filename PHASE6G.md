@@ -211,6 +211,27 @@ Review checkpoint: the initial implementation passed 570 PostgreSQL backend
 tests and genuine-service registration/restart acceptance in 338.10 seconds.
 The added genesis requirement passed 14 focused PostgreSQL cases. These are
 supporting local results; final-head results are recorded in the PR handoff.
+Code head `09653ef678ce06757fc143eb962263ce5330e0d6` subsequently passed all
+571 PostgreSQL backend cases (972.73s) and fresh genuine-service registration
+and restart (857.41s). Fresh auxiliary setup took 832.738s while local builds
+and backend regression ran concurrently; this is fixture timing, not a dedicated
+root-generation economics benchmark. Rust Fast's unchanged configuration passed
+29 tests; fmt/clippy, frontend tests/builds and configured Ruff checks passed.
+The final evidence-only documentation commit does not alter this tested code.
+
+Cargo audit 0.22.2 exited 0 with **two allowed informational warnings**, not a
+clean advisory result: existing atomic-polyfill 1.0.3 maintenance finding
+RUSTSEC-2023-0089 and scc 2.4.0 unsoundness finding
+[RUSTSEC-2026-0205](https://rustsec.org/advisories/RUSTSEC-2026-0205).
+The latter describes potential double-free when TreeIndex Array insertion's
+comparison panics; patched upstream versions are >=3.8.4. The unchanged main
+lockfile already contains scc 2.4.0 via everscale-types 0.1.2 -> protocol ->
+coordinator/signer. Source inspection found everscale-types using scc::HashSet,
+not TreeIndex; no affected call path was identified, but this is not independent
+reachability clearance. Retain a **P1 dependency-review finding pending assessment**;
+do not silently upgrade a transitive major version or expand TON scope here.
+The advisory DB was fetched successfully, but the crates.io index update emitted
+a missing-registry warning, limiting registry/yanked-status coverage.
 GitHub [Fast CI](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38140382988)
 and the [requested full gate](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38140447423)
 on supporting head `bf1b7b3823296412cce11bd21b485000a0ccf9de` failed **before
@@ -229,6 +250,8 @@ is restored; independent review and merge acceptance must account for this block
   FROST persistent derivation unavailable in the reviewed application;
   funded-root retirement semantics; independent signer authorization and real
   Hot/Warm/Cold separation; existing production chain review and TON audit blocker.
+  The pinned scc unsoundness advisory above also requires dependency/reachability
+  review; it is not introduced or remediated by this slice.
 - P2: one-root allocation lock contention; signer/storage/rent economics and
   full-population restart benchmarks remain; privileged SQL/trigger-disable
   resistance depends on separately reviewed DB roles/infrastructure. Canonical

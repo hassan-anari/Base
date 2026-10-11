@@ -388,3 +388,15 @@ def test_migration_resets_only_unverified_native_evm_progress(history):
 def test_invalid_checkpoint_input_fails_closed(history):
     with pytest.raises(EvmLiveError, match="checkpoint"):
         evm_get_balance("ETH", ADDRESS, after_block=-1)
+
+
+def test_existing_native_height_without_original_hash_fails_closed(history):
+    UserWallet.objects.filter(pk=history.wallet.pk).update(last_scanned_block=3)
+    history.wallet.refresh_from_db()
+    with pytest.raises(EvmLiveError, match="missing its original verified hash"):
+        evm_get_balance("ETH", ADDRESS, after_block=3)
+    assert scan_wallet(history.wallet)["outcome"] == "indexer_unavailable"
+    history.wallet.refresh_from_db()
+    assert history.wallet.last_scanned_block == 3 and history.wallet.evm_scan_block_hash is None
+    assert not Deposit.objects.filter(user_wallet=history.wallet).exists()
+    assert not LedgerTransaction.objects.filter(event_type="DEPOSIT_CREDIT").exists()

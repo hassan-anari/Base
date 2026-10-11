@@ -53,7 +53,7 @@ logger = logging.getLogger("custody.indexer_service")
 SYSTEM_ACTOR = "indexer-service"
 
 
-def scan_wallet(user_wallet: UserWallet) -> dict:
+def scan_wallet(user_wallet: UserWallet, *, actor_id=SYSTEM_ACTOR) -> dict:
     """Scan a single wallet for deposits. Returns scan result dict.
 
     This is the core indexer logic for one wallet:
@@ -96,7 +96,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
     try:
         indexer = get_indexer(user_wallet.chain_id)
         scan_options = {}
-        if asset.is_native and get_chain_spec(user_wallet.chain_id).kind == ChainKind.EVM:
+        if get_chain_spec(user_wallet.chain_id).kind == ChainKind.EVM:
             scan_options["after_block_hash"] = user_wallet.evm_scan_block_hash
         try:
             bal = indexer.get_balance(
@@ -147,7 +147,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
 
             chain = Chain.objects.select_for_update().get(chain_id=user_wallet.chain_id)
             if chain.min_confirmations != bal.minimum_confirmations:
-                result["reason"] = "confirmation policy changed during native history scan; retry"
+                result["reason"] = "confirmation policy changed during EVM history scan; retry"
                 result["outcome"] = "indexer_unavailable"
                 return result
         for ev in bal.deposit_events:
@@ -162,7 +162,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
                     ev.confirmations,
                 )
                 write_audit_log(
-                    SYSTEM_ACTOR,
+                    actor_id,
                     AuditAction.DEPOSIT_DETECTED,
                     "Deposit",
                     str(deposit.id),
@@ -204,7 +204,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
 
         # Gas station top-up is handled inside trigger_sweep -> _run_sweep
         triggered, job_id, reason = trigger_sweep(
-            user_wallet, actor_id=SYSTEM_ACTOR, balance_result=bal
+            user_wallet, actor_id=actor_id, balance_result=bal
         )
         result["sweep_triggered"] = triggered
         result["sweep_job_id"] = job_id

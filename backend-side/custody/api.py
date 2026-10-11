@@ -449,6 +449,23 @@ def balance_check(
     ).first()
     if not w:
         raise HttpError(404, "no deposit address for network/asset")
+    from .chain_registry import ChainKind, get_chain_spec
+
+    if get_chain_spec(chain_id).kind == ChainKind.EVM:
+        from .indexer_service import scan_wallet
+
+        result = scan_wallet(w, actor_id=operator_id)
+        if result["outcome"] in {"indexer_unavailable", "unsupported"}:
+            raise HttpError(503, result["reason"])
+        return BalanceCheckResponse(
+            network=chain_id,
+            asset_key=asset_key,
+            confirmed_balance=result["confirmed_balance"],
+            deposit_threshold=effective_deposit_threshold(asset),
+            sweep_triggered=result["sweep_triggered"],
+            sweep_job_id=result["sweep_job_id"],
+            reason=result["reason"],
+        )
     indexer = get_indexer(chain_id)
     bal = indexer.get_balance(
         w.deposit_address,

@@ -120,6 +120,10 @@ def evm_get_balance(
     finalized = head - spec.confirmations
     previous_hash = None
     if after_block is not None:
+        from django.conf import settings
+
+        if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" and after_block_hash is None:
+            raise EvmLiveError("durable native checkpoint is missing its original verified hash")
         if type(after_block) is not int or after_block < 0 or after_block > finalized:
             raise EvmLiveError("durable native checkpoint exceeds available finalized history")
         checkpoint = read("eth_getBlockByNumber", [hex(after_block), False])

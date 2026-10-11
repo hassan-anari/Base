@@ -237,7 +237,24 @@ class Integrated:
         return self.wallet(chain, asset.asset_key)
 
     def credit(self, wallet, minimum):
-        if wallet.chain_id in {"TON", "SOL"}:
+        if wallet.chain_id == "ETH":
+            for _ in range(3):
+                self.validators["ETH"].rpc("evm_mine", [])
+            asset = Asset.objects.get(asset_key=wallet.asset_key)
+            threshold = asset.deposit_threshold
+            Asset.objects.filter(pk=asset.pk).update(deposit_threshold=Decimal("100"))
+            try:
+                for _ in range(30):
+                    wallet.refresh_from_db()
+                    result = scan_wallet(wallet)
+                    assert result["outcome"] in {"backfill", "scanned"}, result
+                    if result["outcome"] == "scanned":
+                        break
+                else:
+                    pytest.fail("finalized EVM historical backfill did not finish")
+            finally:
+                Asset.objects.filter(pk=asset.pk).update(deposit_threshold=threshold)
+        elif wallet.chain_id in {"TON", "SOL"}:
             for _ in range(100):
                 wallet.refresh_from_db()
                 result = scan_wallet(wallet)
@@ -349,6 +366,92 @@ class Integrated:
             )
         finally:
             Asset.objects.filter(pk=asset.pk).update(deposit_threshold=original_threshold)
+
+    def token_evm_history_recovery(self, wallet):
+        # Same real EVM validator, original authenticated roots and PostgreSQL.
+        # Advance beyond the former default 1000-block initial lookback.
+        evm = self.validators["ETH"]
+        for _ in range(1000):
+            evm.rpc("evm_mine", [])
+        head = int(evm.rpc("eth_blockNumber", []), 16)
+        asset = Asset.objects.get(asset_key=wallet.asset_key)
+        threshold = asset.deposit_threshold
+        Asset.objects.filter(pk=asset.pk).update(deposit_threshold=Decimal("100"))
+        original_rpc = RequestsTransport.rpc
+        try:
+            # False/missing responses are fault injection only; successful
+            # history, receipts, logs, credit and MPC executions remain genuine.
+            for missing in (None, []):
+
+                def incomplete(transport, url, method, params):
+                    if method == "eth_getLogs":
+                        return missing
+                    return original_rpc(transport, url, method, params)
+
+                with patch.object(RequestsTransport, "rpc", incomplete):
+                    assert scan_wallet(wallet)["outcome"] == "indexer_unavailable"
+                wallet.refresh_from_db()
+                assert wallet.last_scanned_block is None and wallet.evm_scan_block_hash is None
+                assert not Deposit.objects.filter(user_wallet=wallet).exists()
+                assert user_balances(CUSTOMER, "ETH")["available"] == 2
+            assert scan_wallet(wallet)["outcome"] == "backfill"
+            wallet.refresh_from_db()
+            assert wallet.last_scanned_block == 63 and wallet.evm_scan_block_hash
+            original = (wallet.last_scanned_block, wallet.evm_scan_block_hash)
+            deposit = Deposit.objects.get(user_wallet=wallet)
+            assert head - deposit.block > 1000
+            assert user_balances(CUSTOMER, wallet.asset_key)["available"] == 1
+
+            def unavailable(transport, url, method, params):
+                if method == "eth_getBlockByNumber" and params == ["0x46", True]:
+                    raise requests.Timeout("controlled ERC-20 finalized history outage")
+                return original_rpc(transport, url, method, params)
+
+            with patch.object(RequestsTransport, "rpc", unavailable):
+                assert scan_wallet(wallet)["outcome"] == "indexer_unavailable"
+            wallet.refresh_from_db()
+            assert (wallet.last_scanned_block, wallet.evm_scan_block_hash) == original
+            close_old_connections()
+            restarted = UserWallet.objects.get(pk=wallet.pk)
+            for _ in range(30):
+                result = scan_wallet(restarted)
+                assert result["outcome"] in {"backfill", "scanned"}, result
+                restarted.refresh_from_db()
+                if result["outcome"] == "scanned":
+                    break
+            else:
+                pytest.fail("ERC-20 finalized historical backfill did not finish")
+            assert restarted.last_scanned_block == head - 2
+            assert scan_wallet(restarted)["outcome"] == "scanned"
+            assert (
+                LedgerTransaction.objects.filter(event_key=f"deposit:{deposit.pk}:credit").count()
+                == 1
+            )
+            assert user_balances(CUSTOMER, wallet.asset_key)["available"] == 1
+            wallet.refresh_from_db()
+            self.evidence["faults"].append(
+                {
+                    "fault": "ERC20_HISTORICAL_SCAN_RECOVERY",
+                    "extra_mined_blocks": 1000,
+                    "head": head,
+                    "historical_deposit_block": deposit.block,
+                    "outside_former_lookback": True,
+                    "null_logs_rejected": True,
+                    "empty_logs_with_real_transfer_rejected": True,
+                    "verified_before_outage": {"block": original[0], "hash": original[1]},
+                    "verified_after_restart": {
+                        "block": restarted.last_scanned_block,
+                        "hash": restarted.evm_scan_block_hash,
+                    },
+                    "restart": "database connection reopened and wallet reloaded",
+                    "deposit": deposit.pk,
+                    "credit": f"deposit:{deposit.pk}:credit",
+                    "exactly_once_credit": True,
+                    "unrelated_native_balance_preserved": True,
+                }
+            )
+        finally:
+            Asset.objects.filter(pk=asset.pk).update(deposit_threshold=threshold)
 
     def signed(self, attempt):
         deadline = time.monotonic() + 210
@@ -1018,6 +1121,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
             )
             h.destinations = {"ETH": faucet}
             h.native_evm_history_recovery(ew)
+            h.token_evm_history_recovery(et)
             h.credit(ew, Decimal(2))
             h.credit(et, Decimal(1))
             h.sweep(ew)

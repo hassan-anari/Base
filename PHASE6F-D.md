@@ -98,6 +98,41 @@ Demonstrated integration defects and narrow fixes:
   pruned endpoint must be restored or replaced by an approved source retaining
   the missing history; it cannot authorize skipping that history. Sweeps from
   the background scanner wait until bounded backfill is complete.
+* Final financial review found that an existing native EVM checkpoint height
+  without its original verified hash could adopt the current RPC hash. In
+  authenticated MPC mode this now fails closed; an uninitialized wallet still
+  starts at genesis. Migration `0025` retains its original behavior.
+* The ERC-20 scanner also had a demonstrated historical-discovery defect: its
+  initial 1000-block lookback and unconditional head cursor could miss older
+  deposits, deposits during prolonged outages, or transfers omitted from a
+  null/partial log response. It could also consume unconfirmed history beyond
+  the reorg overlap. The scanner now starts at genesis for unverified progress,
+  advances by at most 64 new finalized blocks per call, and rescans the configured
+  overlap (default 12, allowed 0–64). Log request chunks are capped at 64 blocks.
+  The old initial-lookback setting no longer discards history.
+  Original checkpoint hashes, contiguous ancestry, full transaction counts,
+  transaction/block/receipt identities, ordered receipt logs and receipt/block
+  blooms are checked. Canonical EIP-2718 receipts (types 0–4) are rebuilt
+  into the standard Ethereum receipt trie using pinned `trie==3.1.0`; its root
+  must match the scanned block, including for empty blocks. Bloom checks alone
+  cannot detect omitted repeated logs; receipt-root verification closes that gap.
+  Filtered `eth_getLogs` results must exactly match the
+  corresponding exhaustive receipt logs. A null response always fails; an
+  empty response establishes absence only with complete corroborating history.
+  Missing/pruned blocks or receipts, truncated or mismatched responses, removed
+  logs, changed identity, confirmation-policy races and RPC errors cannot advance
+  progress or credit a partial batch. The scan-end block identity is rechecked.
+  This corroboration operates within the existing approved RPC/network trust
+  boundary; receipt-root verification does not introduce independent consensus
+  or a production-grade independently anchored header trust model.
+  Native/token credits and height/hash commit together under the same durable
+  scanner locks. EVM operator balance checks use that scanner and preserve the
+  operator actor; API/background/direct sweeps wait for completed backfill.
+  Migration `0026` resets only former EVM token progress to genesis. Existing
+  deposits and ledger journals are retained and reconciled exactly once; native
+  verified progress and non-EVM cursors are preserved. Incomplete checkpoints
+  discovered later fail closed and require explicit history reconciliation,
+  rather than adopting a hash or modifying existing financial journals.
 * Genuine interleaved withdrawal execution exposed valid lowercase EVM
   recipients rejected by the serialization library after reservation. Digest
   and signature assembly now normalize only the serialization copy to checksum
@@ -147,6 +182,7 @@ chain acceptance tests a second time. All stages must execute and pass.
 | Quorum | One signer stopped with genuine B/C quorum; two signers stopped with no signature/local-key fallback |
 | Recovery | Coordinator restart during an original execution; actual Django worker SIGKILL after signed-byte persistence and replacement broadcast; all MPC processes restart with original identities |
 | EVM history | Real validator history after 140 mined blocks, 64-block durable chunks, injected read outage retaining the original checkpoint, reopened PostgreSQL connection/reloaded wallet, complete backfill and exactly-once credit |
+| ERC-20 history | Actual deposit older than 1000 blocks; null/false-empty logs rejected against receipt roots; bounded height/hash backfill, historical outage, database reconnection, overlap replay and exactly-once credit |
 | Financial state | Same-symbol token balances stay separate; every journal conserves one asset; costs use native assets; duplicate completion/reconciliation does not post twice; unknown outcomes remain reserved |
 
 EVM remains live through heavy-validator stages. TRON can stop after its stage;
@@ -327,3 +363,41 @@ These are unimplemented production prerequisites, not accomplishments of this
 gate. Public Mainnet, customer funds and production withdrawals remain disabled
 in PR #34. Passing protocol, chain-specific and integrated custody acceptance
 does not waive any of these deliverables or authorize production activation.
+
+
+## Final financial indexer review acceptance
+
+The existing integrated scenario additionally advances the same isolated EVM
+validator by 1000 actual blocks after its native recovery stage. The real ERC-20
+deposit is then older than the former default lookback. Negative fault injection
+returns null and empty log responses while the corresponding real block receipt
+contains the transfer; neither response may credit or save a checkpoint. All
+successful reads use the original guarded validator RPC. A subsequent genuine
+backfill credits the deposit, retains height/hash through an injected historical
+block outage, resumes after database reconnection and wallet reload, completes
+the original confirmation boundary, and replays without another credit. The
+unrelated native customer balance remains intact. This reconnection is distinct
+from the scenario's separately proven process interruptions and MPC restarts.
+The public `ERC20_HISTORICAL_SCAN_RECOVERY` record contains head, original and
+recovered checkpoint hashes, deposit/journal identifiers and asserted outcomes.
+The same authenticated EVM roots then perform the existing genuine MPC token
+sweep and withdrawals; no local custody signing or fabricated successful
+execution is introduced. No independent chain suite is repeated.
+
+Focused PostgreSQL regressions include the missing native hash, deposits older
+than the former token lookback, durable progress after prolonged outage,
+truncated/null/empty log and block responses, missing or mismatched receipts,
+removed/wrong-contract logs, bloom/root mismatch (including omission of repeated
+logs with an unchanged bloom), unsupported/missing receipt type, checkpoint identity loss/change,
+atomic journal/checkpoint rollback, stale workers, finality greater than overlap,
+confirmation-policy change, migration reconciliation and exactly-once replay.
+The complete local PostgreSQL backend suite passed 557 tests in 148.15s.
+The focused receipt-root run passed 31 PostgreSQL regressions plus one
+validator-only smoke check in 37.91s. That smoke check exercises real ERC-20
+block/receipt/log responses and does not count as distributed MPC custody
+evidence. Django checks/migration consistency, Python format/lint and Rust
+format/clippy also passed locally. Final-SHA Fast
+CI and all 14 full-gate jobs, exact counts, artifact digests and actual timings
+are recorded in the PR's final verification comment after completion. Earlier
+SHA results remain supporting evidence only. All production restrictions and
+OPEN TON V5R1 audit correspondence above remain unchanged.

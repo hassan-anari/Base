@@ -1,8 +1,33 @@
 # Project status — verified snapshot
 
 **Verified on:** 2026-10-11. **Repository:** hassan-anari/Wallet-MPC.
-**main:** 4488016a668283868633eb1a7fa2f64187a93b56 (Phase 6F-D PR #34 merge, 2026-10-11 11:38:17 UTC).
-**Next work:** Phase 6G. Re-verify main and open PRs before starting any subsequent development.
+**Verified main:** 99d005e23f1463ebb245fc451552af944a1fdd1f (product source-of-truth PR #35).
+**Active work:** Phase 6G first provisioning foundation,
+[Draft PR #36](https://github.com/hassan-anari/Wallet-MPC/pull/36), for independent review; unmerged.
+Re-verify main and open PRs before subsequent development.
+
+## Phase 6G branch scope — IN PROGRESS, not merged
+
+[PHASE6G.md](../PHASE6G.md) audits the pinned CGGMP/FROST libraries and describes
+the first reviewable slice. This branch adds authenticated original-root namespace
+registration, immutable network/deployment-owner/HOT/DEPOSIT bindings and
+PostgreSQL concurrent/idempotent non-hardened path reservations (0027/0028).
+**No addresses are issued; reservations are not spendable wallets.** Warm/Cold,
+FROST derivation, child signing, lifecycle automation and production activation
+remain unavailable. The 10,000-row reservation benchmark is 216.743/s on local
+PostgreSQL 16.15 and explicitly excludes DKG, signing, rent and issuance costs.
+Final-head tests/CI and Draft PR reference belong in the review handoff; this
+entry is not merged acceptance or Phase 6G completion.
+GitHub Fast CI and the requested full cryptographic gate failed before runner
+assignment (zero steps); the full suites were skipped. Local passing checks do
+not satisfy that final-head gate. See the Draft PR for the latest exact-head
+run links and evidence; CI runner execution must be restored before acceptance.
+Supporting code head 09653ef passed 571 PostgreSQL tests and fresh genuine-service
+registration/restart (857.41s). Cargo audit exited 0 but reported atomic-polyfill
+maintenance and scc 2.4.0 unsoundness advisories. The latter remains a P1 dependency
+review finding pending reachability assessment; see PHASE6G.md. No dependency or
+TON restrictions were changed. An evidence-only final documentation commit does
+not change the tested implementation; it still requires exact-head GitHub gates.
 
 ## Shipped into main as development implementation
 

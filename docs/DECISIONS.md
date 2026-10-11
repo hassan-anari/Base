@@ -27,4 +27,12 @@ Staking/earn, cross-chain/bridge/swap, high-frequency market-data integrations, 
 
 ## Decision change procedure
 
+Phase 6G first-slice engineering choices are submitted for independent review in
+[PHASE6G.md](../PHASE6G.md): dedicated root/network/deployment-owner/DEPOSIT
+namespace, monotonic non-hardened `m/0/index` reservations and no address issuance
+before genuine child attestation/signing acceptance. These are branch-level
+implementation choices within the authorized Phase 6G, not new product phases
+or production approvals. Solana seeded accounts, persistent derivation and full
+key lifecycle remain alternatives/requirements for subsequent reviewed slices.
+
 Record ID/date/requester/reason, alternatives considered, scope impact, security and migration impact, work package, approved-by and evidence. If a new request affects established goals, update PRODUCT_VISION, PRODUCT_REQUIREMENTS, ROADMAP and PROJECT_STATUS together, then review in a separate PR where feasible.

@@ -15,6 +15,8 @@ sweeps/withdrawals (see Meta). Indexes support fast lookups by address/user.
 
 from __future__ import annotations
 
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -191,6 +193,78 @@ class MpcKeyset(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
+
+
+class MpcProvisioningRoot(models.Model):
+    """Immutable allocation namespace, not proof of HD capability or spendability.
+
+    One original root has one network, ownership scope and deposit purpose.
+    Warm/Cold namespaces await their independently enforceable signing workflows.
+    """
+
+    keyset = models.OneToOneField(MpcKeyset, on_delete=models.PROTECT, primary_key=True)
+    ownership_scope = models.CharField(max_length=64)
+    chain_id = models.CharField(max_length=16)
+    purpose = models.CharField(max_length=16, default="DEPOSIT")
+    wallet_class = models.CharField(max_length=8, default="HOT")
+    derivation_version = models.CharField(max_length=48, default="cggmp_slip10_nonhardened_v1")
+    root_identity = models.JSONField()
+    dkg_public_evidence = models.JSONField()
+    next_index = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(
+                    purpose="DEPOSIT",
+                    wallet_class="HOT",
+                    derivation_version="cggmp_slip10_nonhardened_v1",
+                ),
+                name="mpc_provisioning_reviewed_shape",
+            ),
+            models.CheckConstraint(
+                condition=Q(next_index__lte=2147483648),
+                name="mpc_provisioning_index_capacity",
+            ),
+            models.CheckConstraint(
+                condition=~Q(ownership_scope=""), name="mpc_provisioning_owner_required"
+            ),
+        ]
+
+
+class MpcDerivationReservation(models.Model):
+    """A durable path assignment. Never a UserWallet or an issued address."""
+
+    reservation_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    root = models.ForeignKey(MpcProvisioningRoot, on_delete=models.PROTECT)
+    customer_ref = models.CharField(max_length=64)
+    idempotency_key = models.CharField(max_length=128)
+    child_index = models.PositiveBigIntegerField()
+    derivation_path = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, default="RESERVED")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["root", "child_index"], name="uq_mpc_reserved_index"),
+            models.UniqueConstraint(
+                fields=["root", "idempotency_key"], name="uq_mpc_reservation_retry"
+            ),
+            models.UniqueConstraint(
+                fields=["root", "derivation_path"], name="uq_mpc_reserved_path"
+            ),
+            models.CheckConstraint(
+                condition=Q(child_index__lte=2147483647), name="mpc_reserved_nonhardened"
+            ),
+            models.CheckConstraint(
+                condition=Q(status="RESERVED"), name="mpc_reservation_not_issued"
+            ),
+            models.CheckConstraint(
+                condition=~Q(customer_ref="") & ~Q(idempotency_key=""),
+                name="mpc_reservation_owner_retry_required",
+            ),
+        ]
 
 
 class UserWallet(models.Model):

@@ -401,3 +401,11 @@ CI and all 14 full-gate jobs, exact counts, artifact digests and actual timings
 are recorded in the PR's final verification comment after completion. Earlier
 SHA results remain supporting evidence only. All production restrictions and
 OPEN TON V5R1 audit correspondence above remain unchanged.
+
+The first financial-review gate correctly rejected an integrated fixture sweep
+which queried EVM history from genesis after completing durable backfill. The
+fixture now reloads and forwards the original height/hash for its sweep balance
+read; the production backfill/sweep guard remains intact. That failed gate is
+not acceptance evidence ([failed run 38128168034](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38128168034)).
+The final verification record identifies the corrected
+SHA and complete rerun.

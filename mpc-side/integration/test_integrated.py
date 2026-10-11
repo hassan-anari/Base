@@ -577,8 +577,18 @@ class Integrated:
             .first()
         )
         if job is None:
+            wallet.refresh_from_db()
             result = get_indexer(wallet.chain_id).get_balance(
-                wallet.deposit_address, asset_key=wallet.asset_key
+                wallet.deposit_address,
+                asset_key=wallet.asset_key,
+                **(
+                    {
+                        "after_block": wallet.last_scanned_block,
+                        "after_block_hash": wallet.evm_scan_block_hash,
+                    }
+                    if wallet.chain_id == "ETH"
+                    else {}
+                ),
             )
             triggered, job_id, reason = trigger_sweep(wallet, "integrated-balance-check", result)
             assert triggered, reason

@@ -18,6 +18,10 @@ remain unavailable. The 10,000-row reservation benchmark is 216.743/s on local
 PostgreSQL 16.15 and explicitly excludes DKG, signing, rent and issuance costs.
 Final-head tests/CI and Draft PR reference belong in the review handoff; this
 entry is not merged acceptance or Phase 6G completion.
+GitHub Fast CI and the requested full cryptographic gate failed before runner
+assignment (zero steps); the full suites were skipped. Local passing checks do
+not satisfy that final-head gate. See the Draft PR for the latest exact-head
+run links and evidence; CI runner execution must be restored before acceptance.
 
 ## Shipped into main as development implementation
 

@@ -207,6 +207,20 @@ gate scenarios remain intact. It tests genuine **root evidence registration**,
 not derived-child signing. Fast tests use public synthetic/mocked metadata solely
 for SQL and service behavior. Exact final-SHA CI evidence lives in the Draft PR.
 
+Review checkpoint: the initial implementation passed 570 PostgreSQL backend
+tests and genuine-service registration/restart acceptance in 338.10 seconds.
+The added genesis requirement passed 14 focused PostgreSQL cases. These are
+supporting local results; final-head results are recorded in the PR handoff.
+GitHub [Fast CI](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38140382988)
+and the [requested full gate](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38140447423)
+on supporting head `bf1b7b3823296412cce11bd21b485000a0ccf9de` failed **before
+runner assignment**, with zero job steps. Cryptographic suites were skipped.
+The CI provider's failure annotations were not available through the connected
+read endpoints and job logs returned 404; the underlying account/runner cause
+is not established. This is an unmet acceptance gate, not a passing gate or
+permission to weaken CI. Request the final-head gate again after runner execution
+is restored; independent review and merge acceptance must account for this block.
+
 ## Findings and next reviewable slice
 
 - No newly identified P0 in the tested reservation boundary; this is not a

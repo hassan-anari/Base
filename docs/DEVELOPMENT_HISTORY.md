@@ -37,6 +37,9 @@ Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. P
   216.743 reservations/s, 3,579,904 table/index bytes. These are **not issued
   spendable addresses**. See [PHASE6G.md](../PHASE6G.md); exact final head/CI
   links and genuine-service evidence are provided in the Draft PR handoff.
+  Initial local evidence: 570 backend tests and genuine CGGMP/mTLS registration
+  plus coordinator/DB restart passed (338.10s). GitHub jobs failed before runner
+  assignment; final-head Fast/full CI acceptance remains blocked, not waived.
 
 ## Significant discovered/fixed failure classes (development)
 

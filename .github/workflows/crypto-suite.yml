@@ -67,32 +67,40 @@ jobs:
           cache: pip
           cache-dependency-path: backend-side/requirements.txt
       - run: pip install -r backend-side/requirements.txt
-      - if: inputs.suite == 'evm' || inputs.suite == 'tron'
+      - if: inputs.suite == 'evm' || inputs.suite == 'tron' || inputs.suite == 'integrated'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: mpc-side/integration/evm/package-lock.json
-      - if: inputs.suite == 'evm' || inputs.suite == 'tron'
+      - if: inputs.suite == 'evm' || inputs.suite == 'tron' || inputs.suite == 'integrated'
         run: npm ci --prefix mpc-side/integration/evm
-      - if: inputs.suite == 'tron'
+      - if: inputs.suite == 'tron' || inputs.suite == 'integrated'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "8"
+      - name: Cache public pinned java-tron release
+        if: inputs.suite == 'tron' || inputs.suite == 'integrated'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/phase6f-FullNode.jar
+          key: java-tron-4.8.2.3-faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec
       - name: Fetch and verify pinned disposable java-tron validator
-        if: inputs.suite == 'tron'
+        if: inputs.suite == 'tron' || inputs.suite == 'integrated'
         run: |
-          curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          if [ ! -f "$PHASE6F_TRON_JAR" ]; then
+            curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          fi
           echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
       - name: Cache pinned disposable Solana validator
-        if: inputs.suite == 'solana'
+        if: inputs.suite == 'solana' || inputs.suite == 'integrated'
         uses: actions/cache@v4
         with:
           path: /tmp/phase6fb-solana/solana-release
           key: agave-2.1.21-linux-5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397
       - name: Fetch and verify pinned isolated Solana validator
-        if: inputs.suite == 'solana'
+        if: inputs.suite == 'solana' || inputs.suite == 'integrated'
         run: |
           mkdir -p /tmp/phase6fb-solana
           if [ ! -x "$PHASE6FB_SOLANA_BIN/solana-test-validator" ]; then
@@ -101,18 +109,18 @@ jobs:
             tar -xjf /tmp/phase6fb-solana/release.tar.bz2 -C /tmp/phase6fb-solana
           fi
           "$PHASE6FB_SOLANA_BIN/solana-test-validator" --version
-      - if: inputs.suite == 'ton'
+      - if: inputs.suite == 'ton' || inputs.suite == 'integrated'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: mpc-side/integration/ton/package-lock.json
-      - if: inputs.suite == 'ton'
+      - if: inputs.suite == 'ton' || inputs.suite == 'integrated'
         run: |
           npm ci --prefix mpc-side/integration/ton
           node mpc-side/integration/ton/compile.cjs
       - name: Provision pinned isolated TON validators from local genesis
-        if: inputs.suite == 'ton'
+        if: inputs.suite == 'ton' || inputs.suite == 'integrated'
         env:
           PYTHONPATH: backend-side:mpc-side/integration
         run: python -m ton.localnet work/ton-bootstrap --container phase6fc-localton
@@ -120,7 +128,7 @@ jobs:
       - name: Run every selected original scenario with private fixtures local to this job
         run: |
           mkdir -p work/crypto
-          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py mpc-side/integration/test_ton.py mpc-side/integration/test_ton_network.py mpc-side/integration/test_ton_django.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
+          pytest -x -v -s mpc-side/integration/test_cggmp.py mpc-side/integration/test_cggmp_aux.py mpc-side/integration/test_network.py mpc-side/integration/test_dkg.py mpc-side/integration/test_signing.py mpc-side/integration/test_solana.py mpc-side/integration/test_ton.py mpc-side/integration/test_ton_network.py mpc-side/integration/test_ton_django.py mpc-side/integration/test_integrated.py --crypto-suite="$CRYPTO_SUITE" --crypto-manifest=work/crypto/manifest.json --basetemp=work/crypto/fixtures --junitxml=work/crypto/results.xml --durations=0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -128,6 +136,7 @@ jobs:
           retention-days: 7
           path: |
             work/crypto/manifest.json
+            work/integrated-review/public-evidence.json
             work/crypto/results.xml
             work/crypto/fixtures/**/tron-evidence.json
             work/crypto/fixtures/**/solana-evidence.json

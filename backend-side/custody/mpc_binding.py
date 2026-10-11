@@ -95,7 +95,64 @@ def _wallet_root_keyset(wallet, chain_id, source_address):
         from .ton_policy import verified_binding
 
         verified_binding(chain_id, source_address, keyset)
+    _freeze_root_network(keyset, spec)
     return keyset
+
+
+def _freeze_root_network(keyset, spec):
+    """Pin each explicitly bound runtime chain; never replace an original network.
+
+    EVM roots may keep the existing explicitly approved multi-alias bindings.
+    An alias cannot adopt another numeric network/genesis with that same root.
+    TON additionally has its unique original StateInit/genesis binding.
+    """
+    from django.db import transaction
+
+    from .models import MpcKeyset
+
+    if spec.kind is ChainKind.EVM:
+        from .mpc_evm_network import network_identity
+
+        network = network_identity(spec.chain_id)
+    elif spec.kind is ChainKind.TRON:
+        from .mpc_tron_network import network_identity
+
+        network = network_identity(spec.chain_id)
+    elif spec.kind is ChainKind.SOLANA:
+        from .mpc_solana_network import network_identity
+
+        network = network_identity(spec.chain_id)
+    else:
+        from .mpc_ton_network import network_identity
+
+        network = network_identity(spec.chain_id)
+    identity = {
+        "scope": keyset.scope,
+        "algorithm": keyset.algorithm,
+        "public_key": keyset.public_key,
+        "dkg_execution_id": str(keyset.dkg_execution_id),
+        "dkg_fingerprint": keyset.dkg_result_fingerprint,
+        "network": network,
+    }
+    with transaction.atomic():
+        locked = MpcKeyset.objects.select_for_update().get(pk=keyset.pk)
+        if any(
+            getattr(locked, field) != getattr(keyset, field)
+            for field in (
+                "scope",
+                "algorithm",
+                "public_key",
+                "dkg_execution_id",
+                "dkg_result_fingerprint",
+            )
+        ):
+            raise MpcBindingError("root DKG identity changed during network binding")
+        original = locked.network_bindings.get(spec.chain_id)
+        if original is not None and original != identity:
+            raise MpcBindingError("original root network/DKG binding cannot be replaced")
+        if original is None:
+            locked.network_bindings[spec.chain_id] = identity
+            locked.save(update_fields=["network_bindings"])
 
 
 def verify_coordinator_keyset(keyset, metadata):
@@ -380,6 +437,7 @@ def validate_custody_intent(attempt):
 
 def transaction_identity(attempt, keyset):
     """Validate and snapshot the complete persisted unsigned transaction, after nonce ownership."""
+    from .mpc_evm_network import network_identity
     from .token_metadata import assert_verified_token
 
     spec = get_chain_spec(attempt.chain_id)
@@ -440,7 +498,10 @@ def transaction_identity(attempt, keyset):
         "operation_id": attempt.operation_id,
         "chain": attempt.chain_id,
         "evm_chain_id": spec.evm_chain_id,
+        "network": network_identity(spec.chain_id),
         "asset": attempt.asset_key,
+        "fee_asset": spec.native_asset_key,
+        "minimum_confirmations": spec.confirmations,
         "token_contract": None if asset.is_native else asset.contract_address,
         "source": attempt.from_address,
         "destination": attempt.to_address,

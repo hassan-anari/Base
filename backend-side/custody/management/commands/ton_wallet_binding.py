@@ -52,8 +52,11 @@ class Command(BaseCommand):
         )
         with transaction.atomic():
             binding, created = TonWalletBinding.objects.get_or_create(
-                chain_id="TON", address=address, defaults=defaults
+                keyset=keyset, defaults={"chain_id": "TON", "address": address, **defaults}
             )
-            if not created and any(getattr(binding, k) != v for k, v in defaults.items()):
+            if not created and any(
+                getattr(binding, k) != v
+                for k, v in {"chain_id": "TON", "address": address, **defaults}.items()
+            ):
                 raise CommandError("TON original binding cannot be replaced")
         self.stdout.write(address)

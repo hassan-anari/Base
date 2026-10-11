@@ -104,8 +104,13 @@ def test_mainnet_override_cannot_execute_session_or_broadcast(context, settings,
 def test_reviewed_public_testnet_identity_accepted(context, settings, alias, numeric):
     settings.MPC_INTEGRATION_ENVIRONMENT = "testnet"
     settings.MPC_EVM_DEVELOPMENT_CHAINS = {}
-    key = f"TEST-{alias}"
-    Asset.objects.create(asset_key=key, chain_id=alias, symbol=alias, is_native=True, enabled=True)
+    settings.MPC_EVM_GENESIS_HASHES = {}
+    native = Asset.objects.filter(chain_id=alias, is_native=True).first()
+    key = native.asset_key if native else f"TEST-{alias}"
+    Asset.objects.update_or_create(
+        asset_key=key,
+        defaults={"chain_id": alias, "is_native": True, "decimals": 18, "enabled": True},
+    )
     Chain.objects.update_or_create(
         chain_id=alias,
         defaults={
@@ -174,8 +179,100 @@ def test_explicit_loopback_development_chain_accepted(context, settings, url, nu
     NodeEndpoint.objects.filter(chain_id="ETH", enabled=True).update(url=url)
     assert_mpc_backend_runtime_safe("ETH")
     transport = Mock()
-    transport.rpc.return_value = hex(numeric)
+    transport.rpc.side_effect = lambda url, method, params: (
+        {"hash": "0x" + "11" * 32} if method == "eth_getBlockByNumber" else hex(numeric)
+    )
     verify_evm_rpc_endpoints("ETH", transport)
+
+
+@pytest.mark.parametrize("genesis", [None, "0x0", "0x" + "00" * 32, "0x" + "AA" * 32])
+def test_isolated_evm_unknown_genesis_fails_closed(context, settings, genesis):
+    settings.MPC_EVM_GENESIS_HASHES = {} if genesis is None else {"ETH": genesis}
+    with pytest.raises(MpcNetworkError, match="approved genesis"):
+        verify_evm_rpc_endpoints("ETH", Mock())
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+def test_same_numeric_evm_changed_genesis_cannot_rebind_root(context, settings):
+    from custody.mpc_binding import MpcBindingError, local_root_keyset
+
+    local_root_keyset(context.attempt)
+    settings.MPC_EVM_GENESIS_HASHES = {"ETH": "0x" + "22" * 32}
+    with pytest.raises(MpcBindingError, match="cannot be replaced"):
+        local_root_keyset(context.attempt)
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+def test_matching_numeric_evm_wrong_rpc_genesis_rejected(context):
+    transport = Mock()
+    transport.rpc.side_effect = lambda url, method, params: (
+        {"hash": "0x" + "22" * 32} if method == "eth_getBlockByNumber" else "0x7a69"
+    )
+    with pytest.raises(MpcNetworkError, match="RPC genesis"):
+        verify_evm_rpc_endpoints("ETH", transport)
+
+
+def test_signed_evm_original_confirmation_requirement_cannot_be_reduced(context):
+    complete(context)
+    original = (
+        context.attempt.signed_payload,
+        context.attempt.sequence,
+        context.session.session_id,
+    )
+    Chain.objects.filter(chain_id="ETH").update(min_confirmations=1)
+    with patch("custody.reconciliation._executor") as executor:
+        with pytest.raises(ValueError, match="immutable MPC transaction identity"):
+            reconcile_attempt(context.attempt.pk)
+        executor.assert_not_called()
+    context.attempt.refresh_from_db()
+    assert context.attempt.status == "RECONCILIATION_REQUIRED"
+    assert (
+        context.attempt.signed_payload,
+        context.attempt.sequence,
+        context.session.session_id,
+    ) == original
+    assert user_balances("phase6e", "ETH")["reserved"] == 1
+
+
+@pytest.mark.parametrize("receipt_status,event_count", [("0x0", 0), ("0x1", 1)])
+def test_native_deposit_requires_successful_matching_receipt(context, receipt_status, event_count):
+    from custody.indexer.evm_live import evm_get_balance
+
+    txid, block_hash = "0x" + "ab" * 32, "0x" + "cd" * 32
+
+    def rpc(url, method, params):
+        if method == "eth_chainId":
+            return "0x7a69"
+        if method == "eth_blockNumber":
+            return "0xe"
+        if method == "eth_getBalance":
+            return "0x0"
+        if method == "eth_getBlockByNumber":
+            if params == ["0x0", False]:
+                return {"hash": "0x" + "11" * 32}
+            return {
+                "number": params[0],
+                "hash": block_hash,
+                "parentHash": block_hash,
+                "transactions": [
+                    {"to": context.attempt.from_address, "value": "0x64", "hash": txid}
+                ]
+                if params[0] == "0x2"
+                else [],
+            }
+        assert method == "eth_getTransactionReceipt"
+        return {
+            "status": receipt_status,
+            "transactionHash": txid,
+            "blockHash": block_hash,
+            "blockNumber": "0x2",
+        }
+
+    with patch("custody.native_tx.RequestsTransport.rpc", side_effect=rpc):
+        events = evm_get_balance("ETH", context.attempt.from_address).deposit_events
+    assert len(events) == event_count
+    if events:
+        assert events[0].block_hash == block_hash
 
 
 def test_is_testnet_flag_is_required_but_not_sufficient(context):
@@ -236,6 +333,8 @@ def test_actual_failover_endpoint_is_checked_after_ambiguous_primary_broadcast(c
                 fallback_checks += 1
                 return "0x7a69" if fallback_checks == 1 else "0xa"
             return "0x7a69"
+        if method == "eth_getBlockByNumber":
+            return {"hash": "0x" + "11" * 32}
         assert method == "eth_sendRawTransaction" and url.endswith("18545")
         raise requests.Timeout("ambiguous primary response")
 

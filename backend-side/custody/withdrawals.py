@@ -31,7 +31,7 @@ from django.utils import timezone
 from .audit import AuditAction, write_audit_log
 from .config import ensure_hot_wallet, native_asset_key, validate_chain_asset
 from .ledger import release_withdrawal, reserve_withdrawal
-from .models import HotWallet, WithdrawalRequest
+from .models import Asset, HotWallet, WithdrawalRequest
 from .mpc_signer import SignPolicy, UnsignedTx, get_signer
 
 logger = logging.getLogger("custody.withdrawals")
@@ -47,7 +47,6 @@ def create_request(
 ) -> WithdrawalRequest:
     """User submits a withdrawal. Stays PENDING_APPROVAL until admin acts."""
     asset_key = asset_key or native_asset_key(network)  # default to native asset
-    validate_chain_asset(network, asset_key, "withdrawal")
     if idempotency_key is None:
         raise ValueError("idempotency_key is required")
     decimal_amount = Decimal(str(amount))
@@ -61,6 +60,8 @@ def create_request(
         "amount": decimal_amount,
     }
     with transaction.atomic():
+        Asset.objects.select_for_update().get(asset_key=asset_key)
+        validate_chain_asset(network, asset_key, "withdrawal")
         try:
             # The unique key is the arbitration boundary. The savepoint keeps
             # the outer transaction usable when a concurrent creator wins.

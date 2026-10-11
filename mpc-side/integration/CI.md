@@ -44,7 +44,7 @@ java-tron validator and executes a disposable faucet contract deployment. This
 catches broken runtime, RPC and TVM fixtures before fresh primes. This deployment
 is a setup check, not MPC custody acceptance.
 
-Then four independent jobs run in parallel:
+Then seven independent jobs run in parallel:
 
 | Suite | Original scenarios | Private fixture ownership |
 | --- | --- | --- |
@@ -52,13 +52,16 @@ Then four independent jobs run in parallel:
 | `tron` | Three signer-pair cases and genuine TRON custody acceptance | One reused `tron_auxiliary_network`, plus independent deposit root |
 | `aux-persistence` | Partial auxiliary persistence fault injection | Its own `Processes` and fresh auxiliary execution |
 | `network` | 38 CGGMP keygen and 124 FROST/DKG/network cases | Existing fixtures, local to this job |
+| `solana` | Genuine SOL/classic SPL acceptance | Original isolated Agave fixture |
+| `ton` | Genuine V5R1/reference Jetton MPC and validator acceptance | Original pinned TON genesis and proof fixtures |
+| `integrated` | Shared-ledger four-family workflows, overlapping signing, failures and restarts | One PostgreSQL/MPC environment, staged pinned validators; see `PHASE6F-D.md` |
 
 Tests inside each group remain sequential; shared mutable state is never used
 across jobs. No original assertion or cryptographic test is removed or weakened.
 The fixture-aware collection guard assigns every original scenario exactly once,
 rejects unknown auxiliary scenarios/duplicate inventory, records public node IDs
 and phase durations, and fails a selected suite on skipped or unexecuted cases.
-The four suites cover all 208 original independent-process scenarios.
+The seven suites cover 213 existing scenarios plus one integrated shared-environment scenario.
 
 `Swatinem/rust-cache@v2` remains in use. Preflight restores the existing
 `mpc-network` shared key; each suite restores that same build-cache identity.
@@ -70,8 +73,8 @@ collection/timing manifests and `tron-evidence.json`, retained for seven days.
 
 Every job checks its checkout against `REVIEWED_HEAD_SHA`. The aggregate gate
 requires `success` from every fast job, preflight, the full Rust protocol job and
-each of the four separately named process jobs. Failed, cancelled or skipped dependencies fail it;
-it also verifies the exact four-suite selection. Separate required job results
+each of the seven separately named process jobs. Failed, cancelled or skipped dependencies fail it;
+it also verifies the exact seven-suite selection. Separate required job results
 avoid relying on matrix-result aggregation; one failed suite does not cancel the
 other independent suites.
 
@@ -112,3 +115,8 @@ Choose the exact branch/commit ref. A partial dispatch deliberately cannot satis
 the full aggregate gate. `crypto_suite=all`, the existing `run-full-crypto` label
 event or the scheduled full run executes all required suites. Ordinary commits
 do not automatically rerun the expensive gate, even if the label remains present.
+
+Phase 6F-D adds `--crypto-suite=integrated` to the complete inventory and required
+aggregate. See [PHASE6F-D.md](../../PHASE6F-D.md) for trust boundaries, public
+evidence, fresh-root cost and the final-head review gate. No individual suite is
+removed or invoked a second time from within the integrated suite.

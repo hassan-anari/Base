@@ -58,12 +58,13 @@ def ensure_accounts(user_id: str, asset_key: str) -> None:
                 )
         except IntegrityError:
             # A concurrent creator won the unique-constraint race.
-            LedgerAccount.objects.get(
+            if not LedgerAccount.objects.filter(
                 owner_type=owner_type,
                 owner_id=owner_id,
                 asset_key=asset_key,
                 bucket=bucket,
-            )
+            ).exists():
+                raise  # Other database constraints are financial failures.
 
 
 def lock_user_accounts(user_id: str, asset_key: str) -> dict[str, LedgerAccount]:

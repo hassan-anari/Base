@@ -23,6 +23,9 @@ pynacl>=1.5
 base58>=2.1
 eth-keys>=0.5
 eth-utils>=5.1
+# Verify complete finalized ERC-20 receipt history against block receipt roots.
+trie==3.1.0
+rlp>=4,<5
 # --- DB driver (PostgreSQL) ---
 psycopg2-binary>=2.9
 # --- Observability (optional) ---

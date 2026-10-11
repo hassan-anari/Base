@@ -37,6 +37,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
+from .chain_registry import ChainKind, get_chain_spec
 from .config import (
     effective_deposit_threshold,
     ensure_hot_wallet,
@@ -201,7 +202,14 @@ def trigger_sweep(
                 asset_key=user_wallet.asset_key,
                 after_block=user_wallet.last_scanned_block,
                 memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
+                **(
+                    {"after_block_hash": user_wallet.evm_scan_block_hash}
+                    if get_chain_spec(user_wallet.chain_id).kind == ChainKind.EVM
+                    else {}
+                ),
             )
+        if not getattr(bal, "scan_complete", True):
+            return (False, None, "historical backfill must finish before sweeping")
         for event in bal.deposit_events:
             ingest_event(user_wallet, event)
         confirmed = Decimal(str(bal.confirmed_balance))

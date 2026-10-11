@@ -204,6 +204,7 @@ def tron_transaction_identity(attempt, keyset):
         "operation_id": attempt.operation_id,
         "chain": attempt.chain_id,
         "asset": attempt.asset_key,
+        "fee_asset": spec.native_asset_key,
         "token_contract": contract,
         "source": attempt.from_address,
         "destination": attempt.to_address,

@@ -11,6 +11,9 @@ def evm_signing_digest(unsigned_transaction: dict) -> tuple[str, bytes]:
     """Return the Ethereum signing hash without signing or double hashing."""
     unsigned_transaction = dict(unsigned_transaction)
     unsigned_transaction.pop("from", None)
+    from eth_utils import to_checksum_address
+
+    unsigned_transaction["to"] = to_checksum_address(unsigned_transaction["to"])
     if unsigned_transaction.get("type") not in (None, 0, "0x0", 2, "0x2"):
         raise ValueError("unsupported EVM transaction type")
     if unsigned_transaction.get("type") in (0, "0x0"):
@@ -66,6 +69,9 @@ def assemble_evm_signature(unsigned_transaction: dict, signature: dict, expected
 
     unsigned_transaction = dict(unsigned_transaction)
     unsigned_transaction.pop("from", None)
+    from eth_utils import to_checksum_address
+
+    unsigned_transaction["to"] = to_checksum_address(unsigned_transaction["to"])
     if unsigned_transaction.get("type") in (0, "0x0"):
         unsigned_transaction.pop("type")
     evm_signing_digest(unsigned_transaction)

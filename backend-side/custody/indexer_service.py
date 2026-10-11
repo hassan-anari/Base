@@ -35,6 +35,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import AuditAction, write_audit_log
+from .chain_registry import ChainKind, get_chain_spec
 from .config import (
     effective_deposit_threshold,
     get_chain,
@@ -52,7 +53,7 @@ logger = logging.getLogger("custody.indexer_service")
 SYSTEM_ACTOR = "indexer-service"
 
 
-def scan_wallet(user_wallet: UserWallet) -> dict:
+def scan_wallet(user_wallet: UserWallet, *, actor_id=SYSTEM_ACTOR) -> dict:
     """Scan a single wallet for deposits. Returns scan result dict.
 
     This is the core indexer logic for one wallet:
@@ -94,12 +95,16 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
 
     try:
         indexer = get_indexer(user_wallet.chain_id)
+        scan_options = {}
+        if get_chain_spec(user_wallet.chain_id).kind == ChainKind.EVM:
+            scan_options["after_block_hash"] = user_wallet.evm_scan_block_hash
         try:
             bal = indexer.get_balance(
                 user_wallet.deposit_address,
                 asset_key=user_wallet.asset_key,
                 after_block=user_wallet.last_scanned_block,
                 memo=user_wallet.memo if is_memo_required(user_wallet.chain_id) else None,
+                **scan_options,
             )
         except TypeError as exc:
             # Temporary compatibility for externally supplied Phase 4 clients.
@@ -133,9 +138,18 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
         if (
             locked.solana_scan_cursor != user_wallet.solana_scan_cursor
             or locked.last_scanned_block != user_wallet.last_scanned_block
+            or locked.evm_scan_block_hash != user_wallet.evm_scan_block_hash
         ):
             result["reason"] = "another scanner advanced this wallet; retry from durable cursor"
             return result
+        if hasattr(bal, "minimum_confirmations"):
+            from ops.models import Chain
+
+            chain = Chain.objects.select_for_update().get(chain_id=user_wallet.chain_id)
+            if chain.min_confirmations != bal.minimum_confirmations:
+                result["reason"] = "confirmation policy changed during EVM history scan; retry"
+                result["outcome"] = "indexer_unavailable"
+                return result
         for ev in bal.deposit_events:
             deposit, created = ingest_event(user_wallet, ev)
             if created:
@@ -148,7 +162,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
                     ev.confirmations,
                 )
                 write_audit_log(
-                    SYSTEM_ACTOR,
+                    actor_id,
                     AuditAction.DEPOSIT_DETECTED,
                     "Deposit",
                     str(deposit.id),
@@ -159,12 +173,19 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
                     },
                 )
         user_wallet.last_scanned_at = timezone.now()
-        if bal.last_scanned_block:
+        if bal.last_scanned_block is not None:
             user_wallet.last_scanned_block = bal.last_scanned_block
+        if hasattr(bal, "evm_scan_block_hash"):
+            user_wallet.evm_scan_block_hash = bal.evm_scan_block_hash
         if hasattr(bal, "scan_cursor"):
             user_wallet.solana_scan_cursor = bal.scan_cursor
         user_wallet.save(
-            update_fields=["last_scanned_at", "last_scanned_block", "solana_scan_cursor"]
+            update_fields=[
+                "last_scanned_at",
+                "last_scanned_block",
+                "evm_scan_block_hash",
+                "solana_scan_cursor",
+            ]
         )
 
     if not getattr(bal, "scan_complete", True):
@@ -183,7 +204,7 @@ def scan_wallet(user_wallet: UserWallet) -> dict:
 
         # Gas station top-up is handled inside trigger_sweep -> _run_sweep
         triggered, job_id, reason = trigger_sweep(
-            user_wallet, actor_id=SYSTEM_ACTOR, balance_result=bal
+            user_wallet, actor_id=actor_id, balance_result=bal
         )
         result["sweep_triggered"] = triggered
         result["sweep_job_id"] = job_id

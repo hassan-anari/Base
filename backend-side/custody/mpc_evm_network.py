@@ -67,6 +67,7 @@ def authorize_evm_network(chain_id, *, endpoint=None):
 
 def verify_evm_endpoint(chain_id, url, transport):
     spec = authorize_evm_network(chain_id, endpoint=url)
+    identity = network_identity(chain_id)
     reported = transport.rpc(url, "eth_chainId", [])
     try:
         if not isinstance(reported, str) or not reported.startswith("0x"):
@@ -76,6 +77,29 @@ def verify_evm_endpoint(chain_id, url, transport):
         raise MpcNetworkError("EVM RPC chain ID response is malformed") from None
     if numeric != spec.evm_chain_id:
         raise MpcNetworkError("EVM RPC chain ID does not match the authorized runtime network")
+    if "genesis_hash" in identity:
+        block = transport.rpc(url, "eth_getBlockByNumber", ["0x0", False])
+        if not isinstance(block, dict) or block.get("hash") != identity["genesis_hash"]:
+            raise MpcNetworkError("EVM RPC genesis does not match the approved network")
+
+
+def network_identity(chain_id):
+    spec = authorize_evm_network(chain_id)
+    identity = {"evm_chain_id": spec.evm_chain_id}
+    pins = settings.MPC_EVM_GENESIS_HASHES
+    genesis = pins.get(chain_id) if isinstance(pins, dict) else None
+    if genesis is not None or spec.evm_chain_id in LOCAL_DEVELOPMENT_CHAIN_IDS:
+        try:
+            if not isinstance(genesis, str) or len(genesis) != 66 or not genesis.startswith("0x"):
+                raise ValueError
+            if bytes.fromhex(genesis[2:]).hex() != genesis[2:] or int(genesis[2:], 16) == 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise MpcNetworkError(
+                "isolated EVM network requires an approved genesis hash"
+            ) from None
+        identity["genesis_hash"] = genesis
+    return identity
 
 
 def verify_evm_rpc_endpoints(chain_id, transport):

@@ -79,6 +79,25 @@ Demonstrated integration defects and narrow fixes:
 * EVM indexer and token-metadata reads did not consistently use MPC endpoint
   guards. They now check runtime network identity; native deposit ingestion also
   requires a matching successful receipt in MPC mode.
+* Independent review of `ab0cbab` found that the native EVM scanner ignored its
+  durable height, scanned only the recent 64 blocks, swallowed scan exceptions
+  (including network identity failures), and reported head after incomplete
+  history. This could permanently miss deposits. Native scanning now starts at
+  genesis or the last verified height/hash, reads at most 64 historical blocks
+  per call, and consumes only blocks satisfying the existing confirmation
+  policy. Full block transactions, contiguous ancestry and matching execution
+  receipts are required; missing/pruned history, malformed receipts, changed
+  checkpoint identity and RPC/identity errors abort the entire chunk. A verified
+  failed execution advances history without credit. Atomic event/journal/cursor
+  commit preserves earlier verified progress and rejects stale workers. A locked
+  chain-row comparison also rejects confirmation-policy changes during a scan,
+  before history or credit can commit under inconsistent finality requirements.
+  Migration `0025` adds the checkpoint hash and resets only former native EVM
+  progress, because the old reported head cannot certify history completeness.
+  Deposits and journals remain intact for exactly-once genesis backfill. A
+  pruned endpoint must be restored or replaced by an approved source retaining
+  the missing history; it cannot authorize skipping that history. Sweeps from
+  the background scanner wait until bounded backfill is complete.
 * Genuine interleaved withdrawal execution exposed valid lowercase EVM
   recipients rejected by the serialization library after reservation. Digest
   and signature assembly now normalize only the serialization copy to checksum
@@ -127,6 +146,7 @@ chain acceptance tests a second time. All stages must execute and pass.
 | Uncertainty | Lost Solana broadcast response and withheld finalized history retain the original reservation; actual blockhash expiry remains reconciliation-required; TRON RPC uncertainty remains reserved; no timeout-based release |
 | Quorum | One signer stopped with genuine B/C quorum; two signers stopped with no signature/local-key fallback |
 | Recovery | Coordinator restart during an original execution; actual Django worker SIGKILL after signed-byte persistence and replacement broadcast; all MPC processes restart with original identities |
+| EVM history | Real validator history after 140 mined blocks, 64-block durable chunks, injected read outage retaining the original checkpoint, reopened PostgreSQL connection/reloaded wallet, complete backfill and exactly-once credit |
 | Financial state | Same-symbol token balances stay separate; every journal conserves one asset; costs use native assets; duplicate completion/reconciliation does not post twice; unknown outcomes remain reserved |
 
 EVM remains live through heavy-validator stages. TRON can stop after its stage;
@@ -193,6 +213,30 @@ this has measurable variable cost. Actual JUnit durations, per-job start/end
 times, total gate wall time and sum of runner job seconds must be reported from
 the final-head run. Estimates and earlier-SHA passes are supporting evidence only.
 
+### Measured cost and safe optimization boundaries
+
+The reviewed `ab0cbab` run
+[`38091278751`](https://github.com/hassan-anari/Wallet-MPC/actions/runs/38091278751)
+passed all 14 jobs. First job start through aggregate completion took 40m15s;
+the sum of job occupancy was 95m25s. The integrated job took 34m53s, with its
+pytest scenario taking 1966.76s. Its four fresh CGGMP root setups took 295.96,
+441.39, 348.18 and 316.01 seconds (1401.55s total, approximately 71% of scenario
+time). This includes genuine DKG, auxiliary generation, authenticated import
+and activation, rather than a measurement of auxiliary arithmetic alone.
+The independent EVM/TRON/Solana/TON pytest suites took 545.66/990.71/362.36/99.08s.
+
+This revision caches only the public pinned java-tron release and verifies its
+original SHA-256 on every use, including cache hits. Existing Rust, package and
+Agave caches remain. This removes repeated public download work; no claim is
+made that it materially reduces the cryptographic critical path. A concrete
+future experiment is bounded overlap of two independent fresh CGGMP auxiliary
+setups on one runner. Adoption requires measurements of CPU/memory and total
+runner cost, and proof that original authenticated keyset/session identity and
+recovery assertions remain intact. That concurrency change is not implemented
+in this scanner correction. No shares, private signer stores or nonce material
+are cached; no roots or cryptographic results are reused between CI runs. Fast
+CI adds focused PostgreSQL scanner regressions without starting MPC/validators.
+
 `PHASE6FD_DEV_RESUME` is an explicit local harness-debugging option which retains
 the original encrypted services and public DKG request IDs after an assertion
 failure. CI never sets it and always creates fresh independent private fixtures.
@@ -240,3 +284,46 @@ the Draft PR; then stop for independent security review. Do not merge.
 Newly discovered financial identity and rebinding defects require independent
 review of the narrow database guards and migration. Passing tests do not
 substitute for that review or authorize production deployment.
+
+## Mandatory TON public-network production parity in the original roadmap
+
+Fully operational, production-capable TON custody on public networks is a
+mandatory deliverable of the original nine-phase production-readiness roadmap.
+Isolated Localnet acceptance is intermediate evidence. Official Wallet V5R1
+source alone does not establish custody production readiness. No fictitious
+Phase 6F-E is introduced, and Phase 6F-D must finish first. The separately
+reviewed production activation path must be coordinated with Phase 6G key
+management, Phase 7 administrative governance, and Phases 8–9 production
+integration and hardening. Those workstreams are not implemented in this PR.
+
+Before declaring TON production-capable, implementation and independently
+reviewed acceptance must demonstrate all of the following:
+
+* Genuine Mainnet identity with official global ID `-239` under an explicitly
+  reviewed policy and independently established trust anchors. Merely changing
+  Localnet IDs/endpoints or removing isolated-network restrictions is prohibited.
+* Public masterchain consensus proofs, validator-set and key-block transitions,
+  verified shard inclusion, and supported workchain-zero histories across
+  arbitrary shard splits and merges.
+* Complete resumable archival transaction history, pruning recovery, durable
+  authenticated cursors, and explicit procedures for unavailable history.
+* Native deposits, withdrawals, sweeps and wallet deployment using genuine
+  distributed FROST and approved root/network bindings.
+* Genuine TEP-74 transfers with independent master/wallet ownership and deployed
+  contract-code compatibility checks. Actual TON USDT contracts, if supported,
+  require their own independently verified implementation and acceptance;
+  reference Jetton hashes supply no such evidence or implied support.
+* Asynchronous internal transfers, recipient execution, bounces, excesses and
+  authoritative terminal outcomes, including gas/storage accounting,
+  reconciliation and exactly-once journal credit, costs and settlement.
+* Multiple independently controlled RPC/liteserver sources, operational
+  resilience, documented outage/recovery procedures and a production trust
+  model distinct from one operator's isolated validator fixtures.
+* Mainnet-specific adversarial and release acceptance, independent security
+  review and integration security approval. The existing exact-artifact V5R1
+  external audit correspondence remains **P1 OPEN** until independently resolved.
+
+These are unimplemented production prerequisites, not accomplishments of this
+gate. Public Mainnet, customer funds and production withdrawals remain disabled
+in PR #34. Passing protocol, chain-specific and integrated custody acceptance
+does not waive any of these deliverables or authorize production activation.

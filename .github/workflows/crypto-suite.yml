@@ -80,10 +80,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "8"
+      - name: Cache public pinned java-tron release
+        if: inputs.suite == 'tron' || inputs.suite == 'integrated'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/phase6f-FullNode.jar
+          key: java-tron-4.8.2.3-faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec
       - name: Fetch and verify pinned disposable java-tron validator
         if: inputs.suite == 'tron' || inputs.suite == 'integrated'
         run: |
-          curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          if [ ! -f "$PHASE6F_TRON_JAR" ]; then
+            curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          fi
           echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
       - name: Cache pinned disposable Solana validator
         if: inputs.suite == 'solana' || inputs.suite == 'integrated'

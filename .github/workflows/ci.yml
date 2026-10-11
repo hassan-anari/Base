@@ -74,8 +74,8 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
-      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-4]* custody/tests
-      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-4]* custody/tests
+      - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-5]* custody/tests
+      - run: ruff check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-5]* custody/tests
       - run: >-
           ruff format --check custody/admin.py custody/api.py custody/apps.py
           custody/config.py custody/deposits.py custody/gas_station.py custody/indexer_service.py
@@ -249,9 +249,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "8"
+      - name: Cache public pinned java-tron release
+        uses: actions/cache@v4
+        with:
+          path: /tmp/phase6f-FullNode.jar
+          key: java-tron-4.8.2.3-faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec
       - name: Fetch and verify pinned disposable java-tron validator
         run: |
-          curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          if [ ! -f "$PHASE6F_TRON_JAR" ]; then
+            curl --fail --location --silent --show-error https://github.com/tronprotocol/java-tron/releases/download/GreatVoyage-v4.8.2.3/FullNode.jar -o "$PHASE6F_TRON_JAR"
+          fi
           echo "faef7f4d89b9f154632bbab2db1712c25f02ee37b356013e098558ea994accec  $PHASE6F_TRON_JAR" | sha256sum --check
       - run: cargo build --locked --manifest-path mpc-side/Cargo.toml --bin wallet-mpc-coordinator --bin wallet-mpc-signer --example frost_round1_fixture --example frost_signing_package --example cggmp_round1_fixture --example cggmp_aux_message_fixture
       - name: Verify complete crypto inventory without executing fixtures

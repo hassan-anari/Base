@@ -16,7 +16,7 @@ class EvmIndexer(IndexerClient):
         super().__init__(chain_id)
 
     def get_balance(
-        self, address: str, *, asset_key=None, after_block=None, memo=None
+        self, address: str, *, asset_key=None, after_block=None, after_block_hash=None, memo=None
     ) -> BalanceResult:
         if self._stub_enabled():
             return self._stub_balance(asset_key=asset_key)
@@ -24,7 +24,9 @@ class EvmIndexer(IndexerClient):
             asset = Asset.objects.get(asset_key=asset_key, chain_id=self.chain_id, enabled=True)
             if not asset.is_native:
                 return self._token_balance(asset, address, after_block)
-            return evm_get_balance(self.chain_id, address)
+            return evm_get_balance(
+                self.chain_id, address, after_block=after_block, after_block_hash=after_block_hash
+            )
         except Exception as exc:
             logger.error("%s live balance failed for %s: %s", self.chain_id, address, exc)
             raise IndexerUnavailable(f"{self.chain_id} balance unavailable") from exc

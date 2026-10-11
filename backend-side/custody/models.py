@@ -236,6 +236,7 @@ class UserWallet(models.Model):
     # Indexer scan metadata
     last_scanned_at = models.DateTimeField(null=True, blank=True)
     last_scanned_block = models.BigIntegerField(null=True, blank=True)
+    evm_scan_block_hash = models.CharField(max_length=66, null=True, blank=True)
     solana_scan_cursor = models.JSONField(default=dict, blank=True)
     ton_scan_cursor = models.JSONField(default=dict, blank=True)
     # SPL ATA. The signing authority remains deposit_address.

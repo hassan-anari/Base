@@ -244,14 +244,16 @@ def test_native_deposit_requires_successful_matching_receipt(context, receipt_st
         if method == "eth_chainId":
             return "0x7a69"
         if method == "eth_blockNumber":
-            return "0x4"
+            return "0xe"
         if method == "eth_getBalance":
             return "0x0"
         if method == "eth_getBlockByNumber":
             if params == ["0x0", False]:
                 return {"hash": "0x" + "11" * 32}
             return {
+                "number": params[0],
                 "hash": block_hash,
+                "parentHash": block_hash,
                 "transactions": [
                     {"to": context.attempt.from_address, "value": "0x64", "hash": txid}
                 ]

@@ -20,6 +20,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+import requests
 from custody.deposits import ingest_event
 from custody.gas_station import execute_gas_intent, get_or_create_gas_intent
 from custody.indexer.factory import get_indexer
@@ -284,6 +285,70 @@ class Integrated:
                     "credit": f"deposit:{d.pk}:credit",
                 }
             )
+
+    def native_evm_history_recovery(self, wallet):
+        # Actual approved EVM RPC/history and shared PostgreSQL. No synthetic
+        # success responses: inject only an outage and otherwise forward reads.
+        evm = self.validators["ETH"]
+        for _ in range(140):
+            evm.rpc("evm_mine", [])
+        head = int(evm.rpc("eth_blockNumber", []), 16)
+        asset = Asset.objects.get(asset_key=wallet.asset_key)
+        original_threshold = asset.deposit_threshold
+        Asset.objects.filter(pk=asset.pk).update(deposit_threshold=Decimal("100"))
+        try:
+            assert scan_wallet(wallet)["outcome"] == "backfill"
+            wallet.refresh_from_db()
+            assert wallet.last_scanned_block == 63 and wallet.evm_scan_block_hash
+            original = (wallet.last_scanned_block, wallet.evm_scan_block_hash)
+            original_rpc = RequestsTransport.rpc
+
+            def unavailable(transport, url, method, params):
+                if method == "eth_getBlockByNumber" and params == ["0x46", True]:
+                    raise requests.Timeout("controlled native history outage")
+                return original_rpc(transport, url, method, params)
+
+            with patch.object(RequestsTransport, "rpc", unavailable):
+                assert scan_wallet(wallet)["outcome"] == "indexer_unavailable"
+            wallet.refresh_from_db()
+            assert (wallet.last_scanned_block, wallet.evm_scan_block_hash) == original
+            close_old_connections()
+            restarted = UserWallet.objects.get(pk=wallet.pk)
+            for _ in range(4):
+                result = scan_wallet(restarted)
+                assert result["outcome"] in {"backfill", "scanned"}, result
+                restarted.refresh_from_db()
+                if result["outcome"] == "scanned":
+                    break
+            else:
+                pytest.fail("native EVM historical backfill did not finish")
+            assert restarted.last_scanned_block == head - 2
+            assert scan_wallet(restarted)["outcome"] == "scanned"
+            deposit = Deposit.objects.get(user_wallet=wallet)
+            assert (
+                LedgerTransaction.objects.filter(event_key=f"deposit:{deposit.pk}:credit").count()
+                == 1
+            )
+            assert user_balances(CUSTOMER, wallet.asset_key)["available"] == 2
+            wallet.refresh_from_db()
+            self.evidence["faults"].append(
+                {
+                    "fault": "NATIVE_EVM_HISTORICAL_SCAN_RECOVERY",
+                    "elapsed_blocks": 140,
+                    "verified_before_outage": {"block": original[0], "hash": original[1]},
+                    "head": head,
+                    "verified_after_restart": {
+                        "block": wallet.last_scanned_block,
+                        "hash": wallet.evm_scan_block_hash,
+                    },
+                    "restart": "database connection reopened and wallet reloaded",
+                    "deposit": deposit.pk,
+                    "credit": f"deposit:{deposit.pk}:credit",
+                    "exactly_once_credit": True,
+                }
+            )
+        finally:
+            Asset.objects.filter(pk=asset.pk).update(deposit_threshold=original_threshold)
 
     def signed(self, attempt):
         deadline = time.monotonic() + 210
@@ -952,6 +1017,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                 ],
             )
             h.destinations = {"ETH": faucet}
+            h.native_evm_history_recovery(ew)
             h.credit(ew, Decimal(2))
             h.credit(et, Decimal(1))
             h.sweep(ew)
@@ -1207,6 +1273,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                     "chain_id",
                     "asset_key",
                     "last_scanned_block",
+                    "evm_scan_block_hash",
                     "solana_scan_cursor",
                     "ton_scan_cursor",
                 )
@@ -1233,6 +1300,7 @@ def test_shared_four_chain_custody_concurrency_isolation_and_durability(tmp_path
                     "chain_id",
                     "asset_key",
                     "last_scanned_block",
+                    "evm_scan_block_hash",
                     "solana_scan_cursor",
                     "ton_scan_cursor",
                 )

@@ -186,6 +186,44 @@ def test_authentication_and_original_scope_required(root):
 
 
 @pytest.mark.django_db
+def test_numeric_network_id_without_genesis_cannot_register_namespace():
+    keyset = fixture_keyset()
+    binding = {
+        "scope": keyset.scope,
+        "algorithm": keyset.algorithm,
+        "public_key": keyset.public_key,
+        "dkg_execution_id": str(keyset.dkg_execution_id),
+        "dkg_fingerprint": keyset.dkg_result_fingerprint,
+        "network": {"evm_chain_id": 11155111},
+    }
+    # Historical public-testnet root signing can have a numeric-only binding.
+    # It must not establish a new namespace's mandatory genesis identity.
+    keyset.network_bindings = {"ETH": binding}
+    keyset.save()
+    with (
+        patch(
+            "custody.signer_adapter.SelfHostedMpcAdapter.get_keyset",
+            return_value=metadata_for(keyset),
+        ),
+        patch("custody.mpc_provisioning._freeze_root_network"),
+    ):
+        with pytest.raises(ProvisioningError, match="genesis"):
+            register_provisioning_root(
+                keyset_id=keyset.keyset_id, chain_id="ETH", ownership_scope="isolated"
+            )
+    identity = {"keyset_id": str(keyset.keyset_id), "chain_id": "ETH", **binding}
+    with pytest.raises(DatabaseError), transaction.atomic():
+        MpcProvisioningRoot.objects.create(
+            keyset=keyset,
+            ownership_scope="isolated",
+            chain_id="ETH",
+            root_identity=identity,
+            dkg_public_evidence=metadata_for(keyset),
+        )
+    assert MpcProvisioningRoot.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_database_identity_and_security_class_guards(root):
     reservation = allocate(root)
     for change in (

@@ -75,6 +75,8 @@ The namespace records immutable ownership_scope, chain/network/genesis, original
 public key and DKG execution/fingerprint, evidence, DEPOSIT purpose, HOT class
 and `cggmp_slip10_nonhardened_v1`. This is **an allocation schema version**, not
 a cryptographic capability attestation, and does not replace `cggmp_hd_v1`.
+Numeric-only legacy EVM network bindings cannot register a namespace: an explicit
+original genesis pin is mandatory in both the service and PostgreSQL trigger.
 
 `MpcDerivationReservation` stores UUID, original root, customer_ref, idempotency
 key, unique index, canonical `m/0/index`, and RESERVED status. All indices are

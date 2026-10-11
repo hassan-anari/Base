@@ -32,6 +32,10 @@ BEGIN
      OR NOT (NEW.root_identity ? 'network')
      OR jsonb_typeof(NEW.root_identity -> 'network') IS DISTINCT FROM 'object'
      OR NEW.root_identity -> 'network' = '{}'::jsonb
+     OR (k.scope = 'EVM' AND coalesce(
+           NEW.root_identity -> 'network' ->> 'genesis_hash', '') = '')
+     OR (k.scope = 'TRON' AND coalesce(
+           NEW.root_identity -> 'network' ->> 'genesis_block_id', '') = '')
      OR NEW.dkg_public_evidence = '{}'::jsonb THEN
     RAISE EXCEPTION 'provisioning requires original active CGGMP root/network evidence';
   END IF;

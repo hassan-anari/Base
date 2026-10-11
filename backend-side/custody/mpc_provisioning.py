@@ -45,6 +45,9 @@ def _identity(keyset, chain_id):
     }
     if binding != expected or not expected["network"]:
         raise ProvisioningError("original root network/DKG identity mismatch")
+    genesis_field = "genesis_hash" if keyset.scope == "EVM" else "genesis_block_id"
+    if not isinstance(expected["network"], dict) or not expected["network"].get(genesis_field):
+        raise ProvisioningError("allocation requires an explicit original genesis pin")
     return {"keyset_id": str(keyset.keyset_id), "chain_id": chain_id, **expected}
 
 

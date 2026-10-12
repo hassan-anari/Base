@@ -58,6 +58,7 @@ pub struct SigningService {
     local: Mutex<Local>,
     auxiliary: Arc<AuxService>,
     peers: SignerClient,
+    hd: Arc<crate::hd::HdService>,
     capacity: Arc<Semaphore>,
 }
 impl Local {
@@ -125,6 +126,7 @@ impl SigningService {
         party: String,
         executions: ExecutionTombstones,
         auxiliary: Arc<AuxService>,
+        hd: Arc<crate::hd::HdService>,
         peers: SignerClient,
     ) -> Result<Arc<Self>> {
         let directory = directory.join("cggmp-signing");
@@ -183,6 +185,7 @@ impl SigningService {
         Ok(Arc::new(Self {
             local: Mutex::new(local),
             auxiliary,
+            hd,
             peers,
             capacity: Arc::new(Semaphore::new(4)),
         }))
@@ -193,6 +196,15 @@ impl SigningService {
         execution: SigningExecution,
     ) -> Result<SignReport> {
         execution.validate()?;
+        if let Some(child) = &execution.request.child_authorization {
+            if action != "report" && action != "abort" {
+                self.hd.verify_original_request(&execution.request)?;
+            }
+            self.hd.validate_child(child).await?;
+        } else if action != "report" && action != "abort" {
+            self.hd
+                .require_historical_root_signing(execution.request.keyset_id)?;
+        }
         let party = { self.local.lock().await.party.clone() };
         ensure!(
             execution.selected_signers.contains(&party),
@@ -330,6 +342,7 @@ impl SigningService {
         let worker_party = party.clone();
         let auxiliary = self.auxiliary.clone();
         let peers = self.peers.clone();
+        let hd = self.hd.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let execution = worker_execution;
@@ -338,6 +351,12 @@ impl SigningService {
                 tokio::time::timeout(Duration::from_secs(180), async {
                     let digest = execution.validate()?;
                     let key = auxiliary.own_key(&execution.auxiliary).await?;
+                    if let Some(child) = &execution.request.child_authorization {
+                        hd.verify_original_request(&execution.request)?;
+                        hd.validate_child(child).await?;
+                    } else {
+                        hd.require_historical_root_signing(execution.request.keyset_id)?;
+                    }
                     let index = execution
                         .selected_signers
                         .iter()
@@ -369,24 +388,30 @@ impl SigningService {
                     let message = PrehashedDataToSign::<Secp256k1>::from_scalar(
                         Scalar::from_be_bytes_mod_order(digest),
                     );
-                    let signature = cggmp24::signing(
+                    let builder = cggmp24::signing(
                         cggmp24::ExecutionId::new(transcript.as_bytes()),
                         index,
                         &original,
                         &key,
-                    )
-                    .sign(
-                        &mut rand_core::OsRng,
-                        MpcParty::connected(protocol_delivery::<Msg>(
-                            context,
-                            party.clone(),
-                            peers,
-                            inbox,
-                        )),
-                        &message,
-                    )
-                    .await?
-                    .normalize_s();
+                    );
+                    let builder = if let Some(child) = &execution.request.child_authorization {
+                        builder.set_derivation_path(child.request.path()?)?
+                    } else {
+                        builder
+                    };
+                    let signature = builder
+                        .sign(
+                            &mut rand_core::OsRng,
+                            MpcParty::connected(protocol_delivery::<Msg>(
+                                context,
+                                party.clone(),
+                                peers,
+                                inbox,
+                            )),
+                            &message,
+                        )
+                        .await?
+                        .normalize_s();
                     let mut bytes = [0u8; 64];
                     signature.write_to_slice(&mut bytes);
                     verified_signature(&execution, &bytes)

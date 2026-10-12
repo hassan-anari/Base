@@ -75,6 +75,70 @@ pub struct TlsConfig {
     pub key: String,
 }
 
+/// Verify the original custody machine request across the coordinator hop.
+/// Uses the same private CA and client-auth identity as the mTLS boundary.
+pub struct CustodyRequestVerifier {
+    verifier: Arc<dyn rustls::server::danger::ClientCertVerifier>,
+}
+
+impl CustodyRequestVerifier {
+    pub fn new(config: &TlsConfig) -> Result<Self> {
+        let mut roots = RootCertStore::empty();
+        for cert in certificates(&config.ca)? {
+            roots.add(cert)?;
+        }
+        Ok(Self {
+            verifier: WebPkiClientVerifier::builder_with_provider(
+                Arc::new(roots),
+                Arc::new(rustls::crypto::ring::default_provider()),
+            )
+            .build()?,
+        })
+    }
+
+    pub fn verify(&self, message: &[u8], chain: &[Vec<u8>], signature: &[u8]) -> Result<()> {
+        ensure!(
+            !chain.is_empty()
+                && chain.len() <= 5
+                && chain.iter().all(|c| !c.is_empty() && c.len() <= 8192)
+                && (8..=80).contains(&signature.len()),
+            "invalid custody request credential bounds"
+        );
+        let leaf = CertificateDer::from(chain[0].as_slice());
+        let intermediates: Vec<_> = chain[1..]
+            .iter()
+            .map(|c| CertificateDer::from(c.as_slice()))
+            .collect();
+        self.verifier.verify_client_cert(
+            &leaf,
+            &intermediates,
+            rustls::pki_types::UnixTime::now(),
+        )?;
+        ensure!(
+            certificate_identity(&leaf)?.role() == "custody",
+            "custody identity required"
+        );
+        let (_, cert) = X509Certificate::from_der(leaf.as_ref())?;
+        let public = cert.public_key();
+        ensure!(
+            public.algorithm.algorithm.to_id_string() == "1.2.840.10045.2.1"
+                && public
+                    .algorithm
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.as_oid().ok())
+                    .is_some_and(|oid| oid.to_id_string() == "1.2.840.10045.3.1.7"),
+            "custody child authorization requires P-256 identity"
+        );
+        ring::signature::UnparsedPublicKey::new(
+            &ring::signature::ECDSA_P256_SHA256_ASN1,
+            public.subject_public_key.data.as_ref(),
+        )
+        .verify(message, signature)
+        .map_err(|_| anyhow::anyhow!("original custody request signature mismatch"))
+    }
+}
+
 pub fn required(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("required configuration {name} missing"))
 }

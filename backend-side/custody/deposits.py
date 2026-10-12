@@ -12,6 +12,10 @@ from .models import Asset, Deposit
 @transaction.atomic
 def ingest_event(user_wallet, event) -> tuple[Deposit, bool]:
     """Persist/update one concrete indexer event and credit at finality exactly once."""
+    if user_wallet.custody_account_id:
+        from .mpc_issuance import validate_child_wallet
+
+        validate_child_wallet(user_wallet, user_wallet.chain_id, user_wallet.deposit_address)
     # Serialize validation and first credit with registry mutation. Account
     # insertion freezes this same row before the transaction can release it.
     Asset.objects.select_for_update().get(asset_key=user_wallet.asset_key)

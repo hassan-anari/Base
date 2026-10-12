@@ -24,9 +24,15 @@
 
 ## Remaining order — do not renumber
 
-### Phase 6G — Scalable wallet provisioning and key lifecycle (NEXT)
+### Phase 6G — Scalable wallet provisioning and key lifecycle (IN PROGRESS)
 
 Chain-specific **genuine** distributed address provisioning/derivation, keyset scopes and account bindings, Hot/Warm/Cold foundations, signer node/key lifecycle, new root and child lifecycle, auditable rotation, resharing/recovery and tested failure behavior. Explicitly evaluate performance and key security per algorithm, do not infer FROST and ECDSA can use identical HD derivation. Add schema and tenancy extension points, but do not implement all merchant/trade product APIs early.
+
+Authorized delivery is exactly three major PRs: **6G-A PR #36 merged** for root
+registration/reservations; **6G-B** for complete genuine EVM/TRON HD issuance and
+child signing; **6G-C final** for Solana scalable provisioning, lifecycle,
+rotation/recovery and Hot/Warm/Cold foundations. Do not split B into additional
+PRs or add roadmap phases. Phase 7/8 exclusions remain.
 
 Gate: no private-key reconstruction, measurable high-volume provisioning, durable identities, no cross-root replay/rebinding, key-loss and restart acceptance, final-SHA CI.
 

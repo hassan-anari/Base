@@ -141,21 +141,32 @@ def signing_evidence(attempt):
     assert MpcSigningSession.objects.filter(attempt=attempt).count() == 1
     completed = MpcSigningSession.objects.select_related("keyset").get(attempt=attempt)
     assert completed.status == "COMPLETED" and completed.signature_consumed_at
+    if completed.transaction_identity.get("child_authorization"):
+        assert completed.custody_authorization
     return {
         "txid": attempt.network_tx_id,
         "session_id": str(completed.session_id),
         "execution_id": str(completed.crypto_execution_id),
         "selected_signers": completed.selected_signers,
+        "original_custody_authorization_present": bool(completed.custody_authorization),
         "public_key": completed.keyset.public_key,
+        "signing_public_key": completed.transaction_identity.get(
+            "public_key", completed.keyset.public_key
+        ),
+        "source": attempt.from_address,
+        "child_authorization": completed.transaction_identity.get("child_authorization"),
+        "session_seconds_to_consumed_signature": (
+            completed.signature_consumed_at - completed.created_at
+        ).total_seconds(),
         "signed_payload_sha256": hashlib.sha256(attempt.signed_payload.encode()).hexdigest(),
     }
 
 
-def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
+def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=False):
     assert connection.vendor == "postgresql"
     hot_keyset = imported_keyset(net.aux_context, net.aux_state)
     hot = address_from_public_key("TRX", hot_keyset.public_key)
-    # A second independently generated root proves deposit ownership; no child derivation.
+    # An independent root owns deposits; optional child issuance uses its original shares.
     deposit_root_started = time.monotonic()
     if deposit_metadata is None:
         context = binding("TRON")
@@ -199,6 +210,43 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
             ),
         ):
             setup_chain(hot_keyset, hot, validator.url)
+            account = None
+            if child_wallets:
+                from custody.mpc_issuance import attest_original_hd, issue_customer_account
+                from custody.mpc_provisioning import register_provisioning_root
+
+                root = register_provisioning_root(
+                    keyset_id=deposit_keyset.keyset_id,
+                    chain_id="TRX",
+                    ownership_scope="phase6gb-tron",
+                )
+                attest_original_hd(
+                    keyset_id=deposit_keyset.keyset_id, ownership_scope=root.ownership_scope
+                )
+                accounts = [
+                    issue_customer_account(
+                        keyset_id=deposit_keyset.keyset_id,
+                        ownership_scope=root.ownership_scope,
+                        customer_ref=f"tron-child-{i}",
+                        idempotency_key=f"child-{i}",
+                    )
+                    for i in range(3)
+                ]
+                assert len({a.address for a in accounts}) == 3
+                assert all(a.public_key != deposit_keyset.public_key for a in accounts)
+                account = accounts[0]
+                deposit = account.address
+                evidence["child_accounts"] = [
+                    {
+                        "account_id": str(a.pk),
+                        "public_key": a.public_key,
+                        "root_public_key": deposit_keyset.public_key,
+                        "path": a.reservation.derivation_path,
+                        "address": a.address,
+                    }
+                    for a in accounts
+                ]
+
             provider = HTTPProvider(validator.url)
             provider.sess.trust_env = False
             client = Tron(provider=provider)
@@ -262,15 +310,25 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                 assert user_balances(operation.user_id, "TRX")["reserved"] == 0
 
                 # Genuine owned deposit sweep back into treasury, with a separate DKG root.
-                native_wallet = UserWallet.objects.create(
-                    user_id="tron-deposit",
-                    chain_id="TRX",
-                    asset_key="TRX",
-                    deposit_address=deposit,
-                    derivation_path=f"keyset:{deposit_keyset.keyset_id}",
-                    derivation_version="mpc_root_v1",
-                    mpc_keyset=deposit_keyset,
-                )
+                if account:
+                    from custody.mpc_issuance import attach_account_asset
+
+                    native_wallet = attach_account_asset(
+                        account_id=account.pk,
+                        customer_ref=account.customer_ref,
+                        ownership_scope=account.ownership_scope,
+                        asset_key="TRX",
+                    )
+                else:
+                    native_wallet = UserWallet.objects.create(
+                        user_id="tron-deposit",
+                        chain_id="TRX",
+                        asset_key="TRX",
+                        deposit_address=deposit,
+                        derivation_path=f"keyset:{deposit_keyset.keyset_id}",
+                        derivation_version="mpc_root_v1",
+                        mpc_keyset=deposit_keyset,
+                    )
                 balance = TrxIndexer().get_balance(deposit, asset_key="TRX")
                 assert balance.confirmed_balance == Decimal("20")
                 assert any(
@@ -299,6 +357,25 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                 )
                 execute_attempt(sweep.pk, "worker")
                 sweep = settle(validator, sweep)
+                if account:
+                    assert sweep.from_address == account.address
+                    observed = validator.post(
+                        "/wallet/gettransactionbyid",
+                        {"value": sweep.network_tx_id, "visible": False},
+                    )
+                    assert (
+                        observed["raw_data"]["contract"][0]["parameter"]["value"][
+                            "owner_address"
+                        ].lower()
+                        == address_bytes(account.address).hex()
+                    )
+                    assert (
+                        MpcSigningSession.objects.get(attempt=sweep).transaction_identity[
+                            "public_key"
+                        ]
+                        == account.public_key
+                    )
+
                 evidence["transactions"].append(
                     {
                         "operation": "native_sweep",
@@ -370,15 +447,24 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                 )
 
                 # Real TRX resource funding is confirmed before the deposit token sweep.
-                wallet = UserWallet.objects.create(
-                    user_id="tron-deposit",
-                    chain_id="TRX",
-                    asset_key=asset.asset_key,
-                    deposit_address=deposit,
-                    derivation_path=f"keyset:{deposit_keyset.keyset_id}",
-                    derivation_version="mpc_root_v1",
-                    mpc_keyset=deposit_keyset,
-                )
+                if account:
+                    wallet = attach_account_asset(
+                        account_id=account.pk,
+                        customer_ref=account.customer_ref,
+                        ownership_scope=account.ownership_scope,
+                        asset_key=asset.asset_key,
+                    )
+                    assert wallet.custody_account_id == native_wallet.custody_account_id
+                else:
+                    wallet = UserWallet.objects.create(
+                        user_id="tron-deposit",
+                        chain_id="TRX",
+                        asset_key=asset.asset_key,
+                        deposit_address=deposit,
+                        derivation_path=f"keyset:{deposit_keyset.keyset_id}",
+                        derivation_version="mpc_root_v1",
+                        mpc_keyset=deposit_keyset,
+                    )
                 balance = TrxIndexer().get_balance(deposit, asset_key=asset.asset_key)
                 assert balance.confirmed_balance == Decimal("1.25")
                 assert any(event.tx_hash == token.network_tx_id for event in balance.deposit_events)
@@ -461,6 +547,25 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
                     assert first.result(timeout=10) == "BROADCASTED"
                 assert calls == [json.loads(token_sweep.signed_payload)]
                 token_sweep = settle(validator, token_sweep)
+                if account:
+                    assert token_sweep.from_address == account.address
+                    observed = validator.post(
+                        "/wallet/gettransactionbyid",
+                        {"value": token_sweep.network_tx_id, "visible": False},
+                    )
+                    assert (
+                        observed["raw_data"]["contract"][0]["parameter"]["value"][
+                            "owner_address"
+                        ].lower()
+                        == address_bytes(account.address).hex()
+                    )
+                    assert (
+                        MpcSigningSession.objects.get(attempt=token_sweep).transaction_identity[
+                            "public_key"
+                        ]
+                        == account.public_key
+                    )
+
                 assert (
                     TrxIndexer().get_balance(deposit, asset_key=asset.asset_key).confirmed_balance
                     == 0
@@ -513,7 +618,9 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None):
             "CI_STAGE tron_validator_acceptance_seconds="
             f"{time.monotonic() - validator_acceptance_started:.3f}"
         )
-        (tmp_path / "tron-evidence.json").write_text(json.dumps(evidence, indent=2))
+        (
+            tmp_path / ("tron-child-evidence.json" if child_wallets else "tron-evidence.json")
+        ).write_text(json.dumps(evidence, indent=2))
     print("REAL_TRON_ACCEPTANCE", json.dumps(evidence, sort_keys=True))
 
 

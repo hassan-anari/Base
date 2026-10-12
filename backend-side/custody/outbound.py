@@ -323,7 +323,7 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
             signer.authorize_request(actor_id, policy)
             signer.validate_transaction(tx, policy)
             signer.enforce_rate_limit(actor_id, policy)
-            MpcSigningSession.objects.create(
+            session = MpcSigningSession.objects.create(
                 attempt=attempt,
                 session_id=uuid.uuid4(),
                 keyset=keyset,
@@ -334,6 +334,9 @@ def _execute_attempt(attempt_id: int, actor_id: str, signer: MpcSigner | None = 
                 transaction_identity=identity,
                 coordinator_request_id=identity_fingerprint(identity),
             )
+            from .mpc_signing import persist_custody_authorization
+
+            persist_custody_authorization(attempt, session)
             attempt.status = "SIGNING"
             attempt.save(update_fields=["status", "updated_at"])
             write_audit_log(

@@ -1,0 +1,152 @@
+{
+  "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+  "base": "24eed19e6e280083793c69c3901f5f746dd0a2fe",
+  "fast_run": 38262366737,
+  "full_run": 38262414457,
+  "fast_conclusion": "success",
+  "full_conclusion": "success",
+  "jobs": [
+    {
+      "name": "rust-audit",
+      "id": 114856011665,
+      "conclusion": "success"
+    },
+    {
+      "name": "backend",
+      "id": 114856011905,
+      "conclusion": "success"
+    },
+    {
+      "name": "rust-check",
+      "id": 114856011940,
+      "conclusion": "success"
+    },
+    {
+      "name": "frontend",
+      "id": 114856012146,
+      "conclusion": "success"
+    },
+    {
+      "name": "crypto-preflight",
+      "id": 114857454156,
+      "conclusion": "success"
+    },
+    {
+      "name": "rust-crypto",
+      "id": 114858320430,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-ton / crypto-suite",
+      "id": 114858320936,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-evm / crypto-suite",
+      "id": 114858320988,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-solana / crypto-suite",
+      "id": 114858321162,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-tron / crypto-suite",
+      "id": 114858321198,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-integrated / crypto-suite",
+      "id": 114858321257,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-network / crypto-suite",
+      "id": 114858321312,
+      "conclusion": "success"
+    },
+    {
+      "name": "mpc-aux-persistence / crypto-suite",
+      "id": 114858321342,
+      "conclusion": "success"
+    },
+    {
+      "name": "full-crypto-gate",
+      "id": 114868769635,
+      "conclusion": "success"
+    }
+  ],
+  "scenario_counts": {
+    "backend": 600,
+    "preflight": 8,
+    "rust_distinct": 32,
+    "evm": 44,
+    "tron": 5,
+    "solana": 2,
+    "ton": 3,
+    "network": 162,
+    "persistence": 1,
+    "integrated": 1,
+    "total_integration": 218
+  },
+  "required_skips": 0,
+  "artifacts": [
+    {
+      "name": "crypto-integrated-public-results",
+      "id": 11755095757,
+      "digest": "sha256:e82e392d7e92c0aca0f49b4d6a06d5819d447c7a01fece083b5a38ff5fb68a91",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:51:11Z"
+    },
+    {
+      "name": "crypto-evm-public-results",
+      "id": 11754597807,
+      "digest": "sha256:3a5ddfcc1f426ef70d42084358efcfc82d7176b1748d4518ab0c7b51c3d56f9f",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:53:06Z"
+    },
+    {
+      "name": "crypto-tron-public-results",
+      "id": 11754196380,
+      "digest": "sha256:c7a59afd4b6eb82b835b9398d0d50254d29082a98535b4c4da1047da7fc0eaeb",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:40:03Z"
+    },
+    {
+      "name": "crypto-solana-public-results",
+      "id": 11753916809,
+      "digest": "sha256:aff244256cff75eb3ba80c140d44a9bc83cba873833c489a88b8e851d7b27050",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:34:55Z"
+    },
+    {
+      "name": "crypto-network-public-results",
+      "id": 11753702075,
+      "digest": "sha256:e686d6205165ce214854f87e30ca4419c662ee000aa5de2a0f69e0f0922ed553",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:30:46Z"
+    },
+    {
+      "name": "crypto-preflight-public-results",
+      "id": 11752858739,
+      "digest": "sha256:a49784782b508abcdc92cd5ef02411279be713bf5aa5e27d97a78dffbecf1940",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:27:43Z"
+    },
+    {
+      "name": "crypto-aux-persistence-public-results",
+      "id": 11752699887,
+      "digest": "sha256:0ad3dee0a82a124421225c5a32c409c6086547e556d96188e86a41e4ac25575f",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:32:06Z"
+    },
+    {
+      "name": "crypto-ton-public-results",
+      "id": 11752589644,
+      "digest": "sha256:708ea30196de0a079c53f082346d2b71a3bb5b4e99baeb9d83360dc855eef6f2",
+      "head": "3670893bdfa6b21e2a99887e1238de5a979658cb",
+      "expires_at": "2026-10-19T14:30:53Z"
+    }
+  ]
+}

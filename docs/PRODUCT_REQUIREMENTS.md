@@ -12,11 +12,15 @@
 
 Acceptance: thousands of non-colliding provisioned addresses in performance tests; independent signer shares never reconstructed; keys reconfigured only via auditable authorized operations; wallet-to-asset/network binding immutable; loss/restart drills pass without leaking assets.
 
-Phase 6G first Draft slice: immutable dedicated root/network/ownership/purpose
-namespace and non-hardened **path reservations** only; see [PHASE6G.md](../PHASE6G.md).
-The 10,000-customer PostgreSQL reservation benchmark is not address/spendability
-acceptance. CGGMP chain-code attestation/child signing/issuance, Solana account
-strategy, full lifecycle and Warm/Cold boundaries remain requirements to deliver.
+Phase 6G delivery uses exactly three implementation PRs: A (#36 merged), B (this
+branch: complete genuine EVM/TRON child custody), C (final: Solana provisioning,
+lifecycle, rotation/recovery and Hot/Warm/Cold foundations). B requires original
+three-store HD evidence, immutable non-hardened reservation identity, independently
+verified child public keys/addresses, genuine 2-of-3 child signatures, finalized
+native/token deposit and spend acceptance, and measured complete issuance. Multiple
+asset views share one canonical signing account per network/global customer;
+asset identity remains separate. Missing HD evidence or quorum fails closed.
+See [PHASE6GB.md](../PHASE6GB.md); branch implementation is not production acceptance.
 
 ## 2. Authorization and policy — binding
 
@@ -86,3 +90,14 @@ Staking/earn, off-exchange collateral, OTC-specific suite, cross-chain liquidity
 ## Status disclaimer
 
 As of main 4488016a, much of this register is **not implemented**. In particular tenant isolation, high-scale HD provisioning, approval quorum, trade settlement, merchant/invoice and policy-signing ticket platform are future work. A status must not be promoted without code and passing scope-relevant evidence.
+
+Phase 6G-B child requests must retain the original custody machine authorization
+across the coordinator hop. Every signer verifies a once-persisted signature under
+the existing private-CA custody identity over the exact original child/root/path/
+owner, digest, session, network and source. Substituting another approved child
+must fail before nonce work. This does not implement Phase 7 human approvals or
+independent policy authority. Historical root-only wallets remain usable; a
+provisioning root with such bindings remains unissuable and needs an explicitly
+authorized fresh dedicated root. Native operator gas grants must not create
+customer liabilities; exact signed and consumed custody provenance distinguishes
+them from external customer deposits. Existing historical journals stay intact.

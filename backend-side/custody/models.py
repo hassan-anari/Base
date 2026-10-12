@@ -234,7 +234,7 @@ class MpcProvisioningRoot(models.Model):
 
 
 class MpcDerivationReservation(models.Model):
-    """A durable path assignment. Never a UserWallet or an issued address."""
+    """Immutable path assignment. Its custody account owns the issuance lifecycle."""
 
     reservation_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     root = models.ForeignKey(MpcProvisioningRoot, on_delete=models.PROTECT)
@@ -263,6 +263,50 @@ class MpcDerivationReservation(models.Model):
             models.CheckConstraint(
                 condition=~Q(customer_ref="") & ~Q(idempotency_key=""),
                 name="mpc_reservation_owner_retry_required",
+            ),
+        ]
+
+
+class MpcHdRootEvidence(models.Model):
+    """Original three-store HD agreement; historical material is never backfilled."""
+
+    root = models.OneToOneField(MpcProvisioningRoot, on_delete=models.PROTECT, primary_key=True)
+    evidence = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MpcCustodyAccount(models.Model):
+    """Canonical beneficial ownership and recoverable child issuance claim.
+
+    PROVISIONING is durable, but cannot enter indexing/signing. ISSUED identity
+    is immutable. Asset views use the original authoritative financial ledger.
+    """
+
+    account_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reservation = models.OneToOneField(MpcDerivationReservation, on_delete=models.PROTECT)
+    ownership_scope = models.CharField(max_length=64)
+    customer_ref = models.CharField(max_length=64)
+    chain_id = models.CharField(max_length=16)
+    status = models.CharField(max_length=16, default="PROVISIONING")
+    public_key = models.CharField(max_length=66, blank=True, default="")
+    address = models.CharField(max_length=128, blank=True, default="")
+    evidence = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chain_id", "customer_ref"], name="uq_mpc_customer_account"
+            ),
+            models.UniqueConstraint(
+                fields=["chain_id", "address"],
+                condition=Q(status="ISSUED"),
+                name="uq_mpc_issued_address",
+            ),
+            models.CheckConstraint(
+                condition=Q(status="PROVISIONING", public_key="", address="", evidence={})
+                | (Q(status="ISSUED") & ~Q(public_key="") & ~Q(address="") & ~Q(evidence={})),
+                name="mpc_account_issuance_shape",
             ),
         ]
 
@@ -319,6 +363,13 @@ class UserWallet(models.Model):
         MpcKeyset, null=True, blank=True, on_delete=models.PROTECT, related_name="user_wallets"
     )
     derivation_version = models.CharField(max_length=32, default="legacy_local_v1")
+    custody_account = models.ForeignKey(
+        MpcCustodyAccount,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_wallets",
+    )
 
     def __str__(self) -> str:
         return f"UserWallet({self.user_id},{self.chain_id},{self.asset_key})"
@@ -625,6 +676,7 @@ class MpcSigningSession(models.Model):
     selected_signers = models.JSONField(default=list, blank=True)
     signature_result = models.JSONField(default=dict, blank=True)
     transaction_identity = models.JSONField(default=dict, blank=True)
+    custody_authorization = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=32, choices=STATUSES, default="CREATED")
     coordinator_request_id = models.CharField(max_length=128, blank=True, default="")
     error_code = models.CharField(max_length=64, blank=True, default="")

@@ -68,3 +68,105 @@ Historical Phase 6F-D merge SHA: **4488016a668283868633eb1a7fa2f64187a93b56**. P
 ## How to maintain this timeline
 
 On every milestone merge, append date, exact PR/merge SHA, capabilities with implementation-level evidence, tests/CI links, discovered risks, migrations, and changed scope/architecture decisions. Do not overwrite chronology with a guessed percent complete. Use PROJECT_STATUS.md as a separately refreshed current-state view.
+
+## Phase 6G-A merge correction and 6G-B active branch
+
+PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
+Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen
+jobs on [full CI run 38142219480, attempt 2](https://github.com/hassan-anari/Base/actions/runs/38142219480/attempts/2),
+including the four Fast jobs and genuine four-chain suites. Earlier runner failures
+and Fast run 38142190057 remain historical failure evidence; they were not erased.
+The successful rerun supersedes the earlier unresolved runner-block status.
+
+Phase 6G-B is based on that exact merge, on `phase6g-b-child-wallets`.
+Original-share HD attestation, canonical child derivation, genuine threshold child
+signing and additive canonical account/asset associations are implemented in this
+single branch. Migrations 0029/0030/0031 leave historical wallet/ledger rows intact.
+Final validator, throughput and exact-head CI evidence belongs in
+[PHASE6GB.md](../PHASE6GB.md) and the draft review handoff. Unmerged capability
+is not counted as shipped. Earlier failed harness/CI attempts remain evidence.
+Final Phase 6G-C owns Solana provisioning, lifecycle, rotation/recovery and wallet
+security-class foundations; no additional implementation PR split is authorized.
+
+Security assessment found a P1 EVM liability-inflation path: native scanning could
+credit operator MPC gas funding as a customer deposit when native/token views
+shared an address. This branch excludes only an exact known GAS_TOPUP transaction
+with recovered persisted signed bytes, original source/destination/native amount/
+chain, and consumed completed signing intent. Missing or altered provenance aborts
+history; another payment from the same sender is still a deposit. Genuine live
+acceptance caught the issue; dedicated negative contracts and final validator
+checks cover the repair. Existing append-only historical journals are not rewritten;
+any preexisting affected deployment needs a separate evidence-led investigation.
+Independent review is required before considering this P1 repair accepted.
+
+The coordinator substitution review also identified an authorization gap: approving
+a child in each store did not authenticate which approved child the custody
+service originally requested. This branch commits the full child signing request
+with a once-persisted ECDSA/SHA-256 signature under the existing custody P-256 TLS
+identity. Signers independently validate private-CA client authentication, current
+certificate validity, exact custody URI and signature before nonce work and in the
+worker. Substitution of another valid approved child, digest or session fails
+closed. Dedicated DEPOSIT roots also reject dropping child authorization.
+Migration 0031 freezes the original grant and prevents retrospective minting for
+already-started executions. Original completed public signature recovery remains
+possible; uncertain funds are never released on credential expiry or RPC timeout.
+This does not make a compromised custody authority trustworthy; independent policy
+authority remains Phase 7. Independent review must verify canonical serialization,
+identity-key isolation, credential validity and immutable session/replay controls.
+Transport adds the existing pinned ring 0.17.14 dependency edge; no Rust package or
+cryptographic version is upgraded and the scc P1 remains open.
+
+The first full-population restart benchmark issued all 1,000 real accounts, then
+failed on a PostgreSQL deadlock during concurrent idempotent replay. Django's
+joined FOR UPDATE implicitly locked account/reservation/root/keyset rows in query
+plan order, conflicting with issuance's keyset-first order. Asset attachment now
+explicitly locks keyset -> provisioning root -> account -> asset; the joined
+account query locks only `self`. Deterministic first-view and existing-view tests
+wait for a demonstrably blocked PostgreSQL backend and assert the account lock
+remains available until its keyset lock is acquired. No deadlock is hidden by
+retrying or claiming a passing benchmark. Initial-stage public benchmark evidence
+is persisted before recovery so failed stages remain attributable. The full
+recovery/validator run must pass on the final head.
+
+Child issuance additionally verifies the current spending credential at all three
+signers. The coordinator forwards an envelope containing the original ChildRequest
+and a custody P-256 signature under `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1`. Each
+signer validates private-CA client authentication, validity, exact custody URI and
+public-request signature before reading/pinning child approval. Unsupported keys
+or a custody CA trusted only by the coordinator cannot publish a new spendable
+account. This public proof is domain-separated from signing grants, consumes no
+CGGMP nonce and is not part of immutable child identity; public retries retain
+original receipt identity. Private signing still requires its once-persisted
+original operation grant. No human/policy approval authority is added.
+## Phase 6G-B continuation — 2026-10-12
+
+Draft PR #37 remains the only Phase 6G-B PR. Full run 38181533803 at head
+`2c22c8b66954444f47f3868ca5df2538c4183764` failed EVM after successful genuine
+child native/token custody and full-population recovery; the final gate correctly
+failed. Twelve other primary jobs passed. Retained-store replay confirmed HTTP
+400 `{"error":"Invalid"}`: the module root had been durably attested for DEPOSIT
+children, so the coordinator correctly refused subsequent root-only signing.
+Child acceptance now uses a fresh dedicated original DKG/auxiliary root, leaving
+the historical module root intact. Trusted custody-mTLS root signing and rejected
+untrusted/wrong-role credentials are tested, including directly after issuance.
+No production authorization/signature checks, original receipts, ledger history,
+TON scope or production flags change. New exact-head gates remain required;
+previous 1.67 local / 1.6008 CI accounts/s measurements remain supporting results.
+The fresh genuine focused fixture passed two cases in 212.00s; PostgreSQL backend
+passed all 600 cases in 153.01s, with zero system-check issues/migration drift.
+The scc / RUSTSEC-2026-0205 P1 stays OPEN pending independent review.
+
+The corrected implementation `3670893bdfa6b21e2a99887e1238de5a979658cb` passed
+Fast 38262366737 and all fourteen jobs in full run 38262414457. Backend 600;
+preflight 8; integration 218 (EVM 44/TRON 5/Solana 2/TON 3/network 162/persistence
+1/integrated 1), zero required skips. Actual child native/token movements pass.
+CI complete issuance: 1,000 customers/eight workers, 653.488s, 1.5302 accounts/s;
+full original-UUID recovery 56.182s with zero new derivation approvals. Corrected
+local EVM passed all 44 cases in 1391.85s and measured 1.5736 accounts/s with
+56.666s recovery. These do not erase earlier 1.67/s supporting measurements.
+Intermediate run 38261875338 at 1a00466 retained a stale fixture keyset ID in
+direct hostile child requests and failed EVM; the correction binds those requests
+to the actual dedicated root. Failed runs remain evidence, not accepted gates.
+Public evidence and the full security report are published in this same draft;
+the documentation head receives a fresh final-SHA Fast/full gate recorded in
+PR #37 before handoff. Independent review and all open findings remain mandatory.

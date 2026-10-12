@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from environment import ROLES, Processes
 from test_cggmp import PARTIES, binding, execute
@@ -334,7 +335,8 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
     net = auxiliary_network
     # Fresh payloads per session; this acceptance boundary only receives custody digests.
     context = signing_request(net, payload_type, hashlib.sha256(uuid.uuid4().bytes).digest())
-    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    status, response = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200, response
     offline = next(p for p in PARTIES if p not in pair)
     net.stop(offline)
     try:
@@ -366,6 +368,57 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
             assert sign_control(net, party, "prepare", execution)[0] == 409
     finally:
         net.start(offline)
+
+
+def assert_root_signing_requires_trusted_custody_credentials(net):
+    """Original root contract uses custody mTLS, not a child machine grant."""
+    context = signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest())
+    assert not (
+        net.root / "coordinator" / "storage" / "coordinator.hd" / f"{context['keyset_id']}.root"
+    ).exists()
+    for role in ("coordinator", "signer-a", "signer-b", "signer-c"):
+        status, response = request(net, "coordinator", role, "/v1/sign-sessions", context)
+        assert status == 403, response
+    # Trust the genuine server CA while presenting the invalid client identity.
+    # Thus wrong-ca rejection tests client authentication, not server distrust.
+    trusted_ca = net.root / "custody" / "identity" / "ca.crt"
+    url = f"https://localhost:{net.ports['coordinator']}/v1/sign-sessions"
+    for role in ("wrong-ca", "expired", "ambiguous", "unknown"):
+        identity = net.root / role / "identity"
+        # Invalid chains/expiry produce TLS alerts; invalid URI identities can
+        # close the authenticated connection before HTTP. Neither creates state.
+        with pytest.raises(requests.exceptions.ConnectionError):
+            requests.post(
+                url,
+                json=context,
+                timeout=5,
+                verify=str(trusted_ca),
+                cert=(str(identity / "tls.crt"), str(identity / "tls.key")),
+            )
+    assert (
+        request(
+            net,
+            "coordinator",
+            "custody",
+            f"/v1/sign-sessions/{context['session_id']}",
+            method="GET",
+        )[0]
+        == 404
+    )
+    status, response = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200, response
+    assert advance_sign(net, context)[0] == 200
+    state = wait_sign(net, context)
+    assert state["status"] == "COMPLETED", state
+    verify_independently(net, context, state)
+    print(
+        "ROOT_CUSTODY_CREDENTIAL_REGRESSION valid_root_signature=true "
+        "invalid_credentials_rejected=true"
+    )
+
+
+def test_root_signing_requires_trusted_custody_credentials(auxiliary_network):
+    assert_root_signing_requires_trusted_custody_credentials(auxiliary_network)
 
 
 def test_duplicate_concurrent_calls_and_distinct_sessions(auxiliary_network):
@@ -1018,3 +1071,20 @@ def test_phase6g_authenticated_root_path_reservations(auxiliary_network):
         if "coordinator" not in net.running:
             net.start("coordinator")
         chain.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_tron_child_custody(tron_auxiliary_network, tmp_path):
+    from tron_acceptance import run_tron_acceptance
+
+    run_tron_acceptance(tron_auxiliary_network, tmp_path, child_wallets=True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_evm_child_custody(auxiliary_network, tmp_path):
+    from child_acceptance import run_evm_child_acceptance
+
+    run_evm_child_acceptance(auxiliary_network, tmp_path)
+    # Run immediately after permanent child attestation, independently of pytest
+    # ordering: the original root must still sign with trusted custody mTLS.
+    assert_root_signing_requires_trusted_custody_credentials(auxiliary_network)

@@ -16,3 +16,4 @@ x509-parser = "=0.18.1"
 hyper = { version = "=1.11.1", features = ["client", "server", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio", "service"] }
 http-body-util = "=0.1.5"
+ring = "=0.17.14"

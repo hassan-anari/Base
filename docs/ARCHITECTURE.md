@@ -43,14 +43,24 @@ Each network has canonical registry, genesis/chain identity, token verification,
 
 ## Lifecycle / throughput constraints
 
-Phase 6G's first unmerged foundation uses a dedicated original CGGMP root per
-allocation namespace, with immutable network/genesis, deployment ownership scope,
-HOT class and DEPOSIT purpose. PostgreSQL reserves canonical `m/0/index` paths
-transactionally and idempotently. A reservation creates neither an address nor a
-UserWallet and cannot enter indexing or signing. Future custody account identity
-must own one verified child and beneficial owner, with asset views sharing that
-account only for the same owner. See [PHASE6G.md](../PHASE6G.md) for feasibility,
-security boundaries and deferred child evidence; no tenant API is added early.
+Phase 6G-A's immutable canonical `m/0/index` reservation remains the allocation
+identity. Phase 6G-B adds original chain code and extended root agreement from
+all three independently validated signer stores. The coordinator and every signer
+use pinned upstream SLIP-10; Django independently verifies public derivation.
+A durable `MpcCustodyAccount` claim precedes external RPC and becomes ISSUED only
+after three signer approvals. A reservation alone stays RESERVED and unissuable.
+The account's immutable owner/address/key/path/network is authoritative; nullable
+`UserWallet.custody_account` supplies asset views sharing that same owner/address.
+Existing customer IDs are global ledger principals, not a new tenant namespace.
+There is no journal backfill or second ledger. Child authorization is committed
+in original transaction, signing request and execution; the original 2-of-3 shares
+sign with upstream `set_derivation_path`, and verification uses the child key.
+The custody machine signs the entire original child request with its existing
+P-256 TLS identity. Each signer verifies that grant across the coordinator hop
+against the private CA before nonce work. Migration 0031 persists it once with
+the original session; coordinator child substitution invalidates the signature.
+This is machine authentication, with independent policy authority still Phase 7.
+See [PHASE6GB.md](../PHASE6GB.md) for failure/recovery and throughput limits.
 
 Phase 6G should use reviewed chain/algorithm-specific scalable provisioning rather than heavy fresh DKG for every deposit address. EVM/TRON secp256k1 derivation and Ed25519 FROST derivation must not be assumed interchangeable. Root bindings are immutable; resharing/rotation/recovery require versioned, auditable transitions. Hot/warm/cold are separate security classes; cold signing cannot reuse the hot environment's routine authorization.
 
@@ -61,3 +71,10 @@ Introduce reliable transactional outbox/inbox, monotonic event IDs, idempotent c
 ## Compatibility rules
 
 Do not claim old Phase 1–5 docs describe current complete state; those files describe dated baselines. Do not invent production integrations just because DTO/routes or dashboard placeholders exist. Keep migrations additive, auditable and reversal-safe. Never change a settled financial journal to compensate for new behaviors.
+
+New child approvals include a domain-separated original custody machine proof.
+All three signer CAs and P-256 credential profiles are verified before issuance;
+identity readiness is established with the original share/HD approval rather than
+first discovered during spending. This public approval does not consume an MPC
+nonce or alter immutable child identity. Signing uses its separately persisted
+original grant.

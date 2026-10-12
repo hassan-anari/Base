@@ -1,0 +1,217 @@
+{
+  "benchmark": {
+    "account_table_and_index_bytes": 9060352,
+    "authenticated_child_requests": 1000,
+    "bounded_issuance_http_timeout_seconds": 120,
+    "coordinator_request_seconds_mean": 5.134488974254993,
+    "coordinator_request_seconds_sum": 5134.488974254993,
+    "cpu": "x86_64",
+    "customers": 1000,
+    "four_service_restart_seconds": 0.6615079109999442,
+    "full_population_idempotent_recovery_seconds": 56.18232853399991,
+    "full_population_recovered_accounts_per_second": 17.799191064051914,
+    "issued_accounts_per_second": 1.5302489477082986,
+    "issued_asset_views_during_benchmark": 1000,
+    "kind": "real-three-store-verified-persistent-child-issuance",
+    "logical_cpus": 4,
+    "machine": "x86_64",
+    "memory_kib": 16373452,
+    "phase_latency_seconds": {
+      "asset_view": {
+        "max": 0.21078308899996046,
+        "mean": 0.015810164802000374,
+        "samples": 1000,
+        "sum": 15.810164802000372
+      },
+      "independent_public_verification": {
+        "max": 0.003990726999973049,
+        "mean": 0.0021738640404969944,
+        "samples": 2000,
+        "sum": 4.347728080993988
+      },
+      "persistent_issue_save": {
+        "max": 0.005196939999905226,
+        "mean": 0.0020683942389999855,
+        "samples": 2000,
+        "sum": 4.136788477999971
+      },
+      "postgres_queries": {
+        "max": 0.05075276400009443,
+        "mean": 0.0003698589226541181,
+        "samples": 78000,
+        "sum": 28.84899596702121
+      },
+      "postgres_select_for_update": {
+        "max": 0.05075276400009443,
+        "mean": 0.00037797552541782883,
+        "samples": 12000,
+        "sum": 4.535706305013946
+      },
+      "reservation": {
+        "max": 0.08949177999988933,
+        "mean": 0.005451474582000856,
+        "samples": 1000,
+        "sum": 5.451474582000856
+      }
+    },
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "postgres_contention_measure": "FOR UPDATE query latency includes lock waiting; not isolated wait-time attribution",
+    "postgres_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "python_version": "3.11.17",
+    "reconnected_idempotent_issuance_seconds": 0.06499140999994779,
+    "reservation_operations_per_second_during_full_issuance": 1.5302489477082986,
+    "root": "5c2baef3-21b1-4c36-bfd5-df0e8e2b1fcd",
+    "seconds": 653.488441536,
+    "signatures_during_issuance": 0,
+    "signing_latency": "measured separately on chain sweeps",
+    "workers": 8
+  },
+  "child_accounts": [
+    {
+      "account_id": "54b32d5d-0400-4d45-a423-c1cd4b36b25b",
+      "address": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+      "path": "m/0/0",
+      "public_key": "0237289c81def2ab6717af2682d9e83f37f78e143420b2d24d95c64e4379208166"
+    },
+    {
+      "account_id": "74e82536-1a20-4a25-bb97-d83fc7352d17",
+      "address": "0x143496bce4d9d57afbd652275f358604a1cfe515",
+      "path": "m/0/1",
+      "public_key": "03964063b45ffbdaa8ca6a842447b34b36b2eb45dc5deffbec37725e7593b54fba"
+    },
+    {
+      "account_id": "3add7bf2-d08d-465a-aa6e-5f35fe2606b4",
+      "address": "0x6f7ffd3597a72efbb920e0b4ff86f7388c8cbeee",
+      "path": "m/0/2",
+      "public_key": "0254db5018acfae90e11eda60694c26d7abdad8d4337c01a5c831124f30957ec50"
+    }
+  ],
+  "hot_root_public_key": "0265d27fc0c2b5eb0e6a14c3f857cd6fb5a20af30b1d2319a495b6544876bba48a",
+  "legacy_root_public_key": "02ffbaf2d69d4cc3f7c80d0e9fa1eb650f3d4be7b9f22698fe2999cc07514cd715",
+  "native_signing_seconds_including_prepare_and_dispatch": 5.327918800999896,
+  "root_public_key": "02937dcc29b11966bffc71217241789d1c79982f7938e6e4d6b541a5e8b1274179",
+  "token_signing_seconds_after_dispatch": 5.008528418999958,
+  "transactions": [
+    {
+      "confirmation": {
+        "block_number": 6,
+        "confirmations": 4,
+        "receipt": {
+          "blockHash": "0x4a7514b82755ea1b1edefa656e408b1ce46b47feb1d40d3b6adcc3c5659fc72a",
+          "blockNumber": "0x6",
+          "contractAddress": null,
+          "cumulativeGasUsed": "0x5208",
+          "effectiveGasPrice": "0x565d9a08",
+          "from": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+          "gasUsed": "0x5208",
+          "logs": [],
+          "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "status": "0x1",
+          "to": "0x05de612bb2a82fcbe1a4ef720dea9410a93ad41c",
+          "transactionHash": "0x61883e61a0f44e411c446f4a5871c2301274388641267622658dd10c4aa86f39",
+          "transactionIndex": "0x0",
+          "type": "0x2"
+        },
+        "state": "CONFIRMED"
+      },
+      "execution_id": "d3b1503e-e8fd-45bc-9f67-bcfdfcd61ccb",
+      "original_custody_authorization_present": true,
+      "selected_signers": [
+        "signer-b",
+        "signer-c"
+      ],
+      "session_id": "317ba4bb-52a1-4fbc-b1bd-e18ef97d62f1",
+      "session_seconds_to_consumed_signature": 5.046695,
+      "signing_public_key": "0237289c81def2ab6717af2682d9e83f37f78e143420b2d24d95c64e4379208166",
+      "source": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+      "txid": "0x61883e61a0f44e411c446f4a5871c2301274388641267622658dd10c4aa86f39"
+    },
+    {
+      "confirmation": {
+        "block_number": 15,
+        "confirmations": 4,
+        "receipt": {
+          "blockHash": "0x0bb667caad398811462c8884d337308958a02a5eb5d3373771fddf088ba6957d",
+          "blockNumber": "0xf",
+          "contractAddress": null,
+          "cumulativeGasUsed": "0x5208",
+          "effectiveGasPrice": "0x43ae76ff",
+          "from": "0x05de612bb2a82fcbe1a4ef720dea9410a93ad41c",
+          "gasUsed": "0x5208",
+          "logs": [],
+          "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "status": "0x1",
+          "to": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+          "transactionHash": "0x0e980016476d752cc98394fde4a6681c10c571d1f36a462b724a44658f5493ff",
+          "transactionIndex": "0x0",
+          "type": "0x2"
+        },
+        "state": "CONFIRMED"
+      },
+      "execution_id": "d8f67212-f1d8-4e46-8f7d-5bf89b728d7d",
+      "original_custody_authorization_present": false,
+      "selected_signers": [
+        "signer-b",
+        "signer-c"
+      ],
+      "session_id": "c5d1a47b-112b-4fe2-a5a3-3f5821d15f1e",
+      "session_seconds_to_consumed_signature": 3.285032,
+      "signing_public_key": "0265d27fc0c2b5eb0e6a14c3f857cd6fb5a20af30b1d2319a495b6544876bba48a",
+      "source": "0x05DE612bb2a82fcbE1A4Ef720deA9410a93aD41C",
+      "txid": "0x0e980016476d752cc98394fde4a6681c10c571d1f36a462b724a44658f5493ff"
+    },
+    {
+      "confirmation": {
+        "block_number": 19,
+        "confirmations": 4,
+        "receipt": {
+          "blockHash": "0xa3d001a0105d07ab170791c03b514a6feca569d9e13dd756056bc00cc314b81b",
+          "blockNumber": "0x13",
+          "contractAddress": null,
+          "cumulativeGasUsed": "0xb983",
+          "effectiveGasPrice": "0x405710a7",
+          "from": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+          "gasUsed": "0xb983",
+          "logs": [
+            {
+              "address": "0x9d46bde3b47d9bf7d2ad32bb383bea902a135a47",
+              "blockHash": "0xa3d001a0105d07ab170791c03b514a6feca569d9e13dd756056bc00cc314b81b",
+              "blockNumber": "0x13",
+              "data": "0x00000000000000000000000000000000000000000000000000000000001312d0",
+              "logIndex": "0x0",
+              "removed": false,
+              "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x000000000000000000000000ddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+                "0x00000000000000000000000005de612bb2a82fcbe1a4ef720dea9410a93ad41c"
+              ],
+              "transactionHash": "0x7d5bb90c8fa710d52ff23d6009b3a63ddc31b6eae251ba67771b0e751f0b8103",
+              "transactionIndex": "0x0"
+            }
+          ],
+          "logsBloom": "0x00000000000000000000100000000000000000000000100000000000000000002000100000000000000000000000000000000000000000000000000000000000000040000000000000000008000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000010000000000000000000000000000000000000001000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000002000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "status": "0x1",
+          "to": "0x9d46bde3b47d9bf7d2ad32bb383bea902a135a47",
+          "transactionHash": "0x7d5bb90c8fa710d52ff23d6009b3a63ddc31b6eae251ba67771b0e751f0b8103",
+          "transactionIndex": "0x0",
+          "type": "0x2"
+        },
+        "state": "CONFIRMED",
+        "token_effect": {
+          "log_index": "0x0"
+        }
+      },
+      "execution_id": "0874b0ba-ba5c-46ab-8e9a-a0a47a6f5b53",
+      "original_custody_authorization_present": true,
+      "selected_signers": [
+        "signer-b",
+        "signer-c"
+      ],
+      "session_id": "d3d6f343-0ccc-47a4-9eeb-a33951cd9890",
+      "session_seconds_to_consumed_signature": 5.05988,
+      "signing_public_key": "0237289c81def2ab6717af2682d9e83f37f78e143420b2d24d95c64e4379208166",
+      "source": "0xddb10fa5dca1eb1be3a05024fd74e153b04424fb",
+      "txid": "0x7d5bb90c8fa710d52ff23d6009b3a63ddc31b6eae251ba67771b0e751f0b8103"
+    }
+  ]
+}

@@ -3,6 +3,20 @@
 **Repository:** hassan-anari/Base. **Verified baseline:** `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
 **Active branch:** [Phase 6G-B Draft PR #37](https://github.com/hassan-anari/Base/pull/37), unmerged development work.
 
+Verified implementation acceptance at `3670893bdfa6b21e2a99887e1238de5a979658cb`:
+[Fast 38262366737](https://github.com/hassan-anari/Base/actions/runs/38262366737)
+and [full 38262414457](https://github.com/hassan-anari/Base/actions/runs/38262414457)
+passed, all fourteen jobs successful. 600 backend cases and 218 integration
+scenarios passed (EVM 44, TRON 5, Solana 2, TON 3, network 162, persistence 1,
+integrated 1), with zero required skips; Rust includes genuine child all-pair signing.
+Actual 1,000-account issuance measured 1.5302/s, with all original identities
+recovered after four-service restart/DB reconnect and no new approvals.
+The [security/implementation report](PHASE6GB_SECURITY_REVIEW.md) supplies public
+transaction evidence, migrations, benchmark hardware and remaining findings.
+Its publication is revalidated on the final draft head; exact final SHA and
+Fast/full links are recorded in PR #37. P1 scc remains OPEN. No independent
+security acceptance, mainnet activation or merge is claimed.
+
 2026-10-12 verification update: full run
 [38181533803](https://github.com/hassan-anari/Base/actions/runs/38181533803),
 head `2c22c8b66954444f47f3868ca5df2538c4183764`, failed EVM and its final gate.
@@ -15,7 +29,7 @@ The fixture now uses a fresh dedicated DKG root, retaining original authenticate
 legacy signing. A targeted positive/negative credential regression is added;
 The fresh focused genuine fixture passed two cases in 212.00s and all 600 backend
 cases passed in 153.01s, with no migration drift. New final-SHA Fast and fourteen-job
-acceptance remain required. Details and exact
+acceptance were required and are recorded above. Details and exact
 final evidence are recorded in [PHASE6GB.md](../PHASE6GB.md) and the existing PR.
 
 PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.

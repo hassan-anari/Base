@@ -155,3 +155,18 @@ previous 1.67 local / 1.6008 CI accounts/s measurements remain supporting result
 The fresh genuine focused fixture passed two cases in 212.00s; PostgreSQL backend
 passed all 600 cases in 153.01s, with zero system-check issues/migration drift.
 The scc / RUSTSEC-2026-0205 P1 stays OPEN pending independent review.
+
+The corrected implementation `3670893bdfa6b21e2a99887e1238de5a979658cb` passed
+Fast 38262366737 and all fourteen jobs in full run 38262414457. Backend 600;
+preflight 8; integration 218 (EVM 44/TRON 5/Solana 2/TON 3/network 162/persistence
+1/integrated 1), zero required skips. Actual child native/token movements pass.
+CI complete issuance: 1,000 customers/eight workers, 653.488s, 1.5302 accounts/s;
+full original-UUID recovery 56.182s with zero new derivation approvals. Corrected
+local EVM passed all 44 cases in 1391.85s and measured 1.5736 accounts/s with
+56.666s recovery. These do not erase earlier 1.67/s supporting measurements.
+Intermediate run 38261875338 at 1a00466 retained a stale fixture keyset ID in
+direct hostile child requests and failed EVM; the correction binds those requests
+to the actual dedicated root. Failed runs remain evidence, not accepted gates.
+Public evidence and the full security report are published in this same draft;
+the documentation head receives a fresh final-SHA Fast/full gate recorded in
+PR #37 before handoff. Independent review and all open findings remain mandatory.

@@ -6,6 +6,45 @@ This record describes implemented controls and acceptance scenarios. Final-head
 results and measured artifacts must be read with the draft PR's exact-SHA report.
 An implemented acceptance scenario is not itself a passing result.
 
+## Verified implementation acceptance — 2026-10-12
+
+Implementation validation SHA: `3670893bdfa6b21e2a99887e1238de5a979658cb`.
+[Fast 38262366737](https://github.com/hassan-anari/Base/actions/runs/38262366737)
+and [full gate 38262414457](https://github.com/hassan-anari/Base/actions/runs/38262414457)
+passed; **all fourteen full-gate jobs succeeded**. Preflight ran eight checks.
+PostgreSQL backend: 600 passed, no system-check issues or migration drift.
+Rust: 32 distinct cases across Fast/full execution, including genuine all-pair
+child signatures. Integration: **218 executed, zero required skips** — EVM 44,
+TRON 5, Solana 2, TON 3, network 162, auxiliary persistence 1, integrated 1.
+The originally failing EVM legacy pair and the new trusted/untrusted custody
+regression pass, including directly after child issuance. Genuine EVM/TRON
+native/token deposits and child-source spending, gas/resource fees, financial
+replay and uncertain-outcome recovery passed. Existing TON scope stays isolated.
+
+Complete real issuance on that CI runner: 1,000 customers, eight workers,
+653.488s, **1.5302 issued accounts/s**. All four services restarted in 0.662s;
+reconnecting PostgreSQL and recovering all 1,000 original UUIDs took 56.182s
+(17.799/s), with zero new signer derivation approvals. Four logical x86_64 CPUs,
+16,373,452 KiB RAM, PostgreSQL 16.15, Python 3.11.17. Public derivation verification
+averaged 2.174ms (2,000 samples); 78,000 SQL queries averaged 0.370ms and 12,000
+FOR UPDATE queries averaged 0.378ms, including query work/lock waits.
+Fresh independent deposit/hot root setup took 230.249s / 143.660s separately;
+original fixture auxiliary setup took 240.109s. These are outside per-account
+issuance. Threshold signing is measured separately in the public evidence.
+This bounded population/host does not establish production capacity.
+
+Corrected local EVM: all 44 passed in 1391.85s, all 1,000 identities recovered,
+1.5736 accounts/s issuance, recovery 56.666s; previous 1.67/s remains historical
+supporting evidence. See the [full implementation/security report](docs/PHASE6GB_SECURITY_REVIEW.md)
+and its public JSON records for transaction IDs, source keys, timings, migrations,
+dependency assessment and open findings. P1 scc / RUSTSEC-2026-0205 remains OPEN.
+
+Publishing this report adds only documentation/public evidence. The final draft
+head and its **fresh** Fast/fourteen-job verification are sealed in [PR #37](https://github.com/hassan-anari/Base/pull/37),
+with each job and crypto manifest binding REVIEWED_HEAD_SHA. Handoff requires
+that exact final-head gate; implementation acceptance is not an independent
+security approval, merge permission or production/mainnet authorization.
+
 ## Final-head regression investigation — 2026-10-12
 
 Full run [38181533803](https://github.com/hassan-anari/Base/actions/runs/38181533803)

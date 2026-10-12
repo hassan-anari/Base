@@ -149,6 +149,7 @@ def hostile_child_cases(net, root, accounts):
             altered["request"]["reservation_id"] = child["request"]["reservation_id"]
         signing = signing_request(net)
         signing.update(
+            keyset_id=str(root.keyset.keyset_id),
             child_authorization=altered,
             expected_source=accounts[0].address,
             derivation_reference=child_reference(child),
@@ -181,6 +182,7 @@ def hostile_child_cases(net, root, accounts):
     assert recovered.pk == pending.pk and recovered.status == "ISSUED"
     signing = signing_request(net)
     signing.update(
+        keyset_id=str(root.keyset.keyset_id),
         child_authorization=child,
         expected_source=accounts[0].address,
         derivation_reference=child_reference(child),

@@ -6,6 +6,50 @@ This record describes implemented controls and acceptance scenarios. Final-head
 results and measured artifacts must be read with the draft PR's exact-SHA report.
 An implemented acceptance scenario is not itself a passing result.
 
+## Final-head regression investigation — 2026-10-12
+
+Full run [38181533803](https://github.com/hassan-anari/Base/actions/runs/38181533803)
+on `2c22c8b66954444f47f3868ca5df2538c4183764` passed twelve primary jobs;
+EVM and therefore the final gate failed. Its EVM child scenario itself passed,
+including 1,000 actual issuances at 1.6008 accounts/s and full original-identity
+restart recovery; this remains supporting evidence, not full-head acceptance.
+The later legacy all-pairs case returned **400, `{"error":"Invalid"}`**.
+An actual-service replay using the retained original development stores confirmed
+that response. Coordinator `create_sign` rejects root-only CGGMP requests when
+the keyset has an immutable original `.root` HD receipt. This branch runs before
+child credential verification: no missing custody grant caused the rejection.
+
+The child acceptance scenario had permanently attested the module-scoped fixture
+root as a dedicated DEPOSIT root. Subsequent legacy-root tests reused it; a Django
+test database flush cannot undo signer/coordinator receipts. Child acceptance now
+generates its own fresh genuine DKG/auxiliary deposit root, distinct from both the
+unchanged historical fixture root and its separately generated hot funding root.
+No original receipt is removed, no root is reassigned, and no production signing
+contract, credential validation or signature verification is relaxed.
+
+The targeted root-credential regression rejects coordinator/signer roles at POST,
+rejects wrong-CA/expired/ambiguous/unknown client credentials while trusting the
+genuine server CA, proves no session was created by those attempts, then obtains
+and independently verifies a genuine root signature with trusted custody mTLS.
+It also runs immediately after child issuance to prove fixture-order independence.
+Legacy roots use their original custody-mTLS contract; approved children still
+require their separately persisted original P-256 signing grant. Existing hostile
+child tests continue to reject invalid/untrusted public approval and private
+signing proofs before nonce work. The legacy all-pairs assertion now includes the
+actual rejection body in failure diagnostics instead of discarding it.
+
+Continuation checks: the fresh genuine three-signer fixture passed both the new
+credential regression and the originally failing legacy pair in **212.00s**;
+600 PostgreSQL backend tests passed in **153.01s**. System check reports zero
+issues and migration dry-run reports no changes. Integration Ruff checks pass.
+The extra fresh dedicated and hot root setup times are emitted separately as
+public `GENUINE_INDEPENDENT_ROOT_SETUP` diagnostics; generation is excluded from
+complete per-child issuance throughput. Public acceptance records distinguish
+legacy, dedicated deposit and hot root public keys and assert all three differ.
+Supporting results below and the failed run above must not be promoted to
+acceptance of a subsequent commit. The new exact-head Fast/full gate and its
+public artifacts are recorded in the existing draft PR before independent review.
+
 ## Original HD identity and authenticated agreement
 
 The pinned `cggmp24` 0.7.0-alpha.3, `key-share` 0.6.1 and `hd-wallet` 0.6.1

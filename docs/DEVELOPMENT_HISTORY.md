@@ -138,3 +138,20 @@ account. This public proof is domain-separated from signing grants, consumes no
 CGGMP nonce and is not part of immutable child identity; public retries retain
 original receipt identity. Private signing still requires its once-persisted
 original operation grant. No human/policy approval authority is added.
+## Phase 6G-B continuation — 2026-10-12
+
+Draft PR #37 remains the only Phase 6G-B PR. Full run 38181533803 at head
+`2c22c8b66954444f47f3868ca5df2538c4183764` failed EVM after successful genuine
+child native/token custody and full-population recovery; the final gate correctly
+failed. Twelve other primary jobs passed. Retained-store replay confirmed HTTP
+400 `{"error":"Invalid"}`: the module root had been durably attested for DEPOSIT
+children, so the coordinator correctly refused subsequent root-only signing.
+Child acceptance now uses a fresh dedicated original DKG/auxiliary root, leaving
+the historical module root intact. Trusted custody-mTLS root signing and rejected
+untrusted/wrong-role credentials are tested, including directly after issuance.
+No production authorization/signature checks, original receipts, ledger history,
+TON scope or production flags change. New exact-head gates remain required;
+previous 1.67 local / 1.6008 CI accounts/s measurements remain supporting results.
+The fresh genuine focused fixture passed two cases in 212.00s; PostgreSQL backend
+passed all 600 cases in 153.01s, with zero system-check issues/migration drift.
+The scc / RUSTSEC-2026-0205 P1 stays OPEN pending independent review.

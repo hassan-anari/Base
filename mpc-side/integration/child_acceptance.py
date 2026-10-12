@@ -311,6 +311,7 @@ def keyset(context, state, scope="EVM"):
 
 
 def new_root(net):
+    started = time.monotonic()
     context = binding()
     execute(net, context)
     assert advance_aux(net, context)[0] == 200
@@ -319,6 +320,12 @@ def new_root(net):
         state = get_keyset(net, context)
         if state["auxiliary"]["status"] != "IN_PROGRESS":
             assert state["auxiliary"]["status"] == "AUXILIARY_COMPLETED"
+            print(
+                "GENUINE_INDEPENDENT_ROOT_SETUP "
+                + json.dumps(
+                    {"keyset_id": context["keyset_id"], "seconds": time.monotonic() - started}
+                )
+            )
             return keyset(context, state)
         time.sleep(1)
     pytest.fail("independent hot root setup exceeded auxiliary deadline")
@@ -548,11 +555,24 @@ def benchmark(root, tmp_path, net):
 
 def run_evm_child_acceptance(net, tmp_path):
     assert connection.vendor == "postgresql"
-    root_keyset = keyset(net.aux_context, net.aux_state)
+    # Attestation permanently dedicates this root to DEPOSIT child signing.
+    # Preserve the module's historical root for the root-signing regressions;
+    # a Django database flush does not reset independent signer HD receipts.
+    root_keyset = new_root(net)
     hot_keyset = new_root(net)
+    assert root_keyset.keyset_id != net.aux_context["keyset_id"]
+    assert root_keyset.public_key != net.aux_state["group_public_key"]
+    assert (
+        len({root_keyset.public_key, hot_keyset.public_key, net.aux_state["group_public_key"]}) == 3
+    )
     hot = address_from_public_key("ETH", hot_keyset.public_key)
     chain = LocalChain("shanghai", 31337)
-    evidence = {"root_public_key": root_keyset.public_key, "transactions": []}
+    evidence = {
+        "root_public_key": root_keyset.public_key,
+        "legacy_root_public_key": net.aux_state["group_public_key"],
+        "hot_root_public_key": hot_keyset.public_key,
+        "transactions": [],
+    }
     try:
         genesis = chain.rpc("eth_getBlockByNumber", ["0x0", False])["hash"]
         Chain.objects.filter(chain_id="ETH").update(

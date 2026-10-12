@@ -3,6 +3,21 @@
 **Repository:** hassan-anari/Base. **Verified baseline:** `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
 **Active branch:** [Phase 6G-B Draft PR #37](https://github.com/hassan-anari/Base/pull/37), unmerged development work.
 
+2026-10-12 verification update: full run
+[38181533803](https://github.com/hassan-anari/Base/actions/runs/38181533803),
+head `2c22c8b66954444f47f3868ca5df2538c4183764`, failed EVM and its final gate.
+The other twelve primary jobs passed, including 600 PostgreSQL backend tests and
+TRON/Solana/TON/integrated regressions. Child EVM native/token acceptance and the
+1,000-account benchmark passed before a legacy root test failed. Investigation
+confirmed permanent DEPOSIT attestation of a shared module root; the root-only
+rejection is legitimate, not a missing child grant or production contract defect.
+The fixture now uses a fresh dedicated DKG root, retaining original authenticated
+legacy signing. A targeted positive/negative credential regression is added;
+The fresh focused genuine fixture passed two cases in 212.00s and all 600 backend
+cases passed in 153.01s, with no migration drift. New final-SHA Fast and fourteen-job
+acceptance remain required. Details and exact
+final evidence are recorded in [PHASE6GB.md](../PHASE6GB.md) and the existing PR.
+
 PR #36 is merged as `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
 Its final head `4e0ef58d08196a42a3e308b65b6e67a2459626d7` passed all fourteen
 jobs on [full CI run 38142219480, attempt 2](https://github.com/hassan-anari/Base/actions/runs/38142219480/attempts/2),

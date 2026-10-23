@@ -24,6 +24,7 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
@@ -263,6 +264,10 @@ def wallet_address(
         user_id=subject, chain_id=net, asset_key=asset_key, address_index=idx, status="ACTIVE"
     ).first()
     if existing:
+        if existing.custody_account_id:
+            from .mpc_issuance import validate_child_wallet
+
+            validate_child_wallet(existing, net, existing.deposit_address)
         return AddressResponse(
             network=net,
             asset_key=existing.asset_key,
@@ -271,6 +276,17 @@ def wallet_address(
             memo=existing.memo,
             asset_account_address=existing.asset_account_address,
             status=existing.status,
+        )
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+        w = _ensure_deposit_address(subject, net, asset_key, idx, actor_id=operator_id)
+        return AddressResponse(
+            network=net,
+            asset_key=w.asset_key,
+            deposit_address=w.deposit_address,
+            derivation_path=w.derivation_path,
+            memo=w.memo,
+            asset_account_address=w.asset_account_address,
+            status=w.status,
         )
     memo = None
     if is_memo_required(net):
@@ -331,9 +347,33 @@ def _ensure_deposit_address(
         status="ACTIVE",
     ).first()
     if existing:
+        if existing.custody_account_id:
+            from .mpc_issuance import validate_child_wallet
+
+            validate_child_wallet(existing, net, existing.deposit_address)
         return existing
     # Compliance screening: block disabled asset/chain before provisioning.
     check_deposit_asset(net, asset_key)
+    if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc":
+        from .mpc_issuance import provision_asset_wallet
+
+        w = provision_asset_wallet(
+            chain_id=net, customer_ref=user_id, asset_key=asset_key, address_index=idx
+        )
+        write_audit_log(
+            actor_id or user_id,
+            AuditAction.ADDRESS_CREATED,
+            "UserWallet",
+            str(w.pk),
+            {
+                "subject_user_id": user_id,
+                "address": w.deposit_address,
+                "chain_id": net,
+                "asset_key": asset_key,
+                "custody_account": str(w.custody_account_id),
+            },
+        )
+        return w
     memo = None
     if is_memo_required(net):
         memo = f"u{user_id}.{idx}"
@@ -404,7 +444,13 @@ def create_wallet(
     for net, ak in targets:
         validate_chain_asset(net, ak, "deposit")
     out: list[WalletAddressDTO] = []
-    with transaction.atomic():
+    # MPC issuance persists its original claim before external authenticated work.
+    # Multiple assets can finish independently; retries recover the same accounts.
+    from contextlib import nullcontext
+
+    with (
+        nullcontext() if settings.MPC_SIGNER_BACKEND == "self_hosted_mpc" else transaction.atomic()
+    ):
         for net, ak in targets:
             w = _ensure_deposit_address(subject, net, ak, actor_id=operator_id)
             out.append(

@@ -150,6 +150,8 @@ MPC_TON_INTEGRATION_ENABLED = config("MPC_TON_INTEGRATION_ENABLED", default=Fals
 MPC_TON_NETWORK = config("MPC_TON_NETWORK", default="{}", cast=json.loads)
 MPC_INTEGRATION_ENVIRONMENT = config("MPC_INTEGRATION_ENVIRONMENT", default="disabled")
 MPC_EVM_DEVELOPMENT_CHAINS = config("MPC_EVM_DEVELOPMENT_CHAINS", default="{}", cast=json.loads)
+# Explicit operator-approved root selection; never inferred from cggmp_hd_v1.
+MPC_PROVISIONING_ROOTS = config("MPC_PROVISIONING_ROOTS", default="{}", cast=json.loads)
 MPC_EVM_GENESIS_HASHES = config("MPC_EVM_GENESIS_HASHES", default="{}", cast=json.loads)
 # Local-key encryption passphrase for at-rest encrypted hot-wallet keys
 LOCAL_KEY_ENCRYPTION_PASSPHRASE = config("LOCAL_KEY_ENCRYPTION_PASSPHRASE", default="")
@@ -185,3 +187,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "/api/auth/login"
 
 CUSTODY_INDEXER_MODE = config("CUSTODY_INDEXER_MODE", default="live")
+
+# Independently installed archival signer public certificates; never supplied by RPC.
+MPC_HD_SIGNER_CERTIFICATES = config("MPC_HD_SIGNER_CERTIFICATES", default="{}", cast=json.loads)

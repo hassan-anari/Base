@@ -10,9 +10,10 @@ axum.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
 x509-parser = "=0.18.1"
 hyper = { version = "=1.11.1", features = ["client", "server", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio", "service"] }
 http-body-util = "=0.1.5"
+ring = "=0.17.14"

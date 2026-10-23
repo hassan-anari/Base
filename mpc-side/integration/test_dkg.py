@@ -33,6 +33,32 @@ def dkg_network(tmp_path):
 
 def request(net, destination, role, path, body=None, method="POST"):
     identity = net.root / role / "identity"
+    if (
+        role == "custody"
+        and path.endswith("/children")
+        and body is not None
+        and "request" not in body
+    ):
+        from custody.mpc_request_auth import authorize_child_approval
+
+        body = {
+            "request": body,
+            "custody_authorization": authorize_child_approval(
+                body, identity / "tls.crt", identity / "tls.key"
+            ),
+        }
+    if (
+        role == "custody"
+        and path == "/v1/sign-sessions"
+        and body is not None
+        and body.get("child_authorization")
+        and not body.get("custody_authorization")
+    ):
+        from custody.mpc_request_auth import authorize_child_request
+
+        body["custody_authorization"] = authorize_child_request(
+            body, identity / "tls.crt", identity / "tls.key"
+        )
     context = ssl.create_default_context(cafile=str(identity / "ca.crt"))
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
     context.load_cert_chain(identity / "tls.crt", identity / "tls.key")

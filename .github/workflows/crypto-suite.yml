@@ -139,6 +139,10 @@ jobs:
             work/integrated-review/public-evidence.json
             work/crypto/results.xml
             work/crypto/fixtures/**/tron-evidence.json
+            work/crypto/fixtures/**/tron-child-evidence.json
+            work/crypto/fixtures/**/evm-child-evidence.json
+            work/crypto/fixtures/**/child-issuance-benchmark.json
+            work/crypto/fixtures/**/child-issuance-initial-stage.json
             work/crypto/fixtures/**/solana-evidence.json
             work/ton-review/mpc-tvm-evidence.json
             work/ton-review/validator-network-evidence.json

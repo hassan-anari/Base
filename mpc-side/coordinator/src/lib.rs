@@ -60,6 +60,7 @@ mod cggmp;
 mod cggmp_aux;
 mod cggmp_sign;
 mod dkg;
+mod hd;
 mod sign;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -217,6 +218,18 @@ impl DurableStore {
             #[cfg(test)]
             fault: std::sync::atomic::AtomicU8::new(0),
         };
+        let approved_children: Vec<_> = store
+            .data
+            .get_mut()
+            .signing
+            .values()
+            .filter_map(|session| session.request.child_authorization.clone())
+            .collect();
+        for child in approved_children {
+            store
+                .approved_child(&child)
+                .context("stored signing request lacks durable original child approval")?;
+        }
         if recovered {
             wallet_mpc_storage::atomic_replace_state(
                 &store.path,
@@ -266,6 +279,24 @@ impl DurableStore {
         })
     }
     pub async fn create_sign(&self, request: SignRequest) -> Result<SignSession, StoreError> {
+        if let Some(child) = &request.child_authorization {
+            self.approved_child(child)
+                .map_err(|_| StoreError::Invalid)?;
+            wallet_mpc_protocol::cggmp::SigningExecution {
+                request: request.clone(),
+                crypto_execution_id: request.session_id,
+                selected_signers: PARTIES[..2].iter().map(|p| p.to_string()).collect(),
+                auxiliary: child.request.root.request.auxiliary.clone(),
+            }
+            .validate()
+            .map_err(|_| StoreError::Invalid)?;
+        } else if request.algorithm == "CGGMP24_ECDSA"
+            && self
+                .hd_path(&format!("{}.root", request.keyset_id))
+                .exists()
+        {
+            return Err(StoreError::Invalid);
+        }
         validate_sign_request(&request)?;
         if request.algorithm == "FROST_ED25519" {
             self.signing_evidence(&request).await?;
@@ -569,7 +600,8 @@ pub fn network_app(
     let dkg_app = dkg::router(store.clone(), signers.clone());
     let signing_app = sign::router(store.clone(), signers.clone());
     let auxiliary_app = cggmp_aux::router(store.clone(), signers.clone());
-    base_app(store).merge(dkg_app).merge(signing_app).merge(auxiliary_app).route("/v1/health/quorum", get(move || {
+    let hd_app = hd::router(store.clone(), signers.clone());
+    base_app(store).merge(hd_app).merge(dkg_app).merge(signing_app).merge(auxiliary_app).route("/v1/health/quorum", get(move || {
         let signers = signers.clone();
         async move {
             match signers.capabilities().await {
@@ -626,6 +658,8 @@ mod tests {
             asset: "ETH".into(),
             expected_source: "0x123".into(),
             derivation_reference: Some("cggmp_hd_v1/1/2/0".into()),
+            child_authorization: None,
+            custody_authorization: None,
             ton_authorization: None,
         }
     }

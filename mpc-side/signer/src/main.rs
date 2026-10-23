@@ -86,11 +86,30 @@ async fn main() {
             peers.clone(),
         )
         .expect("CGGMP auxiliary recovery failed");
+        // Existing root-only TLS identities remain supported. HD dedication has
+        // no unsigned fallback: it requires a usable pinned receipt identity.
+        let receipt_identity = match wallet_mpc_transport::ReceiptIdentity::new(&tls, &party_id) {
+            Ok(identity) => Some(identity),
+            Err(_) => {
+                eprintln!("HD receipt identity unavailable; new HD dedication is disabled");
+                None
+            }
+        };
+        let hd = wallet_mpc_signer::hd::HdService::open(
+            storage_directory.clone(),
+            party_id.clone(),
+            auxiliary.clone(),
+            wallet_mpc_transport::CustodyRequestVerifier::new(&tls)
+                .expect("custody request trust unavailable"),
+            receipt_identity,
+        )
+        .expect("CGGMP HD evidence recovery failed");
         let cggmp_signing = wallet_mpc_signer::cggmp_sign::SigningService::open(
             storage_directory.clone(),
             party_id.clone(),
             executions.clone(),
             auxiliary.clone(),
+            hd.clone(),
             peers,
         )
         .expect("CGGMP signing recovery failed");
@@ -106,7 +125,8 @@ async fn main() {
             .merge(wallet_mpc_signer::sign::router(signing))
             .merge(wallet_mpc_signer::cggmp::router(cggmp))
             .merge(wallet_mpc_signer::cggmp_aux::router(auxiliary))
-            .merge(wallet_mpc_signer::cggmp_sign::router(cggmp_signing));
+            .merge(wallet_mpc_signer::cggmp_sign::router(cggmp_signing))
+            .merge(wallet_mpc_signer::hd::router(hd));
         let server = tls
             .server(&party_id)
             .expect("signer TLS identity/configuration invalid");

@@ -189,7 +189,7 @@ impl SigningExecution {
                 && ["WITHDRAWAL", "SWEEP", "GAS_TOPUP"]
                     .contains(&self.request.operation_type.as_str())
                 && !self.request.asset.trim().is_empty()
-                && self.request.derivation_reference.is_none(),
+                && self.request.ton_authorization.is_none(),
             "invalid CGGMP custody signing context"
         );
         let scope = self.auxiliary.dkg.scope.as_str();
@@ -211,13 +211,35 @@ impl SigningExecution {
             "digest/fingerprint mismatch"
         );
         ensure!(
-            self.request.expected_source
-                == source_address(&self.auxiliary.group_public_key, scope)?,
+            self.request.expected_source == source_address(&self.signing_public_key()?, scope)?,
             "custody group/source mismatch"
         );
         bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("wrong digest length"))
+    }
+    pub fn signing_public_key(&self) -> Result<String> {
+        if let Some(child) = &self.request.child_authorization {
+            child.validate()?;
+            ensure!(
+                self.request.custody_authorization.is_some()
+                    && child.request.root.request.auxiliary == self.auxiliary
+                    && (child.request.root.request.scope.chain_id == self.request.chain
+                        || (self.auxiliary.dkg.scope == "TRON"
+                            && child.request.root.request.scope.chain_id == "TRX"
+                            && self.request.chain == "TRON"))
+                    && self.request.derivation_reference.as_deref()
+                        == Some(child.reference()?.as_str()),
+                "child authorization/reference/root mismatch"
+            );
+            Ok(child.public_key.clone())
+        } else {
+            ensure!(
+                self.request.derivation_reference.is_none(),
+                "missing approved child authorization"
+            );
+            Ok(self.auxiliary.group_public_key.clone())
+        }
     }
     pub fn transcript(&self) -> Result<String> {
         self.validate()?;
@@ -244,7 +266,7 @@ pub fn source_address(group: &str, scope: &str) -> Result<String> {
     Ok(bs58::encode(payload).into_string())
 }
 
-/// Normalize public metadata only after verifying recovery against the ORIGINAL DKG key.
+/// Normalize public metadata only after verifying recovery against the approved root or CHILD key.
 /// k256 consumes the exact prehash. Independent process acceptance also uses libsecp256k1.
 pub fn verified_signature(execution: &SigningExecution, bytes: &[u8]) -> Result<serde_json::Value> {
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -254,7 +276,7 @@ pub fn verified_signature(execution: &SigningExecution, bytes: &[u8]) -> Result<
         signature.normalize_s().is_none(),
         "high-s signature rejected"
     );
-    let group = decode_hex(&execution.auxiliary.group_public_key).context("invalid group")?;
+    let group = decode_hex(&execution.signing_public_key()?).context("invalid group")?;
     let mut recovery_id = None;
     for id in 0..4 {
         if let Some(rid) = RecoveryId::from_byte(id) {
@@ -266,7 +288,7 @@ pub fn verified_signature(execution: &SigningExecution, bytes: &[u8]) -> Result<
             }
         }
     }
-    let recovery_id = recovery_id.context("signature does not recover original DKG key")?;
+    let recovery_id = recovery_id.context("signature does not recover approved signing key")?;
     // Ethereum/TRON support the ordinary y parity encoding. Extremely rare x-overflow
     // recovery is an uncertain failure; never retry this execution with fresh nonces.
     ensure!(recovery_id < 2, "unsupported recovery overflow");

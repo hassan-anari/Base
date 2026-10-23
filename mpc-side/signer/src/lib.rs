@@ -22,6 +22,7 @@ mod cggmp_delivery;
 pub mod cggmp_sign;
 mod cggmp_wire;
 pub mod dkg;
+pub mod hd;
 pub mod sign;
 
 pub const PROTOCOL_VERSION: &str = "phase6-v1";

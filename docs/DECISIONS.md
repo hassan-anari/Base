@@ -36,3 +36,15 @@ or production approvals. Solana seeded accounts, persistent derivation and full
 key lifecycle remain alternatives/requirements for subsequent reviewed slices.
 
 Record ID/date/requester/reason, alternatives considered, scope impact, security and migration impact, work package, approved-by and evidence. If a new request affects established goals, update PRODUCT_VISION, PRODUCT_REQUIREMENTS, ROADMAP and PROJECT_STATUS together, then review in a separate PR where feasible.
+
+## Authorized Phase 6G-B implementation decisions
+
+The owner's current direction supersedes historical small-slice suggestions:
+exactly 6G-A (#36 merged), 6G-B complete EVM/TRON child custody, and final 6G-C.
+Use original CGGMP24 HD material and pinned upstream SLIP-10/set_derivation_path;
+never fill historical chain-code gaps. All three original stores approve a child;
+two of three sign. Separate immutable custody accounts from asset-specific legacy
+wallet rows, with no balance reconstruction. Namespace remains a trusted deployment
+boundary; existing global customer ledger principals are preserved. Account claims
+commit before external work and can recover only their original reservation.
+Independent production review and Phase 7 policy authority remain separate.

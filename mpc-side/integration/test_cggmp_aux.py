@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from environment import ROLES, Processes
 from test_cggmp import PARTIES, binding, execute
@@ -58,8 +59,7 @@ def print_proof_sizes(net):
         print(party, metadata[0])
 
 
-@pytest.fixture(scope="module")
-def auxiliary_network(tmp_path_factory):
+def _auxiliary_network(tmp_path_factory):
     net = Processes(tmp_path_factory.mktemp("cggmp-aux") / "services")
     try:
         for role in ROLES[:4]:
@@ -105,6 +105,18 @@ def auxiliary_network(tmp_path_factory):
         yield net
     finally:
         net.close()
+
+
+@pytest.fixture(scope="module")
+def auxiliary_network(tmp_path_factory):
+    yield from _auxiliary_network(tmp_path_factory)
+
+
+@pytest.fixture
+def root_lifecycle_network(tmp_path_factory):
+    # Root-only TLS compatibility needs original stores without HD receipts from
+    # other acceptance cases. Never remove or hide evidence in a shared store.
+    yield from _auxiliary_network(tmp_path_factory)
 
 
 def inspect_aux(net, party):
@@ -334,7 +346,8 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
     net = auxiliary_network
     # Fresh payloads per session; this acceptance boundary only receives custody digests.
     context = signing_request(net, payload_type, hashlib.sha256(uuid.uuid4().bytes).digest())
-    assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+    status, response = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200, response
     offline = next(p for p in PARTIES if p not in pair)
     net.stop(offline)
     try:
@@ -366,6 +379,57 @@ def test_all_pairs_sign_exact_prehash_and_offline_unselected(auxiliary_network, 
             assert sign_control(net, party, "prepare", execution)[0] == 409
     finally:
         net.start(offline)
+
+
+def assert_root_signing_requires_trusted_custody_credentials(net):
+    """Original root contract uses custody mTLS, not a child machine grant."""
+    context = signing_request(net, digest=hashlib.sha256(uuid.uuid4().bytes).digest())
+    assert not (
+        net.root / "coordinator" / "storage" / "coordinator.hd" / f"{context['keyset_id']}.root"
+    ).exists()
+    for role in ("coordinator", "signer-a", "signer-b", "signer-c"):
+        status, response = request(net, "coordinator", role, "/v1/sign-sessions", context)
+        assert status == 403, response
+    # Trust the genuine server CA while presenting the invalid client identity.
+    # Thus wrong-ca rejection tests client authentication, not server distrust.
+    trusted_ca = net.root / "custody" / "identity" / "ca.crt"
+    url = f"https://localhost:{net.ports['coordinator']}/v1/sign-sessions"
+    for role in ("wrong-ca", "expired", "ambiguous", "unknown"):
+        identity = net.root / role / "identity"
+        # Invalid chains/expiry produce TLS alerts; invalid URI identities can
+        # close the authenticated connection before HTTP. Neither creates state.
+        with pytest.raises(requests.exceptions.ConnectionError):
+            requests.post(
+                url,
+                json=context,
+                timeout=5,
+                verify=str(trusted_ca),
+                cert=(str(identity / "tls.crt"), str(identity / "tls.key")),
+            )
+    assert (
+        request(
+            net,
+            "coordinator",
+            "custody",
+            f"/v1/sign-sessions/{context['session_id']}",
+            method="GET",
+        )[0]
+        == 404
+    )
+    status, response = request(net, "coordinator", "custody", "/v1/sign-sessions", context)
+    assert status == 200, response
+    assert advance_sign(net, context)[0] == 200
+    state = wait_sign(net, context)
+    assert state["status"] == "COMPLETED", state
+    verify_independently(net, context, state)
+    print(
+        "ROOT_CUSTODY_CREDENTIAL_REGRESSION valid_root_signature=true "
+        "invalid_credentials_rejected=true"
+    )
+
+
+def test_root_signing_requires_trusted_custody_credentials(auxiliary_network):
+    assert_root_signing_requires_trusted_custody_credentials(auxiliary_network)
 
 
 def test_duplicate_concurrent_calls_and_distinct_sessions(auxiliary_network):
@@ -1018,3 +1082,268 @@ def test_phase6g_authenticated_root_path_reservations(auxiliary_network):
         if "coordinator" not in net.running:
             net.start("coordinator")
         chain.close()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_tron_child_custody(tron_auxiliary_network, tmp_path):
+    from tron_acceptance import run_tron_acceptance
+
+    run_tron_acceptance(tron_auxiliary_network, tmp_path, child_wallets=True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_phase6gb_real_evm_child_custody(auxiliary_network, tmp_path):
+    from child_acceptance import run_evm_child_acceptance
+
+    run_evm_child_acceptance(auxiliary_network, tmp_path)
+    # Run immediately after permanent child attestation, independently of pytest
+    # ordering: the original root must still sign with trusted custody mTLS.
+    assert_root_signing_requires_trusted_custody_credentials(auxiliary_network)
+
+
+def test_phase6gb_root_dedication_requires_original_custody_authority(root_lifecycle_network):
+    """R2: real legacy signatures survive coordinator-only dedication and restart."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from custody.mpc_request_auth import authorize_root_dedication, dedication_statement
+
+    net = root_lifecycle_network
+
+    def root_request(dkg, state, namespace="lifecycle-acceptance"):
+        return {
+            "auxiliary": state["auxiliary"]["request"],
+            "scope": {
+                "ownership_scope": namespace,
+                "chain_id": "ETH",
+                "purpose": "DEPOSIT",
+                "wallet_class": "HOT",
+                "derivation_version": "cggmp_slip10_nonhardened_v1",
+                "root_identity": {
+                    "keyset_id": dkg["keyset_id"],
+                    "chain_id": "ETH",
+                    "scope": "EVM",
+                    "algorithm": dkg["algorithm"],
+                    "public_key": state["group_public_key"],
+                    "dkg_execution_id": dkg["execution_id"],
+                    "dkg_fingerprint": state["result_fingerprint"],
+                    "network": {"evm_chain_id": 31337, "genesis_hash": "0x" + "11" * 32},
+                },
+            },
+        }
+
+    def authorize(statement, role="custody"):
+        identity = net.root / role / "identity"
+        if role == "custody":
+            return authorize_root_dedication(statement, identity / "tls.crt", identity / "tls.key")
+        certificate = x509.load_pem_x509_certificate((identity / "tls.crt").read_bytes())
+        key = serialization.load_pem_private_key((identity / "tls.key").read_bytes(), None)
+        message = (
+            b"Wallet-MPC/CUSTODY_HD_DEDICATION_V1\0"
+            + json.dumps(
+                statement, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode()
+        )
+        return {
+            "certificate_chain_der_hex": [
+                certificate.public_bytes(serialization.Encoding.DER).hex()
+            ],
+            "signature_der_hex": key.sign(message, ec.ECDSA(hashes.SHA256())).hex(),
+        }
+
+    def snapshot():
+        return {
+            str(path.relative_to(net.root)): path.read_bytes()
+            for party in PARTIES
+            for path in (net.root / party / "storage" / "cggmp-hd").glob("*")
+        }
+
+    def sign_legacy(offline=None):
+        context = signing_request(net)
+        assert request(net, "coordinator", "custody", "/v1/sign-sessions", context)[0] == 200
+        if offline:
+            net.stop(offline)
+        try:
+            assert advance_sign(net, context)[0] == 200
+            state = wait_sign(net, context)
+            assert state["status"] == "COMPLETED", state["status"]
+            verify_independently(net, context, state)
+        finally:
+            if offline:
+                net.start(offline)
+        return context
+
+    sign_legacy()
+    sign_legacy("signer-a")  # All three signers now hold authentic root-use history.
+    hd = root_request(net.aux_context, net.aux_state)
+    before = snapshot()
+    for party in PARTIES:
+        assert request(net, party, "coordinator", "/internal/v1/cggmp/hd/attest", hd)[0] == 400
+    assert snapshot() == before
+    # Even a valid custody dedication cannot retroactively relabel a used root.
+    historical_statement = dedication_statement(hd)
+    envelope = {
+        "statement": historical_statement,
+        "custody_authorization": authorize(historical_statement),
+    }
+    for party in PARTIES:
+        assert (
+            request(net, party, "coordinator", "/internal/v1/cggmp/hd/attest", envelope)[0] == 409
+        )
+    assert snapshot() == before
+    sign_legacy()
+    for party in PARTIES:
+        net.stop(party)
+        net.start(party)
+    sign_legacy()
+    assert not any(
+        (net.root / p / "storage" / "cggmp-hd" / f"{net.aux_context['keyset_id']}.root").exists()
+        for p in PARTIES
+    )
+
+    # A previously supported TLS private-key encoding must keep genuine root
+    # signing available even when it cannot generate new detached HD receipts.
+    assert all(
+        not list((net.root / party / "storage" / "cggmp-hd").glob("*.root")) for party in PARTIES
+    )
+    identity_key = net.root / "signer-a" / "identity" / "tls.key"
+    original_key_bytes = identity_key.read_bytes()
+    net.stop("signer-a")
+    try:
+        key = serialization.load_pem_private_key(original_key_bytes, None)
+        identity_key.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        net.start("signer-a")
+        sign_legacy()
+    finally:
+        net.stop("signer-a")
+        identity_key.write_bytes(original_key_bytes)
+        net.start("signer-a")
+
+    # Fresh independent real DKG/auxiliary root is eligible for authorized dedication.
+    dkg = binding()
+    execute(net, dkg)
+    assert advance_aux(net, dkg)[0] == 200
+    deadline = time.monotonic() + 1815
+    while time.monotonic() < deadline:
+        state = get_keyset(net, dkg)
+        if state["auxiliary"]["status"] != "IN_PROGRESS":
+            break
+        time.sleep(1)
+    assert state["auxiliary"]["status"] == "AUXILIARY_COMPLETED"
+    fresh = dedication_statement(root_request(dkg, state, "authorized-fresh"))
+    valid = {"statement": fresh, "custody_authorization": authorize(fresh)}
+    before = snapshot()
+    faults = []
+    for fault in (
+        "missing",
+        "signature",
+        "coordinator",
+        "wrong-ca",
+        "expired",
+        "wrong-keyset",
+        "replay-root",
+        "purpose",
+        "original-role",
+        "role",
+        "namespace",
+        "network",
+    ):
+        altered = copy.deepcopy(valid)
+        if fault == "missing":
+            del altered["custody_authorization"]
+        elif fault == "signature":
+            altered["custody_authorization"]["signature_der_hex"] = "00" * 70
+        elif fault in ("coordinator", "wrong-ca", "expired"):
+            altered["custody_authorization"] = authorize(fresh, fault)
+        elif fault == "wrong-keyset":
+            altered["statement"]["dedication_id"] = str(uuid.uuid4())
+        elif fault == "replay-root":
+            altered["statement"] = historical_statement
+        elif fault == "purpose":
+            altered["statement"]["request"]["scope"]["purpose"] = "WITHDRAWAL"
+        elif fault == "original-role":
+            altered["statement"]["original_role"] = "HISTORICAL_ROOT"
+        elif fault == "role":
+            altered["statement"]["target_role"] = "ROOT_ONLY"
+        elif fault == "namespace":
+            altered["statement"]["request"]["scope"]["ownership_scope"] = "intruder"
+        else:
+            altered["statement"]["request"]["scope"]["root_identity"]["network"]["genesis_hash"] = (
+                "0x" + "12" * 32
+            )
+        statuses = [
+            request(net, p, "coordinator", "/internal/v1/cggmp/hd/attest", altered)[0]
+            for p in PARTIES
+        ]
+        assert all(s in (400, 409) for s in statuses), (fault, statuses)
+        assert snapshot() == before
+        faults.append(fault)
+    status, evidence = request(
+        net, "coordinator", "custody", f"/v1/keysets/{dkg['keyset_id']}/hd-attestation", valid
+    )
+    assert status == 200, evidence
+    assert all(r["signer_signature"] for r in evidence["participant_agreement"])
+    receipts = snapshot()
+    for party in PARTIES:
+        net.stop(party)
+        net.start(party)
+    assert snapshot() == receipts
+    # Real signer probes must reject root-only fallback, even without coordinator HD guard.
+    fallback = signing_request(net)
+    fallback["keyset_id"] = dkg["keyset_id"]
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from custody.chain_registry import ChainKind
+    from custody.mpc_identity import address_from_public_key
+
+    with patch(
+        "custody.mpc_identity.get_chain_spec", return_value=SimpleNamespace(kind=ChainKind.EVM)
+    ):
+        fallback["expected_source"] = address_from_public_key("ETH", state["group_public_key"])
+    probe = {
+        "request": fallback,
+        "crypto_execution_id": str(uuid.uuid4()),
+        "selected_signers": ["signer-a", "signer-b"],
+        "auxiliary": state["auxiliary"]["request"],
+    }
+    for party in PARTIES[:2]:
+        assert sign_control(net, party, "probe", probe)[0] == 409
+    for party in PARTIES:
+        assert request(net, party, "coordinator", "/internal/v1/cggmp/hd/attest", valid)[0] == 200
+    assert snapshot() == receipts
+    conflicting = copy.deepcopy(fresh)
+    conflicting["request"]["scope"]["ownership_scope"] = "conflicting"
+    for party in PARTIES:
+        assert (
+            request(
+                net,
+                party,
+                "coordinator",
+                "/internal/v1/cggmp/hd/attest",
+                {"statement": conflicting, "custody_authorization": authorize(conflicting)},
+            )[0]
+            == 409
+        )
+    assert snapshot() == receipts
+    sign_legacy()
+    print(
+        "R2_ROOT_LIFECYCLE "
+        + json.dumps(
+            {
+                "legacy_before_after_restart": "COMPLETED",
+                "coordinator_only_rejected": 3,
+                "no_unauthorized_mutation": True,
+                "fresh_authorized_dedication": True,
+                "dedicated_restart_root_fallback_rejected": True,
+                "negative_cases": faults,
+                "original_receipts_recovered": True,
+            }
+        )
+    )

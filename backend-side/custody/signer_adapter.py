@@ -194,10 +194,40 @@ class SelfHostedMpcAdapter:
         del network, path
         from .mpc_binding import UnsupportedMpcDerivation
 
-        raise UnsupportedMpcDerivation("MPC child derivation is unsupported; bind a root keyset")
+        raise UnsupportedMpcDerivation(
+            "arbitrary MPC derivation is unsupported; use an approved custody account"
+        )
 
     def get_keyset(self, keyset_id: str) -> dict:
         return self._request("GET", f"/v1/keysets/{keyset_id}")
+
+    def attest_hd(self, keyset_id: str, request: dict) -> dict:
+        from django.conf import settings
+
+        from .mpc_request_auth import authorize_root_dedication, dedication_statement
+
+        statement = dedication_statement(request)
+        authorization = authorize_root_dedication(
+            statement, settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY
+        )
+        return self._request(
+            "POST",
+            f"/v1/keysets/{keyset_id}/hd-attestation",
+            json={"statement": statement, "custody_authorization": authorization},
+        )
+
+    def approve_child(self, keyset_id: str, request: dict) -> dict:
+        from django.conf import settings
+
+        from .mpc_request_auth import authorize_child_approval
+
+        approval = {
+            "request": request,
+            "custody_authorization": authorize_child_approval(
+                request, settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY
+            ),
+        }
+        return self._request("POST", f"/v1/keysets/{keyset_id}/children", json=approval)
 
     def create_signing_session(self, payload: dict) -> dict:
         """Idempotently create the durable coordinator operation."""

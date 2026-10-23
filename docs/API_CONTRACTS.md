@@ -48,3 +48,53 @@ Merchant create/team/credentials; invoice create with merchant order_ref, amount
 ## 5. Cross-cutting design questions to resolve during implementation
 
 Tenant/legal account ownership semantics, settlement pair precision and fees, quote freshness, event ordering guarantees, policy-governed adjustments, reserve expiry and cancellation races, historical migrated balances, SLA/backpressure, pagination and OpenAPI error taxonomy. Record decisions before DB schema freeze; **do not infer default behaviors from this sketch**. These points are acceptance questions for the relevant phase, not invitations to change the original roadmap.
+
+## Implemented Phase 6G-B internal/operator contracts (this branch)
+
+Existing operator `/api/wallet/address` and `/api/wallet/create` can provision
+EVM/TRON children only with explicit `MPC_PROVISIONING_ROOTS` mapping per registry
+chain (`keyset_id`, `ownership_scope`), original HD agreement and safe live
+development runtime. New issuance accepts address_index=0 only; this is an asset
+view, not a caller-selected HD index. Existing legacy wallet lookup is preserved.
+Global user_id is an existing ledger principal; these routes do not add external
+tenant or merchant authorization. A token view shares the same owned account.
+
+Custody-certificate-only coordinator POST `/v1/keysets/{id}/hd-attestation`
+accepts the exact immutable root scope. POST `/v1/keysets/{id}/children` accepts
+the original reserved ChildRequest. Both persist three authenticated matching
+signer statements. Signer endpoints `/internal/v1/cggmp/hd/attest` and `/child`
+accept only the coordinator certificate. Signing requests add optional
+`child_authorization` and its canonical `child:<reservation-uuid>:<fingerprint>`
+derivation_reference; absence preserves the root-only contract. Arbitrary paths,
+root/source replacement, missing approval and cross-network replay are rejected.
+`mpc_child_wallet` exposes trusted operator attest/issue commands, without root
+creation/activation or a new external signing API. Partial RPC completion leaves
+PROVISIONING; retry uses the same customer, namespace and original idempotency key.
+
+Child SignRequest also requires `custody_authorization`, containing the original
+custody client certificate chain as DER hex and P-256 ECDSA/SHA-256 signature as
+ASN.1 DER hex. Sign the domain `Wallet-MPC/CUSTODY_CHILD_SIGNING_AUTH_V1` followed
+by NUL and canonical sorted UTF-8 JSON of SignRequest with that field omitted.
+Persist the exact grant once; retries cannot regenerate a different signature.
+Signers verify private-CA client authentication, expiry and exact custody URI
+before private operations. Dedicated attested DEPOSIT roots reject root-only
+signing; legacy roots outside that namespace keep their existing contract.
+
+POST `/v1/keysets/{id}/children` now accepts `{request: ChildRequest,
+custody_authorization: {certificate_chain_der_hex, signature_der_hex}}`.
+The public approval proof signs `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1` + NUL +
+canonical sorted UTF-8 JSON of the original ChildRequest. All three issuing
+signers validate the original custody credential before approval. The envelope
+does not change the canonical child identity or authorize a private signature.
+
+
+PR #37 independent-review correction: `/hd-attestation` now requires
+`{statement: {request: HdRequest, dedication_id: <original-keyset-uuid>,
+original_role: "UNUSED", target_role: "DEDICATED_DEPOSIT"}, custody_authorization}`.
+Sign `Wallet-MPC/CUSTODY_HD_DEDICATION_V1` + NUL + canonical statement JSON.
+Each signer independently authenticates custody and lifecycle eligibility before
+mutation. Root/child reports now require `signer_signature`, signing the complete
+unsigned report under separate SIGNER_HD_ROOT_RECEIPT_V1/SIGNER_CHILD_RECEIPT_V1
+domains. All three independently pinned signer identities must verify at Django;
+coordinator-supplied certificates and unsigned historical reports are rejected.
+Original child/signing grant formats and canonical child references are unchanged.

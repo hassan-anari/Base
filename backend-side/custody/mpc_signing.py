@@ -15,8 +15,10 @@ from eth_utils.exceptions import ValidationError
 from .chain_registry import ChainKind, get_chain_spec
 from .models import MpcSigningSession, OnchainTransactionAttempt
 from .mpc_binding import (
+    approved_child,
     identity_fingerprint,
     local_root_keyset,
+    signing_public_key,
     transaction_identity,
     validate_custody_intent,
     verify_coordinator_keyset,
@@ -44,7 +46,7 @@ def attempt_execution_lock(attempt_id):
                 cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_id])
 
 
-def coordinator_request(attempt, session) -> dict:
+def _unsigned_coordinator_request(attempt, session) -> dict:
     payload = bytes(session.signing_payload)
     fingerprint = hashlib.sha256(payload).hexdigest()
     if fingerprint != session.message_fingerprint:
@@ -85,8 +87,45 @@ def coordinator_request(attempt, session) -> dict:
         else attempt.from_address.lower(),
         "derivation_reference": None,
     }
+    child = approved_child(attempt)
+    if child:
+        from .mpc_hd import child_reference
+
+        request["child_authorization"] = child
+        request["derivation_reference"] = child_reference(child)
     if session.payload_type == "TON_V5R1_CELL_HASH":
         request["ton_authorization"] = attempt.prepared_metadata["ton_authorization"]
+    return request
+
+
+def persist_custody_authorization(attempt, session):
+    """Called in the original session creation transaction, before any RPC."""
+    from django.conf import settings
+
+    from .mpc_request_auth import authorize_child_request
+
+    request = _unsigned_coordinator_request(attempt, session)
+    if request.get("child_authorization"):
+        if (
+            session.status != "CREATED"
+            or session.crypto_execution_id
+            or session.custody_authorization
+        ):
+            raise ValueError("original child request must be authorized exactly once")
+        session.custody_authorization = authorize_child_request(
+            request, settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY
+        )
+        session.save(update_fields=["custody_authorization"])
+
+
+def coordinator_request(attempt, session) -> dict:
+    request = _unsigned_coordinator_request(attempt, session)
+    if request.get("child_authorization"):
+        if not session.custody_authorization:
+            raise ValueError("missing original custody child authorization")
+        request["custody_authorization"] = session.custody_authorization
+    elif session.custody_authorization:
+        raise ValueError("child authorization on a root-only request")
     return request
 
 
@@ -207,11 +246,10 @@ def _default_consumer(attempt, session):
         vrs=(result["recovery_id"], int(result["r"], 16), int(result["s"], 16))
     )
     public = signature.recover_public_key_from_msg_hash(bytes(session.signing_payload))
-    if (
-        public.to_compressed_bytes().hex() != session.keyset.public_key
-        or not signature.verify_msg_hash(bytes(session.signing_payload), public)
-    ):
-        raise ValueError("signature does not recover the persisted DKG public key")
+    if public.to_compressed_bytes().hex() != signing_public_key(
+        attempt, session.keyset
+    ) or not signature.verify_msg_hash(bytes(session.signing_payload), public):
+        raise ValueError("signature does not recover the approved signing public key")
     return signed_payload, tx_id
 
 

@@ -12,7 +12,7 @@ rand_core = { version = "=0.6.4", features = ["getrandom"] }
 sha2 = "=0.10.9"
 aes-gcm = "=0.10.3"
 axum = "=0.8.6"
-tokio = { version = "=1.47.1", features = ["full"] }
+tokio = { version = "=1.53.3", features = ["full"] }
 tracing = "=0.1.41"
 libc = "=0.2.190"
 # Reviewed upstream protocol implementations; never replace these with handwritten MPC.

@@ -24,7 +24,7 @@ def crypto_suite(item):
         raise pytest.UsageError(f"Unassigned crypto module: {item.nodeid}")
     if "tron_auxiliary_network" in item.fixturenames:
         return "tron"
-    if "auxiliary_network" in item.fixturenames:
+    if {"auxiliary_network", "root_lifecycle_network"} & set(item.fixturenames):
         return "evm"
     if item.originalname == "test_partial_auxiliary_persistence_cannot_claim_readiness":
         return "aux-persistence"

@@ -67,7 +67,10 @@ def attest_original_hd(*, keyset_id, ownership_scope, client=None):
             "historical root wallet remains root-only; use a fresh dedicated root"
         )
     client = client or SelfHostedMpcAdapter()
-    evidence = client.attest_hd(str(keyset_id), hd_scope(root))
+    evidence = client.attest_hd(
+        str(keyset_id),
+        {"auxiliary": root.dkg_public_evidence["auxiliary"]["request"], "scope": hd_scope(root)},
+    )
     verify_hd_evidence(root, evidence)
     with transaction.atomic():
         MpcKeyset.objects.select_for_update().get(pk=root.pk)

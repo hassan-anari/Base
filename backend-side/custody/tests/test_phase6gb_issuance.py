@@ -5,14 +5,20 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from django.db import DatabaseError, close_old_connections, connection, transaction
 
 from custody.models import HotWallet, MpcCustodyAccount, MpcHdRootEvidence, UserWallet
 from custody.mpc_binding import MpcBindingError
 from custody.mpc_hd import (
+    child_request,
     fingerprint,
     hd_scope,
     public_child,
@@ -22,6 +28,7 @@ from custody.mpc_hd import (
 from custody.mpc_identity import address_from_public_key
 from custody.mpc_issuance import attach_account_asset, attest_original_hd, issue_customer_account
 from custody.mpc_provisioning import ProvisioningError, register_provisioning_root
+from custody.mpc_receipts import receipt_message
 from custody.tests.test_phase6g_provisioning import (
     fixture_freeze,
     fixture_keyset,
@@ -31,6 +38,51 @@ from custody.tests.test_phase6g_provisioning import root as provisioning_root_fi
 
 PARTIES = ["signer-a", "signer-b", "signer-c"]
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+_RECEIPT_KEYS = {party: ec.generate_private_key(ec.SECP256R1()) for party in PARTIES}
+
+
+@pytest.fixture(autouse=True)
+def signer_receipt_trust(settings, tmp_path):
+    pins = {}
+    for party, key in _RECEIPT_KEYS.items():
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, party)])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
+            .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [x509.UniformResourceIdentifier(f"spiffe://wallet-mpc/{party}")]
+                ),
+                False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+        path = tmp_path / f"{party}.crt"
+        path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        pins[party] = str(path)
+    settings.MPC_HD_SIGNER_CERTIFICATES = pins
+
+
+def signed_reports(kind, identity):
+    reports = []
+    for party, key in _RECEIPT_KEYS.items():
+        statement = {kind: identity, "party_id": party, "durable": True}
+        reports.append(
+            statement
+            | {
+                "signer_signature": key.sign(
+                    receipt_message(kind, statement), ec.ECDSA(hashes.SHA256())
+                ).hex()
+            }
+        )
+    return reports
 
 
 class PublicFixtureClient:
@@ -47,14 +99,14 @@ class PublicFixtureClient:
             "extended_identity": fingerprint("CGGMP24_HD_ROOT_V1", [request, "13" * 32]),
         }
         self.root = root
+        self.root_reports = signed_reports("root", self.original)
+        self.children = {}
 
-    def attest_hd(self, keyset, scope):
-        assert scope == hd_scope(self.root)
+    def attest_hd(self, keyset, request):
+        assert request == self.original["request"]
         return {
             "root": self.original,
-            "participant_agreement": [
-                {"root": self.original, "party_id": party, "durable": True} for party in PARTIES
-            ],
+            "participant_agreement": self.root_reports,
         }
 
     def approve_child(self, keyset, request):
@@ -68,9 +120,9 @@ class PublicFixtureClient:
         }
         return {
             "child": child,
-            "participant_agreement": [
-                {"child": child, "party_id": party, "durable": True} for party in PARTIES
-            ],
+            "participant_agreement": self.children.setdefault(
+                str(request), signed_reports("child", child)
+            ),
         }
 
 
@@ -422,3 +474,180 @@ def test_stale_snapshot_isolation_cannot_bypass_address_claim_guard(hd):
             derivation_path="legacy",
             deposit_address="0x" + "ad" * 20,
         )
+
+
+def test_malicious_coordinator_recomputes_all_root_child_reports_without_signers(root):
+    """R1 reproduction: every public hash/point/address agrees with a substituted CC."""
+    client = PublicFixtureClient(root)
+    original_reports = copy.deepcopy(client.root_reports)
+    client.original["chain_code"] = "42" * 32
+    client.original["extended_identity"] = fingerprint(
+        "CGGMP24_HD_ROOT_V1", [client.original["request"], client.original["chain_code"]]
+    )
+    client.root_reports = [
+        report | {"root": copy.deepcopy(client.original)} for report in original_reports
+    ]
+    # The attacker can produce *all* matching public reports, but cannot re-sign them.
+    forged = client.attest_hd(str(root.keyset.keyset_id), client.original["request"])
+    with pytest.raises(MpcBindingError, match="signer-origin"):
+        verify_hd_evidence(root, forged)
+    with patch("custody.mpc_issuance._runtime"), pytest.raises(MpcBindingError):
+        attest_original_hd(
+            keyset_id=root.keyset.keyset_id, ownership_scope=root.ownership_scope, client=client
+        )
+    assert not MpcHdRootEvidence.objects.exists()
+    assert not MpcCustodyAccount.objects.filter(status="ISSUED").exists()
+    assert not UserWallet.objects.exists()
+    # Also exercise a fully consistent forged child on a pinned genuine root.
+    authentic = PublicFixtureClient(root)
+    with patch("custody.mpc_issuance._runtime"), patch("custody.mpc_issuance._network"):
+        attest_original_hd(
+            keyset_id=root.keyset.keyset_id, ownership_scope=root.ownership_scope, client=authentic
+        )
+        approve = authentic.approve_child
+
+        def fabricate(keyset, request):
+            result = approve(keyset, request)
+            for report in result["participant_agreement"]:
+                report["signer_signature"] = "30" * 70
+            return result
+
+        with (
+            patch.object(authentic, "approve_child", side_effect=fabricate),
+            pytest.raises(MpcBindingError),
+        ):
+            issue_customer_account(
+                keyset_id=root.keyset.keyset_id,
+                ownership_scope=root.ownership_scope,
+                customer_ref="victim",
+                idempotency_key="victim-original",
+                client=authentic,
+            )
+        assert MpcCustodyAccount.objects.get().status == "PROVISIONING"
+        assert not UserWallet.objects.exists()
+    print("R1_REJECTED recomputed_root=true recomputed_child=true issued=0 asset_wallets=0")
+
+
+@pytest.mark.parametrize(
+    "attack", ["missing", "another_signer", "coordinator_key", "unknown_pin", "replay_customer"]
+)
+def test_independent_receipt_origin_and_replay_fail_closed(hd, settings, attack):
+    from custody.mpc_issuance import verified_account
+
+    root, client = hd
+    account = issue(hd)
+    evidence = copy.deepcopy(account.evidence)
+    if attack == "missing":
+        del evidence["participant_agreement"][0]["signer_signature"]
+    elif attack == "another_signer":
+        evidence["participant_agreement"][0]["signer_signature"] = evidence[
+            "participant_agreement"
+        ][1]["signer_signature"]
+    elif attack == "coordinator_key":
+        statement = {
+            k: v for k, v in evidence["participant_agreement"][0].items() if k != "signer_signature"
+        }
+        evidence["participant_agreement"][0]["signer_signature"] = (
+            ec.generate_private_key(ec.SECP256R1())
+            .sign(receipt_message("child", statement), ec.ECDSA(hashes.SHA256()))
+            .hex()
+        )
+    elif attack == "unknown_pin":
+        settings.MPC_HD_SIGNER_CERTIFICATES = {}
+    else:
+        evidence["child"]["request"]["customer_ref"] = "other"
+        for report in evidence["participant_agreement"]:
+            report["child"] = evidence["child"]
+    with pytest.raises(MpcBindingError):
+        verify_child_evidence(account.reservation, root.mpchdrootevidence.evidence, evidence)
+    account.evidence = evidence
+    # Model-level writes and every read/exposure both verify crypto, not only SQL shape.
+    with pytest.raises(MpcBindingError):
+        account.save()
+    with pytest.raises(MpcBindingError):
+        verified_account(account)
+
+
+def test_migration_quarantines_unsigned_issued_evidence_without_rewriting_history(root):
+    from django.db.migrations.executor import MigrationExecutor
+
+    from custody.mpc_issuance import verified_account
+    from custody.mpc_provisioning import reserve_derivation_path
+
+    executor = MigrationExecutor(connection)
+    final = executor.loader.graph.leaf_nodes()
+    try:
+        executor.migrate([("custody", "0031_original_custody_child_authorization")])
+        old = (
+            MigrationExecutor(connection)
+            .loader.project_state([("custody", "0031_original_custody_child_authorization")])
+            .apps
+        )
+        client = PublicFixtureClient(root)
+        evidence = client.attest_hd(str(root.keyset.keyset_id), client.original["request"])
+        for report in evidence["participant_agreement"]:
+            del report["signer_signature"]
+        old.get_model("custody", "MpcHdRootEvidence").objects.create(
+            root_id=root.pk, evidence=evidence
+        )
+        reservation = reserve_derivation_path(
+            keyset_id=root.keyset.keyset_id,
+            ownership_scope=root.ownership_scope,
+            customer_ref="old-owner",
+            idempotency_key="old-request",
+        )
+        request = child_request(reservation, evidence["root"])
+        child_evidence = client.approve_child(str(root.keyset.keyset_id), request)
+        for report in child_evidence["participant_agreement"]:
+            del report["signer_signature"]
+        account = old.get_model("custody", "MpcCustodyAccount").objects.create(
+            reservation_id=reservation.pk,
+            chain_id=root.chain_id,
+            ownership_scope=root.ownership_scope,
+            customer_ref="old-owner",
+        )
+        account.status = "ISSUED"
+        account.public_key = child_evidence["child"]["public_key"]
+        account.address = child_evidence["child"]["address"]
+        account.evidence = child_evidence
+        account.save()
+        wallet = old.get_model("custody", "UserWallet").objects.create(
+            custody_account_id=account.pk,
+            user_id="old-owner",
+            chain_id="ETH",
+            asset_key="ETH",
+            deposit_address=account.address,
+            derivation_path=reservation.derivation_path,
+            derivation_version="mpc_child_v1",
+            mpc_keyset_id=root.pk,
+            address_index=0,
+        )
+        before = old.get_model("custody", "MpcCustodyAccount").objects.values().get(pk=account.pk)
+        before_wallet = old.get_model("custody", "UserWallet").objects.values().get(pk=wallet.pk)
+        MigrationExecutor(connection).migrate(final)
+        assert MpcHdRootEvidence.objects.get(root=root).evidence == evidence
+        assert MpcCustodyAccount.objects.values().get(pk=account.pk) == before
+        assert UserWallet.objects.values().get(pk=wallet.pk) == before_wallet
+        persisted = MpcCustodyAccount.objects.get(pk=account.pk)
+        from io import StringIO
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        audit_output = StringIO()
+        with patch("custody.mpc_issuance._network"), pytest.raises(CommandError):
+            call_command("audit_mpc_hd_evidence", stdout=audit_output)
+        assert str(account.pk) in audit_output.getvalue()
+        assert account.address not in audit_output.getvalue()
+        assert MpcCustodyAccount.objects.values().get(pk=account.pk) == before
+        with patch("custody.mpc_issuance._network"), pytest.raises(MpcBindingError):
+            verified_account(persisted)
+        with patch("custody.mpc_issuance._network"), pytest.raises(MpcBindingError):
+            attach_account_asset(
+                account_id=account.pk,
+                customer_ref="old-owner",
+                ownership_scope=root.ownership_scope,
+                asset_key="ETH",
+            )
+    finally:
+        MigrationExecutor(connection).migrate(final)

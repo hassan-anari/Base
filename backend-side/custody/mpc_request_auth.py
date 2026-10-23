@@ -61,3 +61,18 @@ def _authorize_message(message, certificate_path, key_path):
         ],
         "signature_der_hex": key.sign(message, ec.ECDSA(hashes.SHA256())).hex(),
     }
+
+
+def authorize_root_dedication(statement, certificate_path, key_path):
+    return _authorize_message(
+        b"Wallet-MPC/CUSTODY_HD_DEDICATION_V1\0" + _canonical(statement), certificate_path, key_path
+    )
+
+
+def dedication_statement(request):
+    return {
+        "request": request,
+        "dedication_id": request["auxiliary"]["dkg"]["keyset_id"],
+        "original_role": "UNUSED",
+        "target_role": "DEDICATED_DEPOSIT",
+    }

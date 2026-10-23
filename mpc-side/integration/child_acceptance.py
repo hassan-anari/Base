@@ -622,6 +622,7 @@ def run_evm_child_acceptance(net, tmp_path):
             root = register_provisioning_root(
                 keyset_id=root_keyset.keyset_id, chain_id="ETH", ownership_scope="phase6gb-evm"
             )
+            reject_fabricated_coordinator_origin(root)
             attest_original_hd(
                 keyset_id=root_keyset.keyset_id, ownership_scope=root.ownership_scope
             )
@@ -840,6 +841,7 @@ def run_evm_child_acceptance(net, tmp_path):
                 }
                 for a in accounts
             ]
+            evidence["signer_origin_evidence"] = public_signer_origin_evidence(root, accounts)
             (tmp_path / "evm-child-evidence.json").write_text(json.dumps(evidence, indent=2))
             print("REAL_EVM_CHILD_ACCEPTANCE " + json.dumps(evidence, sort_keys=True))
     finally:
@@ -847,3 +849,110 @@ def run_evm_child_acceptance(net, tmp_path):
             if role not in net.running:
                 net.start(role)
         chain.close()
+
+
+def reject_fabricated_coordinator_origin(root):
+    """R1 original attack, using genuine root receipts but no signer identity key."""
+    import uuid
+    from types import SimpleNamespace
+
+    from custody.models import MpcHdRootEvidence, UserWallet
+    from custody.mpc_binding import MpcBindingError
+    from custody.mpc_hd import fingerprint, hd_scope, public_child, verify_child_evidence
+    from custody.mpc_identity import address_from_public_key
+
+    authentic = SelfHostedMpcAdapter().attest_hd(
+        str(root.keyset.keyset_id),
+        {"auxiliary": root.dkg_public_evidence["auxiliary"]["request"], "scope": hd_scope(root)},
+    )
+    forged = copy.deepcopy(authentic)
+    forged_root = forged["root"]
+    forged_root["chain_code"] = "42" * 32
+    forged_root["extended_identity"] = fingerprint(
+        "CGGMP24_HD_ROOT_V1", [forged_root["request"], forged_root["chain_code"]]
+    )
+    for report in forged["participant_agreement"]:
+        report["root"] = copy.deepcopy(forged_root)
+    reservation = SimpleNamespace(
+        root=root,
+        pk=uuid.uuid4(),
+        customer_ref="origin-victim",
+        idempotency_key="origin-victim",
+        child_index=0,
+        derivation_path="m/0/0",
+    )
+    public = public_child(root.keyset.public_key, forged_root["chain_code"], 0)
+    address = address_from_public_key(root.chain_id, public)
+    if root.keyset.scope == "EVM":
+        address = address.lower()
+    child = {
+        "request": child_request(reservation, forged_root),
+        "public_key": public,
+        "address": address,
+    }
+    fabricated_child = {
+        "child": child,
+        "participant_agreement": [
+            {"child": child, "party_id": p, "durable": True, "signer_signature": "30" * 70}
+            for p in ("signer-a", "signer-b", "signer-c")
+        ],
+    }
+
+    class MaliciousCoordinator:
+        def attest_hd(self, *_):
+            return forged
+
+    with pytest.raises(MpcBindingError):
+        attest_original_hd(
+            keyset_id=root.keyset.keyset_id,
+            ownership_scope=root.ownership_scope,
+            client=MaliciousCoordinator(),
+        )
+    with pytest.raises(MpcBindingError):
+        verify_child_evidence(reservation, forged, fabricated_child)
+    assert not MpcHdRootEvidence.objects.filter(root=root).exists()
+    assert not MpcCustodyAccount.objects.filter(reservation__root=root).exists()
+    assert not UserWallet.objects.filter(mpc_keyset=root.keyset).exists()
+    print(
+        "R1_REAL_ROOT_FORGERY_REJECTED "
+        + json.dumps(
+            {
+                "chain": root.chain_id,
+                "recomputed_chain_code_fingerprint_child_address_reports": True,
+                "issued_accounts": 0,
+                "asset_wallets": 0,
+                "customer_addresses_exposed": 0,
+            }
+        )
+    )
+
+
+def public_signer_origin_evidence(root, accounts):
+    """Public fixture pins and detached receipts, never identity private keys/certificates."""
+    from pathlib import Path
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from custody.models import MpcHdRootEvidence
+    from django.conf import settings
+
+    pins = {}
+    for party, filename in settings.MPC_HD_SIGNER_CERTIFICATES.items():
+        public = x509.load_pem_x509_certificate(Path(filename).read_bytes()).public_key()
+        pins[party] = {
+            "sec1_public_key": public.public_bytes(
+                serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+            ).hex(),
+            "spki_sha256": __import__("hashlib")
+            .sha256(
+                public.public_bytes(
+                    serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+            )
+            .hexdigest(),
+        }
+    return {
+        "fixture_independently_installed_signer_pins": pins,
+        "root_attestation": MpcHdRootEvidence.objects.get(root=root).evidence,
+        "child_approvals": [a.evidence for a in accounts],
+    }

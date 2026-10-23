@@ -101,3 +101,12 @@ provisioning root with such bindings remains unissuable and needs an explicitly
 authorized fresh dedicated root. Native operator gas grants must not create
 customer liabilities; exact signed and consumed custody provenance distinguishes
 them from external customer deposits. Existing historical journals stay intact.
+
+
+Phase 6G-B independent review (2026-10-23) adds blocking R1/R2 acceptance:
+coordinator-fabricated, fully recomputed HD/child agreement must never publish an
+address; all three signer-origin signatures require independently installed trust.
+Coordinator-only root dedication must fail without mutation; historical signing
+survives attack/restart, and an authorized fresh root remains dedicated without
+root fallback. Old unverified evidence is preserved/quarantined, never backfilled.
+Corrections require new exact-final-SHA Fast/full gates and independent re-review.

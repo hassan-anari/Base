@@ -11,9 +11,10 @@ import uuid
 
 from coincurve import PublicKey
 
-from .mpc_binding import PARTICIPANTS, MpcBindingError
+from .mpc_binding import MpcBindingError
 from .mpc_identity import address_from_public_key
 from .mpc_provisioning import VERSION
+from .mpc_receipts import verify_receipts
 
 ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
@@ -87,15 +88,10 @@ def verify_hd_evidence(root, evidence):
         ):
             raise ValueError
         receipts = evidence["participant_agreement"]
-        if len(receipts) != 3:
-            raise ValueError
-        for party, report in zip(PARTICIPANTS, receipts, strict=True):
-            if (
-                report != {"root": original, "party_id": party, "durable": True}
-                or report["durable"] is not True
-            ):
-                raise ValueError
+        verify_receipts("root", original, receipts)
         return original
+    except MpcBindingError:
+        raise
     except (KeyError, TypeError, ValueError):
         raise MpcBindingError("missing or mismatched authenticated original HD evidence") from None
 
@@ -136,16 +132,11 @@ def verify_child_evidence(reservation, hd_evidence, evidence):
         }:
             raise ValueError
         receipts = evidence["participant_agreement"]
-        if len(receipts) != 3:
-            raise ValueError
-        for party, report in zip(PARTICIPANTS, receipts, strict=True):
-            if (
-                report != {"child": child, "party_id": party, "durable": True}
-                or report["durable"] is not True
-            ):
-                raise ValueError
+        verify_receipts("child", child, receipts)
         uuid.UUID(expected_request["reservation_id"])
         return child
+    except MpcBindingError:
+        raise
     except (KeyError, TypeError, ValueError):
         raise MpcBindingError("missing or mismatched spendable child evidence") from None
 

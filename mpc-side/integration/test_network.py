@@ -33,6 +33,9 @@ def settings_for(network, role="custody", ca_role="custody", destination="coordi
         MPC_CLIENT_KEY=str(identity / "tls.key"),
         MPC_CA_CERT=str(network.root / ca_role / "identity" / "ca.crt"),
         MPC_REQUEST_TIMEOUT_SECONDS=5,
+        MPC_HD_SIGNER_CERTIFICATES={
+            party: str(network.root / party / "identity" / "tls.crt") for party in ROLES[1:4]
+        },
     )
 
 

@@ -274,6 +274,12 @@ class MpcHdRootEvidence(models.Model):
     evidence = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        from .mpc_hd import verify_hd_evidence
+
+        verify_hd_evidence(self.root, self.evidence)
+        return super().save(*args, **kwargs)
+
 
 class MpcCustodyAccount(models.Model):
     """Canonical beneficial ownership and recoverable child issuance claim.
@@ -292,6 +298,17 @@ class MpcCustodyAccount(models.Model):
     address = models.CharField(max_length=128, blank=True, default="")
     evidence = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if self.status == "ISSUED":
+            from .mpc_hd import verify_child_evidence
+
+            child = verify_child_evidence(
+                self.reservation, self.reservation.root.mpchdrootevidence.evidence, self.evidence
+            )
+            if (self.public_key, self.address) != (child["public_key"], child["address"]):
+                raise ValidationError("issued address must match authentic signer receipts")
+        return super().save(*args, **kwargs)
 
     class Meta:
         constraints = [

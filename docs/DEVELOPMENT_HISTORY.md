@@ -170,3 +170,16 @@ to the actual dedicated root. Failed runs remain evidence, not accepted gates.
 Public evidence and the full security report are published in this same draft;
 the documentation head receives a fresh final-SHA Fast/full gate recorded in
 PR #37 before handoff. Independent review and all open findings remain mandatory.
+
+
+## 2026-10-23 — Phase 6G-B independent P1 remediation, same Draft PR #37
+
+Independent review 5628227149 against ebe9dd7 reproduced R1 false issuance from
+fabricated coordinator reports and R2 permanent root-role denial from coordinator-
+only attestation. Prior fourteen-job passes did not exercise either attack.
+The continuation adds independently pinned signer-origin receipts, custody-signed
+root dedication, durable non-retrospective root-use state, migration 0032 and
+read-only pre-fix evidence audit/quarantine. Both unchanged-baseline reproductions
+were rerun successfully; corrected exact-head acceptance and independent re-review
+remain mandatory. See PHASE6GB_SECURITY_REVIEW and PR #37 for final hashes/evidence.
+No additional PR/phase, merge, TON expansion or production activation.

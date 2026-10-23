@@ -78,3 +78,26 @@ identity readiness is established with the original share/HD approval rather tha
 first discovered during spending. This public approval does not consume an MPC
 nonce or alter immutable child identity. Signing uses its separately persisted
 original grant.
+
+
+## 2026-10-23 independent review remediation (PR #37)
+
+The prior mTLS report design was insufficient against a compromised coordinator.
+R1 now requires detached, domain-separated ECDSA/SHA-256 receipts from all three
+signers, verified by Django against separately installed signer public identities
+(`MPC_HD_SIGNER_CERTIFICATES`), never coordinator-provided trust anchors. Receipt
+bytes and original ownership remain immutable across retries. Migration 0032 checks
+signature presence/shape; application writes and every use verify cryptography.
+SQL is not an ECDSA verifier; database writers and independent trust enrollment
+remain protected authorities. Old unsigned records remain immutable and quarantined;
+use the read-only `audit_mpc_hd_evidence` procedure in PHASE6GB before upgrade.
+
+R2 requires a domain-separated original custody dedication proof checked by every
+signer before role/namespace mutation, plus durable historical root-use reservation
+before nonce work. Signers seed use from original retained execution records and
+reject used/conflicting roots. Authorized dedication of a fresh eligible root is
+irreversible; no root-only fallback. Dedicated role and original proof persist
+across restart. Unverified old signer HD stores fail startup for offline audit.
+These are machine-authentication corrections, not Phase 7 policy/RBAC or lifecycle
+completion. R1/R2 require independent re-review and fresh final-head gates; prior
+normal-path CI is insufficient. scc/RUSTSEC-2026-0205 remains P1 OPEN.

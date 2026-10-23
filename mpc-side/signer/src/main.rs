@@ -86,12 +86,22 @@ async fn main() {
             peers.clone(),
         )
         .expect("CGGMP auxiliary recovery failed");
+        // Existing root-only TLS identities remain supported. HD dedication has
+        // no unsigned fallback: it requires a usable pinned receipt identity.
+        let receipt_identity = match wallet_mpc_transport::ReceiptIdentity::new(&tls, &party_id) {
+            Ok(identity) => Some(identity),
+            Err(_) => {
+                eprintln!("HD receipt identity unavailable; new HD dedication is disabled");
+                None
+            }
+        };
         let hd = wallet_mpc_signer::hd::HdService::open(
             storage_directory.clone(),
             party_id.clone(),
             auxiliary.clone(),
             wallet_mpc_transport::CustodyRequestVerifier::new(&tls)
                 .expect("custody request trust unavailable"),
+            receipt_identity,
         )
         .expect("CGGMP HD evidence recovery failed");
         let cggmp_signing = wallet_mpc_signer::cggmp_sign::SigningService::open(

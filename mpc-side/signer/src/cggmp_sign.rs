@@ -203,7 +203,8 @@ impl SigningService {
             self.hd.validate_child(child).await?;
         } else if action != "report" && action != "abort" {
             self.hd
-                .require_historical_root_signing(execution.request.keyset_id)?;
+                .require_historical_root_signing(execution.request.keyset_id, false)
+                .await?;
         }
         let party = { self.local.lock().await.party.clone() };
         ensure!(
@@ -222,6 +223,13 @@ impl SigningService {
         // Completed retries are entirely public. Other controls reload exact encrypted own material.
         if action != "report" && action != "abort" {
             self.auxiliary.own_key(&execution.auxiliary).await?;
+        }
+        if action == "prepare" && execution.request.child_authorization.is_none() {
+            // Own key and selected party were validated before reserving irreversible
+            // historical use; dedication shares the same signer-local lock.
+            self.hd
+                .require_historical_root_signing(execution.request.keyset_id, true)
+                .await?;
         }
         let mut local = self.local.lock().await;
         let id = execution.request.session_id;
@@ -355,7 +363,8 @@ impl SigningService {
                         hd.verify_original_request(&execution.request)?;
                         hd.validate_child(child).await?;
                     } else {
-                        hd.require_historical_root_signing(execution.request.keyset_id)?;
+                        hd.require_historical_root_signing(execution.request.keyset_id, false)
+                            .await?;
                     }
                     let index = execution
                         .selected_signers

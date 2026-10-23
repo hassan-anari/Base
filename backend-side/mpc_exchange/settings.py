@@ -187,3 +187,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "/api/auth/login"
 
 CUSTODY_INDEXER_MODE = config("CUSTODY_INDEXER_MODE", default="live")
+
+# Independently installed archival signer public certificates; never supplied by RPC.
+MPC_HD_SIGNER_CERTIFICATES = config("MPC_HD_SIGNER_CERTIFICATES", default="{}", cast=json.loads)

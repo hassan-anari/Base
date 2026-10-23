@@ -34,6 +34,59 @@ impl ChildApprovalRequest {
     }
 }
 
+/// Only an original custody authorization can dedicate a previously unused root.
+/// The fixed dedication UUID is the original keyset UUID, never a replacement
+/// issuance session. The statement is immutable; transient credential renewal
+/// can authorize only that same original transition.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HdDedicationStatement {
+    pub request: HdRequest,
+    pub dedication_id: Uuid,
+    pub original_role: String,
+    pub target_role: String,
+}
+impl HdDedicationStatement {
+    pub fn validate(&self) -> Result<()> {
+        self.request.validate()?;
+        ensure!(
+            self.dedication_id == self.request.auxiliary.dkg.keyset_id
+                && self.original_role == "UNUSED"
+                && self.target_role == "DEDICATED_DEPOSIT",
+            "invalid immutable root dedication transition"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HdDedicationRequest {
+    pub statement: HdDedicationStatement,
+    pub custody_authorization: crate::sign::CustodyAuthorization,
+}
+impl HdDedicationRequest {
+    pub fn authorization_message(&self) -> Result<Vec<u8>> {
+        self.statement.validate()?;
+        let mut message = b"Wallet-MPC/CUSTODY_HD_DEDICATION_V1\0".to_vec();
+        message.extend(serde_json::to_vec(&serde_json::to_value(&self.statement)?)?);
+        Ok(message)
+    }
+}
+pub fn receipt_message<T: Serialize>(kind: &str, identity: &T, party: &str) -> Result<Vec<u8>> {
+    let domain = match kind {
+        "root" => b"Wallet-MPC/SIGNER_HD_ROOT_RECEIPT_V1\0".as_slice(),
+        "child" => b"Wallet-MPC/SIGNER_CHILD_RECEIPT_V1\0".as_slice(),
+        _ => anyhow::bail!("unsupported receipt domain"),
+    };
+    let mut statement = serde_json::Map::new();
+    statement.insert(kind.into(), serde_json::to_value(identity)?);
+    statement.insert("party_id".into(), serde_json::json!(party));
+    statement.insert("durable".into(), serde_json::json!(true));
+    let mut message = domain.to_vec();
+    message.extend(serde_json::to_vec(&statement)?);
+    Ok(message)
+}
+
 pub fn fingerprint<T: Serialize>(domain: &str, value: &T) -> Result<String> {
     // Serialize through Value to sort every object key. Cross-language canonical JSON,
     // with domain separation, integer-only network metadata and UTF-8 strings.
@@ -159,6 +212,7 @@ impl HdRoot {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HdRootReport {
+    pub signer_signature: String,
     pub root: HdRoot,
     pub party_id: String,
     pub durable: bool,
@@ -260,6 +314,7 @@ impl ChildIdentity {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ChildReport {
+    pub signer_signature: String,
     pub child: ChildIdentity,
     pub party_id: String,
     pub durable: bool,

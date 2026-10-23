@@ -456,3 +456,49 @@ impl SignerClient {
         Ok(body.to_vec())
     }
 }
+
+/// Detached receipts use the signer's existing P-256 identity key, with its
+/// public identity pinned separately at custody. No coordinator certificate or
+/// coordinator-provided trust material participates in receipt verification.
+pub struct ReceiptIdentity {
+    key: ring::signature::EcdsaKeyPair,
+}
+impl ReceiptIdentity {
+    pub fn new(config: &TlsConfig, party: &str) -> Result<Self> {
+        use ring::signature::KeyPair;
+        ensure!(
+            party.starts_with("signer-") && ROLES.contains(&party),
+            "signer identity required"
+        );
+        let (_, certs, secret) = config.material(party)?;
+        let key = ring::signature::EcdsaKeyPair::from_pkcs8(
+            &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            secret.secret_der(),
+            &ring::rand::SystemRandom::new(),
+        )
+        .map_err(|_| anyhow::anyhow!("P-256 signer identity key required"))?;
+        let (_, cert) = X509Certificate::from_der(certs[0].as_ref())?;
+        ensure!(
+            key.public_key().as_ref() == cert.public_key().subject_public_key.data.as_ref(),
+            "receipt key must match local signer certificate"
+        );
+        Ok(Self { key })
+    }
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
+        Ok(self
+            .key
+            .sign(&ring::rand::SystemRandom::new(), message)
+            .map_err(|_| anyhow::anyhow!("signer receipt signing failed"))?
+            .as_ref()
+            .to_vec())
+    }
+    pub fn verify(&self, message: &[u8], signature: &[u8]) -> Result<()> {
+        use ring::signature::KeyPair;
+        ring::signature::UnparsedPublicKey::new(
+            &ring::signature::ECDSA_P256_SHA256_ASN1,
+            self.key.public_key().as_ref(),
+        )
+        .verify(message, signature)
+        .map_err(|_| anyhow::anyhow!("invalid own signer receipt"))
+    }
+}

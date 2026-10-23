@@ -220,6 +220,9 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
                     chain_id="TRX",
                     ownership_scope="phase6gb-tron",
                 )
+                from child_acceptance import reject_fabricated_coordinator_origin
+
+                reject_fabricated_coordinator_origin(root)
                 attest_original_hd(
                     keyset_id=deposit_keyset.keyset_id, ownership_scope=root.ownership_scope
                 )
@@ -234,6 +237,9 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
                 ]
                 assert len({a.address for a in accounts}) == 3
                 assert all(a.public_key != deposit_keyset.public_key for a in accounts)
+                from child_acceptance import public_signer_origin_evidence
+
+                evidence["signer_origin_evidence"] = public_signer_origin_evidence(root, accounts)
                 account = accounts[0]
                 deposit = account.address
                 evidence["child_accounts"] = [

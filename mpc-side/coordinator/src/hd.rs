@@ -2,7 +2,7 @@
 use super::*;
 use wallet_mpc_protocol::{
     cggmp::AUX_READY,
-    hd::{ChildApprovalRequest, ChildEvidence, HdEvidence, HdRequest, HdScope},
+    hd::{ChildApprovalRequest, ChildEvidence, HdDedicationRequest, HdEvidence},
 };
 use wallet_mpc_transport::SignerClient;
 
@@ -63,7 +63,7 @@ struct Service {
 async fn attest_inner(
     service: &Service,
     keyset: Uuid,
-    scope: HdScope,
+    dedication: HdDedicationRequest,
 ) -> anyhow::Result<HdEvidence> {
     let dkg = service
         .store
@@ -80,11 +80,12 @@ async fn attest_inner(
         aux.status == AUX_READY && aux.internally_signable,
         "root is not spendable"
     );
-    let request = HdRequest {
-        auxiliary: aux.request.clone(),
-        scope,
-    };
-    request.validate()?;
+    dedication.statement.validate()?;
+    let request = &dedication.statement.request;
+    ensure!(
+        request.auxiliary == aux.request && request.auxiliary.dkg.keyset_id == keyset,
+        "dedication must preserve original keyset and auxiliary execution"
+    );
     ensure!(
         request.scope.root_identity["dkg_fingerprint"]
             == dkg
@@ -97,7 +98,7 @@ async fn attest_inner(
     if let Some(previous) = service.store.hd_read::<HdEvidence>(&name)? {
         previous.validate()?;
         ensure!(
-            previous.root.request == request,
+            previous.root.request == *request,
             "original namespace cannot change"
         );
     }
@@ -109,12 +110,12 @@ async fn attest_inner(
                 party,
                 "POST",
                 "/internal/v1/cggmp/hd/attest",
-                serde_json::to_vec(&request)?,
+                serde_json::to_vec(&dedication)?,
             )
             .await?;
         let report: wallet_mpc_protocol::hd::HdRootReport = serde_json::from_slice(&bytes)?;
         ensure!(
-            report.party_id == party && report.root.request == request && report.durable,
+            report.party_id == party && report.root.request == *request && report.durable,
             "wrong authenticated HD receipt"
         );
         reports.push(report);
@@ -182,10 +183,10 @@ async fn child_inner(
 async fn attest(
     State(service): State<Arc<Service>>,
     Path(keyset): Path<Uuid>,
-    Json(scope): Json<HdScope>,
+    Json(dedication): Json<HdDedicationRequest>,
 ) -> Result<Json<HdEvidence>, StatusCode> {
     let _guard = service.lock.lock().await;
-    attest_inner(&service, keyset, scope)
+    attest_inner(&service, keyset, dedication)
         .await
         .map(Json)
         .map_err(|_| StatusCode::CONFLICT)

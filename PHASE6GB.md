@@ -6,6 +6,99 @@ This record describes implemented controls and acceptance scenarios. Final-head
 results and measured artifacts must be read with the draft PR's exact-SHA report.
 An implemented acceptance scenario is not itself a passing result.
 
+## Independent P1 review corrections — 2026-10-23
+
+Independent review of `ebe9dd7fa3619ab03b46ce565f322552acfbdaa2`
+([review 5628227149](https://github.com/hassan-anari/Base/pull/37#pullrequestreview-5628227149))
+reproduced **R1: fabricated coordinator HD/child reports** and **R2: unauthorized
+permanent root dedication**. Both block development merge. The earlier fourteen-job
+passes below are historical normal-path evidence; they did not cover these attacks.
+Corrections in this same draft require new exact-head acceptance and independent
+re-review. No issue is independently closed merely by changing implementation.
+
+R1 correction: each original signer signs its root/child report using its own
+P-256 identity key, with separate `Wallet-MPC/SIGNER_HD_ROOT_RECEIPT_V1` and
+`Wallet-MPC/SIGNER_CHILD_RECEIPT_V1` domains, NUL, and sorted UTF-8 JSON of the
+original statement (`root` or `child`, `party_id`, `durable=true`). ASN.1 DER ECDSA/
+SHA-256 is encoded in `signer_signature`. The root commits original DKG execution,
+keyset, algorithm, public root, actual original chain code, network/genesis,
+namespace and version. The child additionally commits original reservation UUID,
+customer/retry identity, index/path, public child and address. Every signer reloads
+its own validated share; it recomputes the original DKG public-transcript fingerprint.
+
+Django verifies all three signatures against **independently installed**, distinct
+signer P-256 public identities in `MPC_HD_SIGNER_CERTIFICATES` (exact signer-to-local-
+certificate-path JSON mapping). No certificate/key from coordinator JSON is trusted.
+Pins must be enrolled out of band, protected from coordinator writes and retained
+for archival verification. Receipt verification does not expire with transport
+certificates; replacing an identity pin is a separate reviewed lifecycle operation,
+not automatic certificate renewal. Missing pins, missing/forged signatures, wrong
+signer and replay fail before publication. Model writes and every account exposure,
+asset attachment, deposit credit and signing reverify evidence. Migration 0032
+extends immutable SQL guards to require signed report shape on publication. SQL
+checks shape/ownership, **not ECDSA**; trusted database writers and protected local
+trust configuration remain explicit prerequisites. The coordinator has neither.
+
+Original randomized signer signatures are persisted once. Child partial commits
+recover the same receipt bytes from any original index/owner/reservation pin;
+retries never re-sign an existing receipt or consume CGGMP nonces. All three genuine
+root/child signatures remain mandatory for issuance; two shares still sign spends.
+The malicious-coordinator regression substitutes chain code, recomputes every
+fingerprint/public child/address/report, and verifies rejection with no issued
+account, asset wallet or customer deposit address. Genuine EVM/TRON acceptance
+runs this attack against real root metadata before authentic issuance and spending.
+
+R2 correction: root attestation accepts a `HdDedicationRequest`, containing an
+immutable statement and original custody proof under
+`Wallet-MPC/CUSTODY_HD_DEDICATION_V1` + NUL + sorted UTF-8 JSON. The statement binds
+full original HdRequest, dedication UUID equal to original keyset UUID,
+`original_role=UNUSED` and `target_role=DEDICATED_DEPOSIT`. Every signer checks its
+own private-CA custody authority, validity, exact URI, P-256 key/signature, original
+DKG/share and lifecycle compatibility **before mutation**. A coordinator certificate
+alone is insufficient. Original dedication proof is retained with the durable role.
+
+A signer-local immutable `.role` reserves historical root use before valid signing
+preparation and nonce reservation. Original pre-upgrade prepared/consumed/completed
+execution records establish historical use on startup; no new UNUSED history is
+fabricated. Dedication and root-use reservations share a mutex, preventing a race.
+Used roots cannot become dedicated, including with a custody-signed incompatible
+request. A fresh eligible root may be irreversibly dedicated to exactly one original
+namespace; conflicting/replayed transitions cannot change it. Dedicated roots still
+reject root-only fallback. Existing session, nonce and reconciliation rules remain.
+
+### Pre-fix evidence audit and quarantine
+
+Do not upgrade retained unverified development stores as if their receipts were
+authenticated. Preserve encrypted shares, original receipts, DB backup, ownership,
+signed bytes and journals. Freeze publication, deposit-address delivery, gas funding
+and new outbound work for unverifiable accounts; uncertain reservations remain held.
+`python manage.py audit_mpc_hd_evidence` is a read-only audit with nonzero exit for
+unverifiable evidence; it reports record IDs/reasons without deposit addresses.
+Every ordinary use independently fails verification too. Migration 0032 retains
+old rows byte-for-byte; no signatures, owners, addresses or financial history are
+backfilled. Immutable false ISSUED records cannot be healed by retry or replacement.
+
+Signers refuse startup with pre-fix unsigned HD receipts or incompatible role/history;
+all three were checked against the retained original R2 attack stores, without
+changing their HD files. Plan an offline deployment audit before upgrade: isolate
+those stores, preserve evidence, independently compare all original shares/DKG/HD
+material and any funded addresses, and obtain a reviewed reconciliation disposition.
+Do not delete receipt/use records, manufacture retrospective grants, recycle indices,
+reset a financial DB or rewrite an owner/journal to resume. This PR supplies no online
+conversion of unverified evidence. Fresh development acceptance uses explicitly
+authorized fresh DKG roots and new disposable stores. Production remains disabled.
+
+### Verification checkpoint
+
+Unchanged-baseline R1 reproductions passed (public verifier plus actual PostgreSQL
+false issuance; two cases, 7.04s). Unchanged genuine-service R2 reproduction passed
+in 571.67s: root COMPLETED, coordinator-only dedication `[200,200,200]`, post-restart
+RECONCILIATION_REQUIRED, direct probe 409. Corrected backend issuance/migration/
+concurrency checks passed 38 cases in 183.23s. Corrected real-service/full acceptance
+and exact final SHA/CI evidence are recorded in this existing PR at completion.
+Existing `scc` / RUSTSEC-2026-0205 remains explicitly **P1 OPEN**; no dependency
+upgrade or audit suppression is included. No merge, mainnet or Phase 6G-C work.
+
 ## Verified implementation acceptance — 2026-10-12
 
 Implementation validation SHA: `3670893bdfa6b21e2a99887e1238de5a979658cb`.
@@ -108,8 +201,9 @@ Changing network or scope cannot register another interpretation of that root.
 Roots lacking verifiable original HD material remain root-only and unissuable;
 an explicitly authorized new DKG is required, not historical evidence fabrication.
 
-The coordinator stores public evidence only. Reports are authenticated over mTLS
-and persisted; they are not portable detached signer signatures. Secure original
+Historical pre-fix design: the coordinator stored public evidence authenticated
+over mTLS but without portable detached signer signatures. R1 supersedes that
+design: transport alone did not authenticate signer origin at Django. Secure original
 stores, DB roles and authenticated custody/coordinator identities are trust
 prerequisites. Compromise of all those authorities is not solved by JSON hashes.
 Independent policy authority outside Django belongs to the existing Phase 7 plan.

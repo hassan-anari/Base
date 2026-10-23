@@ -3,6 +3,15 @@
 **Repository:** hassan-anari/Base. **Verified baseline:** `24eed19e6e280083793c69c3901f5f746dd0a2fe`.
 **Active branch:** [Phase 6G-B Draft PR #37](https://github.com/hassan-anari/Base/pull/37), unmerged development work.
 
+**2026-10-23: independent review requires changes.** Two newly reproduced P1s
+block this draft: R1 coordinator-fabricated HD/child evidence can publish unspendable
+addresses; R2 coordinator-only dedication can disable historical root signing.
+Repairs add independently pinned signer-origin signatures, custody-authorized
+signer-local dedication/use state, migration 0032 and pre-fix evidence quarantine.
+Acceptance and independent re-review are required on the new final head. Previous
+CI passes below remain historical evidence, not clearance of these findings.
+See [current remediation report](PHASE6GB_SECURITY_REVIEW.md). Existing scc P1 stays OPEN.
+
 Verified implementation acceptance at `3670893bdfa6b21e2a99887e1238de5a979658cb`:
 [Fast 38262366737](https://github.com/hassan-anari/Base/actions/runs/38262366737)
 and [full 38262414457](https://github.com/hassan-anari/Base/actions/runs/38262414457)

@@ -201,8 +201,20 @@ class SelfHostedMpcAdapter:
     def get_keyset(self, keyset_id: str) -> dict:
         return self._request("GET", f"/v1/keysets/{keyset_id}")
 
-    def attest_hd(self, keyset_id: str, scope: dict) -> dict:
-        return self._request("POST", f"/v1/keysets/{keyset_id}/hd-attestation", json=scope)
+    def attest_hd(self, keyset_id: str, request: dict) -> dict:
+        from django.conf import settings
+
+        from .mpc_request_auth import authorize_root_dedication, dedication_statement
+
+        statement = dedication_statement(request)
+        authorization = authorize_root_dedication(
+            statement, settings.MPC_CLIENT_CERT, settings.MPC_CLIENT_KEY
+        )
+        return self._request(
+            "POST",
+            f"/v1/keysets/{keyset_id}/hd-attestation",
+            json={"statement": statement, "custody_authorization": authorization},
+        )
 
     def approve_child(self, keyset_id: str, request: dict) -> dict:
         from django.conf import settings

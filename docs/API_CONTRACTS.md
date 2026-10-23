@@ -86,3 +86,15 @@ The public approval proof signs `Wallet-MPC/CUSTODY_CHILD_APPROVAL_V1` + NUL +
 canonical sorted UTF-8 JSON of the original ChildRequest. All three issuing
 signers validate the original custody credential before approval. The envelope
 does not change the canonical child identity or authorize a private signature.
+
+
+PR #37 independent-review correction: `/hd-attestation` now requires
+`{statement: {request: HdRequest, dedication_id: <original-keyset-uuid>,
+original_role: "UNUSED", target_role: "DEDICATED_DEPOSIT"}, custody_authorization}`.
+Sign `Wallet-MPC/CUSTODY_HD_DEDICATION_V1` + NUL + canonical statement JSON.
+Each signer independently authenticates custody and lifecycle eligibility before
+mutation. Root/child reports now require `signer_signature`, signing the complete
+unsigned report under separate SIGNER_HD_ROOT_RECEIPT_V1/SIGNER_CHILD_RECEIPT_V1
+domains. All three independently pinned signer identities must verify at Django;
+coordinator-supplied certificates and unsigned historical reports are rejected.
+Original child/signing grant formats and canonical child references are unchanged.

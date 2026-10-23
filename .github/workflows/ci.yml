@@ -74,8 +74,8 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: pytest
-      - run: ruff format --check custody/mpc_hd.py custody/mpc_issuance.py custody/mpc_request_auth.py custody/migrations/0029* custody/migrations/003[0-1]* custody/management/commands/mpc_child_wallet.py
-      - run: ruff check custody/mpc_hd.py custody/mpc_issuance.py custody/mpc_request_auth.py custody/migrations/0029* custody/migrations/003[0-1]* custody/management/commands/mpc_child_wallet.py
+      - run: ruff format --check custody/mpc_hd.py custody/mpc_issuance.py custody/mpc_request_auth.py custody/mpc_receipts.py custody/migrations/0029* custody/migrations/003[0-2]* custody/management/commands/mpc_child_wallet.py custody/management/commands/audit_mpc_hd_evidence.py
+      - run: ruff check custody/mpc_hd.py custody/mpc_issuance.py custody/mpc_request_auth.py custody/mpc_receipts.py custody/migrations/0029* custody/migrations/003[0-2]* custody/management/commands/mpc_child_wallet.py custody/management/commands/audit_mpc_hd_evidence.py
       - run: ruff format --check custody/mpc_provisioning.py custody/migrations/002[7-8]*
       - run: ruff check custody/mpc_provisioning.py custody/migrations/002[7-8]*
       - run: ruff format --check custody/checks.py custody/mpc_payload.py custody/mpc_identity.py custody/mpc_binding.py custody/mpc_evm_network.py custody/mpc_tron_network.py custody/mpc_solana_network.py custody/mpc_ton_network.py custody/ton*.py custody/account_chain_costs.py custody/management/commands/ton_wallet_binding.py custody/solana_wire.py custody/solana_policy.py custody/solana_settlement.py custody/solana_deposits.py custody/solana_costs.py custody/tron_wire.py custody/tron_policy.py custody/tron_settlement.py custody/mpc_signing.py custody/management/commands/mpc_keyset.py custody/management/commands/advance_mpc_signing.py custody/management/commands/bind_mpc_hot_wallet.py custody/migrations/001[2-9]* custody/migrations/002[0-6]* custody/tests

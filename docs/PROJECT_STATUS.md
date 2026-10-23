@@ -98,3 +98,9 @@ PR [#34](https://github.com/hassan-anari/Wallet-MPC/pull/34) final implementatio
 ## Entry checkpoint for a future new chat
 
 Read README -> AGENTS -> PRODUCT_VISION -> PROJECT_STATUS -> ROADMAP -> DECISIONS -> SECURITY_MODEL. Fetch latest main and current phase PR. Start Phase 6G only when instructed; no silent TON scope expansion. Aim toward complete exchange/payment API-first product, not signer-only roadmap.
+
+
+Fresh 2026-10-23 CI additionally identified five post-baseline RustSec advisories in
+rustls 0.23.45/webpki 0.103.15, blocking audit and dependent crypto jobs. The scoped
+minimum patch correction is rustls 0.23.46/webpki 0.103.16; full final-head revalidation
+is mandatory. No audit suppression or MPC protocol upgrade. scc P1 remains OPEN.

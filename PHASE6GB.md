@@ -492,3 +492,37 @@ an unsigned fallback; existing root signing retains its original authenticated
 contract. Existing signed HD stores require their original receipt identity and
 fail closed if unavailable. The genuine signer regression includes a legitimate
 legacy key-encoding compatibility check. Identity rotation remains separately gated.
+
+
+## 2026-10-23 TLS dependency gate correction
+
+Fresh unsuppressed Cargo Audit on pushed f973cc8 failed with five newly published
+advisories, while preserving the two existing informational warnings. This is a
+real failed gate, not a platform approval rejection or a reason to skip crypto.
+Fast run 39965525267 / audit job 120454268053 records the failure. These advisories
+postdate the 2026-10-12 acceptance and were not introduced by the R1/R2 code.
+
+Scoped review retrieved the canonical RustSec entries and compared locked upstream
+source. Correction is limited to **rustls 0.23.45 → 0.23.46** and
+**rustls-webpki 0.103.15 → 0.103.16**, the minimum patched releases. The lock diff
+changes only those two versions/checksums; tokio-rustls, ring, CGGMP24, key-share,
+hd-wallet and FROST stay pinned. No major cryptographic upgrade, trust/verification
+bypass, audit ignore or older advisory snapshot is used. The normal full gate must
+verify the new exact head before review.
+
+| Advisory | Prerequisite and scoped application evidence |
+|---|---|
+| [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346) | Debug of client-session secret values in a custom session store. No custom ClientSessionStore implementation or Debug logging of those values was found; client resumption is explicitly disabled. Upstream patch replaces secret-bearing derived Debug with redacted formatting. |
+| [RUSTSEC-2026-0347](https://rustsec.org/advisories/RUSTSEC-2026-0347) | ECH enabled plus buffered application writes before handshake completion and ECH rejection. Application config does not enable ECH; transport awaits TLS connect before HTTP writes. Patch prevents sending buffered application data on ECH rejection. |
+| [RUSTSEC-2026-0348](https://rustsec.org/advisories/RUSTSEC-2026-0348) | Non-default brotli certificate decompression. Locked feature tree contains only rustls ring/std; brotli is absent. Patch limits decompressor window allocation. |
+| [RUSTSEC-2026-0349](https://rustsec.org/advisories/RUSTSEC-2026-0349) | Cached key-exchange prediction before authentication; PQ downgrade impact. Client resumption/session storage is disabled and this ring provider has no configured hybrid group. Patch delays remembered key-exchange hints until authenticated handshake completion. |
+| [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382) | A configured trust anchor permits a path through specifically distrusted emSign intermediate keys. Rust certificate verification is directly used by mTLS and custody grants. Fixtures install an independent private CA, not public web roots. Production CA contents have not been inspected; no universal non-reachability claim. Patch rejects those SPKIs anywhere in the path, including anchors. |
+
+These are scoped configuration/source observations, not offensive demonstrations or
+independent production clearance. The patch also contains upstream connection/
+cache/record-handling fixes and tests; application TLS APIs and feature selection
+remain compatible, with TLS 1.3, exact roles, private CA, no resumption and bounded
+transport unchanged. Rust checks, genuine socket/credential regressions and all
+chain suites remain mandatory. **scc / RUSTSEC-2026-0205 remains P1 OPEN** with the
+prior scoped HashSet assessment and no independent blanket exception. The
+atomic-polyfill maintenance warning remains visible too.

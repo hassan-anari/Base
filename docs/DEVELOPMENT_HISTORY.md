@@ -183,3 +183,10 @@ read-only pre-fix evidence audit/quarantine. Both unchanged-baseline reproductio
 were rerun successfully; corrected exact-head acceptance and independent re-review
 remain mandatory. See PHASE6GB_SECURITY_REVIEW and PR #37 for final hashes/evidence.
 No additional PR/phase, merge, TON expansion or production activation.
+
+
+The fresh continuation audit (39965525267, job 120454268053) failed on five TLS
+advisories published after the prior acceptance. A scoped minimum patch updates
+only rustls/webpki; this failure remains visible, and new final-head gates are
+required. R1/R2 reproduction work is complete; subsequent work uses ordinary
+engineering regression/CI validation only, as directed by the owner.

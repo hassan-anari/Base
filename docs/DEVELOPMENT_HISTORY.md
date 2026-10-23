@@ -202,3 +202,21 @@ root-only fixture, preserving rejection of HD stores without their receipt ident
 record the original failure, public signer proofs and 1.57922 complete accounts/s.
 A fresh exact-final-head Fast/full run and independent R1/R2 re-review are required;
 PR #37 remains Draft and unmerged, with scc P1 open.
+
+
+The unsuppressed audit in final-candidate Fast/full runs 40000063620 /
+40000095316 additionally reported **tokio 1.47.1 / RUSTSEC-2026-0386 OPEN**
+(informational `unsound`, published 2026-10-13), alongside scc and atomic-polyfill.
+The canonical advisory identifies `tokio::io::unix::AsyncFd::{new,with_interest,
+try_new,try_with_interest}` accepting non-owning/invalid descriptors, with potential
+I/O-safety violation and use-after-free. Scoped searches found no application
+AsyncFd/raw-descriptor manipulation and no AsyncFd caller in the downloaded
+application dependency sources outside Tokio's own implementation/tests/BSD AIO.
+This is source/configuration evidence, not complete dynamic reachability or
+independent exploitability clearance. The runtime is directly depended on by
+coordinator, signer and transport; no broad exemption is asserted. Advisory fixes
+start in 1.51.6 / 1.53.3; Tokio stays pinned pending a separately reviewed compatible
+runtime assessment. Audit output is not suppressed. Record this additional open
+finding in independent dependency review; scc P1 remains unchanged and open.
+See https://rustsec.org/advisories/RUSTSEC-2026-0386 . No attack reproduction was
+performed. A new exact-head gate remains necessary after this documentation update.

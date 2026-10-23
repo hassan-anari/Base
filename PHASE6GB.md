@@ -526,3 +526,15 @@ transport unchanged. Rust checks, genuine socket/credential regressions and all
 chain suites remain mandatory. **scc / RUSTSEC-2026-0205 remains P1 OPEN** with the
 prior scoped HashSet assessment and no independent blanket exception. The
 atomic-polyfill maintenance warning remains visible too.
+
+
+2026-10-23 validation update: published R1/R2 corrections and TLS patch head
+`ac476accfae4ed91bfe31fc0bfce1499831b9a42` passed Fast CI. Full run 39966475502
+had twelve successful jobs; EVM child spending and the 1,000-account issuance/restart
+benchmark passed, followed by a legacy TLS fixture failure (44 passed / 1 failed).
+The aggregate correctly failed. The lifecycle test now uses an independent genuine
+root-only fixture, preserving rejection of HD stores without their receipt identity.
+[Detailed evidence and measurements](docs/acceptance/phase6gb/r1-r2-validation.md)
+record the original failure, public signer proofs and 1.57922 complete accounts/s.
+A fresh exact-final-head Fast/full run and independent R1/R2 re-review are required;
+PR #37 remains Draft and unmerged, with scc P1 open.

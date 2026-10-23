@@ -59,8 +59,7 @@ def print_proof_sizes(net):
         print(party, metadata[0])
 
 
-@pytest.fixture(scope="module")
-def auxiliary_network(tmp_path_factory):
+def _auxiliary_network(tmp_path_factory):
     net = Processes(tmp_path_factory.mktemp("cggmp-aux") / "services")
     try:
         for role in ROLES[:4]:
@@ -106,6 +105,18 @@ def auxiliary_network(tmp_path_factory):
         yield net
     finally:
         net.close()
+
+
+@pytest.fixture(scope="module")
+def auxiliary_network(tmp_path_factory):
+    yield from _auxiliary_network(tmp_path_factory)
+
+
+@pytest.fixture
+def root_lifecycle_network(tmp_path_factory):
+    # Root-only TLS compatibility needs original stores without HD receipts from
+    # other acceptance cases. Never remove or hide evidence in a shared store.
+    yield from _auxiliary_network(tmp_path_factory)
 
 
 def inspect_aux(net, party):
@@ -1090,14 +1101,14 @@ def test_phase6gb_real_evm_child_custody(auxiliary_network, tmp_path):
     assert_root_signing_requires_trusted_custody_credentials(auxiliary_network)
 
 
-def test_phase6gb_root_dedication_requires_original_custody_authority(auxiliary_network):
+def test_phase6gb_root_dedication_requires_original_custody_authority(root_lifecycle_network):
     """R2: real legacy signatures survive coordinator-only dedication and restart."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from custody.mpc_request_auth import authorize_root_dedication, dedication_statement
 
-    net = auxiliary_network
+    net = root_lifecycle_network
 
     def root_request(dkg, state, namespace="lifecycle-acceptance"):
         return {
@@ -1192,6 +1203,9 @@ def test_phase6gb_root_dedication_requires_original_custody_authority(auxiliary_
 
     # A previously supported TLS private-key encoding must keep genuine root
     # signing available even when it cannot generate new detached HD receipts.
+    assert all(
+        not list((net.root / party / "storage" / "cggmp-hd").glob("*.root")) for party in PARTIES
+    )
     identity_key = net.root / "signer-a" / "identity" / "tls.key"
     original_key_bytes = identity_key.read_bytes()
     net.stop("signer-a")

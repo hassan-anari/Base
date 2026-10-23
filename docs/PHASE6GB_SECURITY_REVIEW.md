@@ -96,8 +96,15 @@ Unchanged-baseline R1 reproductions passed (public verifier plus actual PostgreS
 false issuance; two cases, 7.04s). Unchanged genuine-service R2 reproduction passed
 in 571.67s: root COMPLETED, coordinator-only dedication `[200,200,200]`, post-restart
 RECONCILIATION_REQUIRED, direct probe 409. Corrected backend issuance/migration/
-concurrency checks passed 38 cases in 183.23s. Corrected real-service/full acceptance
-and exact final SHA/CI evidence are recorded in this existing PR at completion.
+concurrency checks passed 38 cases in 183.23s. Corrected genuine signer regression passed two cases in 947.96s; the full backend
+passed 607 cases in 647.24s. The updated audit/quarantine check separately passed
+in 29.49s. Rust fmt/clippy, frontend contracts/two builds and system/migration checks
+passed. Supporting EVM reached authenticated issuance but timed out at the fixture's
+five-second client boundary during partial-quorum recovery (846.24s total); no
+successful benchmark or chain-spend result is claimed for that run. Child acceptance
+now uses a bounded 30-second client timeout to observe the coordinator's bounded
+sequential peer responses. Peer timeouts/quorum rules and signing checks are unchanged.
+New exact final SHA/CI evidence is recorded in this existing PR at completion.
 Existing `scc` / RUSTSEC-2026-0205 remains explicitly **P1 OPEN**; no dependency
 upgrade or audit suppression is included. No merge, mainnet or Phase 6G-C work.
 
@@ -259,3 +266,11 @@ The successful CI independent deposit/hot setup observations were 230.249s and
 143.660s; original fixture auxiliary setup was 240.109s. They are excluded from
 the complete per-account issuance benchmark and do not establish root-generation
 percentiles. The final draft-head gate is separately recorded in PR #37.
+
+
+Historical root-only TLS key profiles remain supported. If the TLS identity cannot
+create supported P-256/PKCS8 detached receipts, HD dedication is disabled without
+an unsigned fallback; existing root signing retains its original authenticated
+contract. Existing signed HD stores require their original receipt identity and
+fail closed if unavailable. The genuine signer regression includes a legitimate
+legacy key-encoding compatibility check. Identity rotation remains separately gated.

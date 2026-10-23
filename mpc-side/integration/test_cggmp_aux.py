@@ -1190,6 +1190,27 @@ def test_phase6gb_root_dedication_requires_original_custody_authority(auxiliary_
         for p in PARTIES
     )
 
+    # A previously supported TLS private-key encoding must keep genuine root
+    # signing available even when it cannot generate new detached HD receipts.
+    identity_key = net.root / "signer-a" / "identity" / "tls.key"
+    original_key_bytes = identity_key.read_bytes()
+    net.stop("signer-a")
+    try:
+        key = serialization.load_pem_private_key(original_key_bytes, None)
+        identity_key.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        net.start("signer-a")
+        sign_legacy()
+    finally:
+        net.stop("signer-a")
+        identity_key.write_bytes(original_key_bytes)
+        net.start("signer-a")
+
     # Fresh independent real DKG/auxiliary root is eligible for authorized dedication.
     dkg = binding()
     execute(net, dkg)

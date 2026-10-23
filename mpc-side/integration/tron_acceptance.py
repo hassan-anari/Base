@@ -202,6 +202,7 @@ def run_tron_acceptance(net, tmp_path, *, deposit_metadata=None, child_wallets=F
                 MPC_SIGNER_BACKEND="self_hosted_mpc",
                 MPC_EVM_INTEGRATION_ENABLED=False,
                 MPC_TRON_INTEGRATION_ENABLED=True,
+                MPC_REQUEST_TIMEOUT_SECONDS=30 if child_wallets else 5,
                 MPC_TRON_NETWORK=validator.policy,
                 MPC_INTEGRATION_ENVIRONMENT="development",
                 CUSTODY_DEMO_MODE=False,

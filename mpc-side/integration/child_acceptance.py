@@ -611,6 +611,10 @@ def run_evm_child_acceptance(net, tmp_path):
             override_settings(
                 MPC_SIGNER_BACKEND="self_hosted_mpc",
                 MPC_EVM_INTEGRATION_ENABLED=True,
+                # Three sequential signer calls each retain their bounded transport
+                # timeout. Let the acceptance client observe the definitive quorum
+                # response rather than race the coordinator's five-second peer wait.
+                MPC_REQUEST_TIMEOUT_SECONDS=30,
                 MPC_INTEGRATION_ENVIRONMENT="development",
                 MPC_EVM_DEVELOPMENT_CHAINS={"ETH": 31337},
                 MPC_EVM_GENESIS_HASHES={"ETH": genesis},

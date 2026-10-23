@@ -17,7 +17,9 @@ bs58 = "=0.5.1"
 k256 = { version = "=0.13.4", features = ["ecdsa"] }
 sha3 = "=0.10.8"
 
-everscale-types = { version = "=0.1.2", default-features = false, features = ["sync"] }
+# TON cells are local to synchronous verification; upstream Rc cells never cross
+# an await/thread boundary. Keep sync disabled to exclude the scc dependency.
+everscale-types = { version = "=0.1.2", default-features = false }
 
 [dev-dependencies]
 round-based = { version = "=0.4.1", features = ["sim"] }

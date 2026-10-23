@@ -556,3 +556,26 @@ runtime assessment. Audit output is not suppressed. Record this additional open
 finding in independent dependency review; scc P1 remains unchanged and open.
 See https://rustsec.org/advisories/RUSTSEC-2026-0386 . No attack reproduction was
 performed. A new exact-head gate remains necessary after this documentation update.
+
+
+## 2026-10-23 focused dependency remediation disposition
+
+The subsequent owner-authorized remediation pass upgrades Tokio **1.47.1 →
+1.53.3** (RUSTSEC-2026-0386: REMEDIATED) and removes **scc 2.4.0 / sdd 3.0.10**
+from the entire lockfile by using everscale-types 0.1.2's existing upstream local
+Rc implementation (RUSTSEC-2026-0205: REMEDIATED, independent acceptance pending).
+TON cells never cross the synchronous verifier's thread/await boundary; no unsafe
+bridge or cell/hash algorithm change is introduced. Historical P1 evidence remains.
+
+**atomic-polyfill 1.0.3 / RUSTSEC-2023-0089: BLOCKED.** Latest compatible
+FROST 3.0.0/Postcard 1.1.3 force Heapless ^0.7.0; Cargo concretely rejects
+maintained Heapless 0.8.0. A reviewed upstream serialization-feature/dependency
+change is needed; a direct downstream override cannot subtract enabled features.
+The full warning remains visible, with host/all-target distinction and explicit
+independent assessment requirements. No blanket risk acceptance or crypto fork.
+
+See [focused dependency report](docs/PHASE6GB_DEPENDENCY_REMEDIATION.md) for exact
+versions, source/feature review, resolver failure and required assessment. New
+final-SHA Fast/full CI must pass; the PR report records its exact SHA and results
+after commit. Previous a7c92c8 fourteen-job pass remains supporting history.
+PR #37 stays Draft/unmerged; no activation or Phase 6G-C work.
